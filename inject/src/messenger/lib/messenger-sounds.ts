@@ -16,7 +16,7 @@ export interface MessageSoundState {
   oldNews: boolean;
   /** The Messenger window has the focus. */
   focused: boolean;
-  /** Carrier's notifications play the system sound (`notification_sound`). */
+  /** Carrier's notifications play a sound: `notification_sound`, off only when the chosen sound is Off. */
   nativeSoundOn: boolean;
 }
 

@@ -388,7 +388,7 @@ pub(crate) fn deliver_notification_macos(
     body: &str,
     id: u64,
     image: Option<&Path>,
-    sound: bool,
+    sound: &crate::sound::Sound,
     options: MacNotificationOptions<'_>,
 ) {
     use objc2_foundation::{NSArray, NSString, NSURL};
@@ -402,8 +402,15 @@ pub(crate) fn deliver_notification_macos(
     content.setTitle(&NSString::from_str(title));
     content.setSubtitle(&NSString::from_str(options.subtitle));
     content.setBody(&NSString::from_str(body));
-    if sound {
-        content.setSound(Some(&UNNotificationSound::defaultSound()));
+    match sound {
+        crate::sound::Sound::Silent => {}
+        // A file name in ~/Library/Sounds or /System/Library/Sounds.
+        crate::sound::Sound::Named(file) => content.setSound(Some(
+            &UNNotificationSound::soundNamed(&NSString::from_str(file)),
+        )),
+        crate::sound::Sound::Default | crate::sound::Sound::File(_) => {
+            content.setSound(Some(&UNNotificationSound::defaultSound()));
+        }
     }
 
     // Carry the trusted native id, page callback id, and validated route.

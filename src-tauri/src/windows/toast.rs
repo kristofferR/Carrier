@@ -50,7 +50,8 @@ pub(crate) struct ToastSpec {
     /// Shared-media thumbnail displayed in the notification body.
     pub image: Option<String>,
     pub hex_id: String,
-    pub sound: bool,
+    /// The `ms-winsoundevent` sound, or None for a silent toast.
+    pub sound: Option<&'static str>,
     /// Eligible message toasts gain a reply input plus Reply/Open actions.
     pub reply_eligible: bool,
     /// The quick actions eligible toasts add beside Reply (see
@@ -139,8 +140,8 @@ pub(crate) fn build_toast_xml(spec: &ToastSpec) -> String {
         xml.push_str("</actions>");
     }
 
-    if spec.sound {
-        xml.push_str("<audio src=\"ms-winsoundevent:Notification.Default\"/>");
+    if let Some(event) = spec.sound {
+        xml.push_str(&format!("<audio src=\"ms-winsoundevent:{event}\"/>"));
     } else {
         xml.push_str("<audio silent=\"true\"/>");
     }
@@ -192,7 +193,7 @@ pub(crate) struct WindowsToastOptions {
     pub body: String,
     pub avatar: Option<String>,
     pub image: Option<String>,
-    pub sound: bool,
+    pub sound: crate::sound::Sound,
     pub native_id: u64,
     /// The page's own notification handle, echoed back on a route-less click.
     pub page_id: Option<u64>,
@@ -365,7 +366,7 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
         avatar: opts.avatar.clone(),
         image: opts.image.clone(),
         hex_id: hex.clone(),
-        sound: opts.sound,
+        sound: crate::sound::windows_toast_audio(&opts.sound),
         reply_eligible: opts.reply_eligible,
         quick_actions: crate::notifications::offered_actions(opts.native_id),
         is_sync_alert: opts.is_sync_alert,
@@ -428,6 +429,15 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
         ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(toast_app_id(app)))?;
     log_notifications_disabled_once(&notifier);
     notifier.Show(&toast)?;
+    // An unpackaged app's toast can't play a file, so the toast is silent and
+    // Carrier plays it, unless Windows turned Carrier's toasts off.
+    if let crate::sound::Sound::File(path) = &opts.sound
+        && notifier
+            .Setting()
+            .is_ok_and(|setting| setting == NotificationSetting::Enabled)
+    {
+        crate::sound::play_file(path);
+    }
     remember_keep_alive(hex, group, toast);
     Ok(())
 }
@@ -705,7 +715,7 @@ mod tests {
             avatar: None,
             image: None,
             hex_id: hex_id(0x2a),
-            sound: true,
+            sound: Some("Notification.Default"),
             reply_eligible,
             quick_actions: &[
                 NotificationAction::React,
@@ -783,10 +793,12 @@ mod tests {
     #[test]
     fn audio_element_reflects_the_sound_setting() {
         let mut loud = spec(false, false);
-        loud.sound = true;
-        assert!(build_toast_xml(&loud).contains("ms-winsoundevent:Notification.Default"));
+        loud.sound = Some("Notification.IM");
+        assert!(
+            build_toast_xml(&loud).contains("<audio src=\"ms-winsoundevent:Notification.IM\"/>")
+        );
         let mut quiet = spec(false, false);
-        quiet.sound = false;
+        quiet.sound = None;
         assert!(build_toast_xml(&quiet).contains("<audio silent=\"true\"/>"));
     }
 

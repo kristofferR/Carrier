@@ -142,8 +142,12 @@ pub(crate) struct Settings {
     pub(crate) automatic_update_checks: bool,
     /// Hours between automatic update checks: 1, 4 (default) or 24.
     pub(crate) update_check_hours: u32,
-    /// Play the OS notification sound for new-message notifications.
+    /// Notifications play a sound. Follows `notification_sound_choice` once
+    /// that is set; the page and older builds read only this switch.
     pub(crate) notification_sound: bool,
+    /// The notification sound (Ref #363). None keeps `notification_sound`.
+    #[serde(deserialize_with = "crate::sound::deserialize_choice")]
+    pub(crate) notification_sound_choice: Option<crate::sound::NotificationSound>,
     /// Notify without the sender name or message text (privacy).
     pub(crate) hide_notification_preview: bool,
     /// Notify for messages in group chats. Off leaves group messages to the
@@ -277,6 +281,7 @@ impl Settings {
         if !crate::app_icon::APP_ICONS.contains(&self.app_icon_dark.as_str()) {
             self.app_icon_dark = String::new();
         }
+        self.notification_sound = self.sound_choice() != crate::sound::NotificationSound::Off;
         if !matches!(self.update_check_hours, 1 | 4 | 24) {
             self.update_check_hours = 4;
         }
@@ -340,6 +345,7 @@ impl Default for Settings {
             automatic_update_checks: true,
             update_check_hours: 4,
             notification_sound: true,
+            notification_sound_choice: None,
             hide_notification_preview: false,
             notify_group_chats: true,
             notification_reaction: "👍".into(),

@@ -53,6 +53,7 @@ mod render_recovery;
 mod renderer_memory;
 mod scheduled_send;
 mod settings;
+mod sound;
 mod themes;
 mod title_bar;
 mod tray;
@@ -1203,7 +1204,10 @@ pub fn run() {
             themes::add_theme,
             themes::remove_theme,
             themes::open_themes_folder,
-            themes::list_fonts
+            themes::list_fonts,
+            sound::notification_sounds,
+            sound::choose_notification_sound,
+            sound::preview_notification_sound
         ])
         .setup(move |app| {
             // Event listening is needed only by the development MCP responder.

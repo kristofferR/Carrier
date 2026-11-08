@@ -30,6 +30,7 @@ use crate::macos::notifications::{
     update_pending_notification_route_macos,
 };
 use crate::settings::AppState;
+use crate::sound::Sound;
 use crate::tray::show_main_with_activation_token;
 
 #[cfg(target_os = "linux")]
@@ -1129,6 +1130,8 @@ pub(crate) fn remove_avatar_cache() {
 struct LinuxNotificationCapabilities {
     actions: bool,
     inline_reply: bool,
+    /// The server plays `sound-name` and `sound-file` hints.
+    sound: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -1139,8 +1142,35 @@ fn linux_notification_capabilities() -> LinuxNotificationCapabilities {
         LinuxNotificationCapabilities {
             actions: capabilities.iter().any(|value| value == "actions"),
             inline_reply: capabilities.iter().any(|value| value == "inline-reply"),
+            sound: capabilities.iter().any(|value| value == "sound"),
         }
     })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_sound_server(
+    snap: bool,
+    capabilities: LinuxNotificationCapabilities,
+) -> crate::sound::SoundServer {
+    use crate::sound::SoundServer;
+    if snap {
+        SoundServer::PlaysDefault
+    } else if capabilities.sound {
+        SoundServer::PlaysHints
+    } else {
+        SoundServer::IgnoresSound
+    }
+}
+
+/// Reads the sound theme through GTK on the main thread, so call it from a
+/// notification's own thread.
+#[cfg(target_os = "linux")]
+fn linux_notification_sound(
+    app: &tauri::AppHandle,
+    sound: Sound,
+    server: crate::sound::SoundServer,
+) -> crate::sound::LinuxSound {
+    crate::sound::linux_sound(sound, server, &crate::sound::theme_sounds(app))
 }
 
 #[cfg(target_os = "linux")]
@@ -1374,21 +1404,34 @@ async fn wait_for_linux_notification_response(
 
 #[cfg(target_os = "linux")]
 fn linux_notification_hints(
-    sound: bool,
+    sound: &crate::sound::SoundHint,
     allow_inline_reply: bool,
 ) -> HashMap<&'static str, zbus::zvariant::Value<'static>> {
+    use crate::sound::SoundHint;
     let mut hints = HashMap::new();
     hints.insert(
         "desktop-entry",
         zbus::zvariant::Value::from(crate::install_environment::linux_desktop_id()),
     );
-    if sound {
-        hints.insert(
-            "sound-name",
-            zbus::zvariant::Value::from("message-new-instant"),
-        );
-    } else {
-        hints.insert("suppress-sound", zbus::zvariant::Value::from(true));
+    match sound {
+        SoundHint::Silent => {
+            hints.insert("suppress-sound", zbus::zvariant::Value::from(true));
+        }
+        SoundHint::Default => {
+            hints.insert(
+                "sound-name",
+                zbus::zvariant::Value::from(crate::sound::LINUX_DEFAULT_SOUND),
+            );
+        }
+        SoundHint::Name(name) => {
+            hints.insert("sound-name", zbus::zvariant::Value::from(name.clone()));
+        }
+        SoundHint::File(path) => {
+            hints.insert(
+                "sound-file",
+                zbus::zvariant::Value::from(path.to_string_lossy().into_owned()),
+            );
+        }
     }
     if allow_inline_reply {
         hints.insert(
@@ -1454,7 +1497,7 @@ fn show_linux_notification<F>(
     title: &str,
     body: &str,
     image: Option<&Path>,
-    sound: bool,
+    sound: &crate::sound::LinuxSound,
     allow_inline_reply: bool,
     quick_actions: &[NotificationAction],
     on_response: F,
@@ -1501,7 +1544,7 @@ fn show_linux_notification<F>(
             Some(16),
         ))
         .map_err(|error| error.to_string())?;
-        let mut hints = linux_notification_hints(sound, allow_inline_reply);
+        let mut hints = linux_notification_hints(&sound.hint, allow_inline_reply);
         if let Some(image) = image.and_then(linux_notification_image) {
             // Send pixels over D-Bus: the host daemon cannot read sandbox-private paths.
             hints.insert("image-data", image);
@@ -1529,6 +1572,9 @@ fn show_linux_notification<F>(
             .body()
             .deserialize::<u32>()
             .map_err(|error| error.to_string())?;
+        if let Some(file) = &sound.play {
+            crate::sound::play_file(file);
+        }
         async_io::block_on(wait_for_linux_notification_response(
             messages,
             notification_id,
@@ -1954,7 +2000,7 @@ fn show_action_failure_notification(_app: &tauri::AppHandle, body: &str) {
         body,
         0,
         None,
-        false,
+        &Sound::Silent,
         MacNotificationOptions::default(),
     );
 }
@@ -1969,7 +2015,7 @@ fn show_action_failure_notification(app: &tauri::AppHandle, body: &str) {
             body: body.into(),
             avatar: None,
             image: None,
-            sound: false,
+            sound: Sound::Silent,
             native_id: 0,
             page_id: None,
             thread_path: None,
@@ -2454,7 +2500,7 @@ pub(crate) fn show_message_notification(
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
         (
-            s.notification_sound && !msg.silent,
+            crate::sound::message_sound(&s.sound_choice(), msg.silent),
             crate::pause::pause_state(&s, crate::pause::now_ms())
                 != crate::pause::PauseState::Active,
             s.hide_notification_preview,
@@ -2567,7 +2613,7 @@ pub(crate) fn show_message_notification(
         format!("{subtitle}\n{body}")
     };
     #[cfg(target_os = "linux")]
-    let (allow_inline_reply, quick_actions) = {
+    let (allow_inline_reply, quick_actions, sound_server) = {
         let snap = crate::install_environment::is_snap();
         let capabilities = if snap {
             LinuxNotificationCapabilities::default()
@@ -2593,6 +2639,7 @@ pub(crate) fn show_message_notification(
             } else {
                 &[]
             },
+            linux_sound_server(snap, capabilities),
         )
     };
     // The native id is generated on the trusted side and never reused when the
@@ -2605,6 +2652,7 @@ pub(crate) fn show_message_notification(
             .unwrap()
             .register(page_id, native_id, Instant::now());
     }
+    let sound = crate::sound::resolve(&app, &sound);
     let (icon, preview) = msg.visible_images(hide_preview, hide_avatars);
     let preview = avatar_to_temp_png(preview);
     #[cfg(target_os = "linux")]
@@ -2658,7 +2706,7 @@ pub(crate) fn show_message_notification(
             &body,
             native_id,
             preview.as_deref(),
-            sound,
+            &sound,
             MacNotificationOptions {
                 subtitle: &subtitle,
                 sender,
@@ -2714,6 +2762,7 @@ pub(crate) fn show_message_notification(
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
+        let sound = linux_notification_sound(&app, sound, sound_server);
         let on_response = move |(response, activation_token)| match response {
             LinuxNotificationResponse::Open => {
                 activate_notification(app, native_id, Some(page_id), None, activation_token)
@@ -2743,7 +2792,7 @@ pub(crate) fn show_message_notification(
             &title,
             &body,
             image.as_deref(),
-            sound,
+            &sound,
             allow_inline_reply,
             quick_actions,
             on_response,
@@ -2875,7 +2924,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
             &body,
             id,
             None,
-            false,
+            &Sound::Silent,
             MacNotificationOptions::default(),
         );
     }
@@ -2892,7 +2941,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
                 body,
                 avatar: None,
                 image: None,
-                sound: false,
+                sound: Sound::Silent,
                 native_id: id,
                 page_id: None,
                 thread_path: None,
@@ -2908,7 +2957,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
             title,
             &body,
             None,
-            false,
+            &crate::sound::LinuxSound::SILENT,
             false,
             &[],
             move |(response, activation_token)| {
@@ -2981,7 +3030,7 @@ pub(crate) fn show_app_notice(app: &tauri::AppHandle, title: String, body: Strin
 }
 
 fn deliver_app_notice(app: &tauri::AppHandle, id: u64, title: String, body: String) {
-    if let Err(error) = deliver_plain_notice(app, id, title, body, false) {
+    if let Err(error) = deliver_plain_notice(app, id, title, body, Sound::Silent) {
         log::warn!("failed to present a Carrier notice: {error}");
     }
 }
@@ -3020,12 +3069,13 @@ pub(crate) fn send_test_notification(app: &tauri::AppHandle) -> Result<String, S
     if let Some(reason) = crate::windows::toast::notification_blocker(app) {
         return Err(reason);
     }
-    let sound = app
+    let choice = app
         .state::<AppState>()
         .settings
         .lock()
         .unwrap()
-        .notification_sound;
+        .sound_choice();
+    let sound = crate::sound::resolve(app, &choice);
     deliver_plain_notice(
         app,
         next_native_notification_id(),
@@ -3043,7 +3093,7 @@ fn deliver_plain_notice(
     id: u64,
     title: String,
     body: String,
-    sound: bool,
+    sound: Sound,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -3053,7 +3103,7 @@ fn deliver_plain_notice(
             &body,
             id,
             None,
-            sound,
+            &sound,
             MacNotificationOptions::default(),
         );
     }
@@ -3076,12 +3126,22 @@ fn deliver_plain_notice(
     #[cfg(target_os = "linux")]
     {
         let app = app.clone();
+        let snap = crate::install_environment::is_snap();
+        let server = linux_sound_server(
+            snap,
+            if snap {
+                LinuxNotificationCapabilities::default()
+            } else {
+                linux_notification_capabilities()
+            },
+        );
         std::thread::spawn(move || {
+            let sound = linux_notification_sound(&app, sound, server);
             show_linux_notification(
                 &title,
                 &body,
                 None,
-                sound,
+                &sound,
                 false,
                 &[],
                 move |(response, token)| {
@@ -3433,6 +3493,7 @@ mod tests {
         let supported = LinuxNotificationCapabilities {
             actions: true,
             inline_reply: true,
+            sound: false,
         };
         assert!(linux_reply_eligible(
             false,
@@ -3463,6 +3524,7 @@ mod tests {
             LinuxNotificationCapabilities {
                 actions: true,
                 inline_reply: false,
+                sound: false,
             },
             false,
         ));
@@ -3682,12 +3744,16 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_notification_hints_follow_sound_and_reply_settings() {
-        let audible = linux_notification_hints(true, false);
+        use crate::sound::SoundHint;
+        let audible = linux_notification_hints(&SoundHint::Default, false);
         assert!(audible.contains_key("sound-name"));
         assert!(!audible.contains_key("suppress-sound"));
         assert!(!audible.contains_key("x-kde-reply-placeholder-text"));
 
-        let silent_reply = linux_notification_hints(false, true);
+        let file = linux_notification_hints(&SoundHint::File("/s/ding.wav".into()), false);
+        assert!(file.contains_key("sound-file") && !file.contains_key("sound-name"));
+
+        let silent_reply = linux_notification_hints(&SoundHint::Silent, true);
         assert!(!silent_reply.contains_key("sound-name"));
         assert!(silent_reply.contains_key("suppress-sound"));
         assert!(silent_reply.contains_key("x-kde-reply-placeholder-text"));
