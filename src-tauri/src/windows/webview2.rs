@@ -104,6 +104,37 @@ pub(crate) fn explain_missing_runtime() {
     }
 }
 
+#[cfg(target_os = "windows")]
+/// Let the page mark regions that drag the window, like a title bar
+/// (`app-region: drag`): WebView2 then handles them natively, with snapping,
+/// double-click to maximize and the system menu. It applies from the next
+/// navigation, and every Messenger window starts on Carrier's local page.
+pub(crate) fn enable_app_region(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings9;
+    use windows::core::Interface;
+    let result = window.with_webview(|webview| {
+        // SAFETY: wry hands over the live controller on the main thread.
+        unsafe {
+            let Ok(core) = webview.controller().CoreWebView2() else {
+                return;
+            };
+            let Ok(settings) = core
+                .Settings()
+                .and_then(|s| s.cast::<ICoreWebView2Settings9>())
+            else {
+                log::warn!("WebView2 is too old for draggable regions");
+                return;
+            };
+            if let Err(error) = settings.SetIsNonClientRegionSupportEnabled(true) {
+                log::warn!("could not enable WebView2 draggable regions: {error}");
+            }
+        }
+    });
+    if let Err(error) = result {
+        log::warn!("could not reach WebView2 for draggable regions: {error}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

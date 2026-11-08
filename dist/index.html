@@ -105,6 +105,18 @@
         #detail { background: rgba(255, 255, 255, .08); }
         #open-anyway { color: #4599ff; box-shadow: inset 0 0 0 1px #4599ff; }
       }
+      /* Carrier's window controls on Windows and Linux (src-tauri/src/title_bar.rs):
+         this page shows before Messenger has loaded, in a window with no frame. */
+      #title-strip { position: fixed; top: 0; left: 0; right: 0; height: var(--inset); }
+      #window-controls { position: fixed; top: 0; right: 0; height: var(--inset); display: flex; align-items: center; color: inherit; }
+      #window-controls button { appearance: none; border: 0; border-radius: 0; margin: 0; padding: 0; min-width: 0; min-height: 0; box-shadow: none; font: inherit; display: grid; place-items: center; color: inherit; background: transparent; cursor: default; }
+      #window-controls svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+      html[data-controls="windows"] #window-controls button { width: 46px; height: 100%; }
+      html[data-controls="windows"] #window-controls button:hover { background: rgba(127, 127, 127, .18); }
+      html[data-controls="windows"] #window-controls button[data-action="close"]:hover { background: #c42b1c; color: #fff; }
+      html[data-controls="linux"] #window-controls { gap: 10px; padding: 0 8px; }
+      html[data-controls="linux"] #window-controls button { width: 24px; height: 24px; border-radius: 50%; background: rgba(127, 127, 127, .18); }
+      html[data-controls="linux"] #window-controls svg { width: 9px; height: 9px; stroke-width: 1.4; }
     </style>
   </head>
   <body data-state="checking">
@@ -188,6 +200,67 @@
         }
       });
       connect(true);
+    </script>
+    <script>
+      // Carrier's window controls on Windows and Linux, until Messenger loads
+      // (src-tauri/src/title_bar.rs keeps them in step with the window).
+      (() => {
+        const control = (action) => window.__TAURI_INTERNALS__.invoke("window_control", { action }).catch(() => {});
+        const root = document.documentElement;
+        const paths = {
+          minimize: '<path d="M2 6h8" />',
+          maximize: '<rect x="2" y="2" width="8" height="8" rx="1" />',
+          restore: '<rect x="2" y="4" width="6" height="6" rx="1" /><path d="M4.5 4V3a1 1 0 0 1 1-1H9a1 1 0 0 1 1 1v3.5a1 1 0 0 1-1 1H8" />',
+          close: '<path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />',
+        };
+        const icon = (name) => `<svg viewBox="0 0 12 12" aria-hidden="true">${paths[name]}</svg>`;
+        let strip = null;
+        let box = null;
+        const build = () => {
+          strip = document.createElement("div");
+          strip.id = "title-strip";
+          strip.addEventListener("mousedown", (event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            control(event.detail === 2 ? "toggle-maximize" : "drag");
+          });
+          box = document.createElement("div");
+          box.id = "window-controls";
+          for (const [action, label] of [["minimize", "Minimize"], ["toggle-maximize", "Maximize"], ["close", "Close"]]) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.dataset.action = action;
+            button.addEventListener("click", () => control(action));
+            box.append(button);
+          }
+        };
+        const apply = (state) => {
+          const shown = Boolean(state && state.controls && state.inset > 0);
+          if (!shown) {
+            strip?.remove();
+            box?.remove();
+            delete root.dataset.controls;
+            return;
+          }
+          if (!box) build();
+          root.dataset.controls = state.controls;
+          root.style.setProperty("--inset", `${state.inset}px`);
+          for (const button of box.children) {
+            const action = button.dataset.action;
+            const name = action === "toggle-maximize" ? (state.maximized ? "restore" : "maximize") : action;
+            const label = { minimize: "Minimize", maximize: "Maximize", restore: "Restore", close: "Close" }[name];
+            if (button.dataset.icon !== name) {
+              button.dataset.icon = name;
+              button.innerHTML = icon(name);
+              button.title = label;
+              button.setAttribute("aria-label", label);
+            }
+          }
+          if (!box.isConnected) document.body.append(strip, box);
+        };
+        window.__carrierTitleBar = apply;
+        apply(window.__CARRIER_TITLE_BAR__);
+      })();
     </script>
   </body>
 </html>

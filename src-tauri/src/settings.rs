@@ -228,8 +228,7 @@ pub(crate) fn apply_page_zoom(window: &tauri::WebviewWindow, zoom: i32) {
     let factor = f64::from(clamp_zoom(zoom)) / 100.0;
     #[cfg(target_os = "macos")]
     let result = crate::macos::zoom::set_page_zoom(window, factor);
-    #[cfg(target_os = "macos")]
-    crate::macos::title_bar::zoom_changed(window, clamp_zoom(zoom));
+    crate::title_bar::zoom_changed(window, clamp_zoom(zoom));
     #[cfg(not(target_os = "macos"))]
     let result = window.set_zoom(factor);
     if let Err(e) = result {
@@ -845,6 +844,8 @@ pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), S
 /// dispatching portal work off-main.
 pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     crate::menu::sync_setting_checks(app, s);
+    // The title bar setting can switch Carrier's window controls on or off.
+    crate::title_bar::settings_changed(app, s);
     // Action titles are fixed per macOS category registration.
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     let reaction_changed =
@@ -883,9 +884,16 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         let _ = window.set_background_color(Some(splash_background(s)));
         // Title-bar visibility follows the setting live, on every window —
         // the Settings dialog carries the same redundant header bar on
-        // tiling WMs.
+        // tiling WMs. Messenger windows and Settings draw Carrier's own controls
+        // instead on floating desktops (crate::title_bar).
         #[cfg(target_os = "linux")]
-        let _ = window.set_decorations(crate::window::show_title_bar(s));
+        let _ = window.set_decorations(
+            if crate::window::is_messenger_window_label(&label) || label == "settings" {
+                crate::window::native_decorations(s)
+            } else {
+                crate::window::show_title_bar(s)
+            },
+        );
         if label != "settings" {
             #[cfg(not(target_os = "macos"))]
             let _ = if s.hide_menu_bar {

@@ -7,12 +7,68 @@
     <script>
       // Before the first paint, so the tab bar doesn't move.
       if (/Mac/.test(navigator.platform || "")) document.documentElement.classList.add("mac-title-bar");
+      // Windows and Linux: Carrier's close button and drag strip. Settings
+      // can't be minimized or maximized, so close is the only control.
+      (() => {
+        const root = document.documentElement;
+        const control = (action) => window.__TAURI_INTERNALS__.invoke("window_control", { action }).catch(() => {});
+        let strip = null;
+        let box = null;
+        const apply = (state) => {
+          const shown = Boolean(state && state.controls && state.inset > 0);
+          if (!shown) {
+            strip?.remove();
+            box?.remove();
+            delete root.dataset.controls;
+            return;
+          }
+          root.dataset.controls = state.controls;
+          root.style.setProperty("--inset", `${state.inset}px`);
+          if (!box) {
+            strip = document.createElement("div");
+            strip.id = "title-strip";
+            strip.addEventListener("mousedown", (event) => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              control("drag");
+            });
+            box = document.createElement("div");
+            box.id = "window-controls";
+            const close = document.createElement("button");
+            close.type = "button";
+            close.title = "Close";
+            close.setAttribute("aria-label", "Close");
+            close.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" /></svg>';
+            close.addEventListener("click", () => control("close"));
+            box.append(close);
+          }
+          const attach = () => {
+            if (!box.isConnected) document.body.append(strip, box);
+          };
+          if (document.body) attach();
+          else document.addEventListener("DOMContentLoaded", attach, { once: true });
+        };
+        window.__carrierTitleBar = apply;
+        apply(window.__CARRIER_TITLE_BAR__);
+      })();
     </script>
     <style>
       :root { color-scheme: light dark; }
       /* macOS: the window buttons float over the tab bar (no separate title
          bar), so the bar keeps a 28pt strip free for them. */
       html.mac-title-bar .tabs { padding-top: 40px; }
+      /* Windows and Linux: Carrier draws the close button (src-tauri/src/title_bar.rs),
+         over a strip at the top of the tab bar that drags the window. */
+      html[data-controls] .tabs { padding-top: calc(12px + var(--inset)); }
+      #title-strip { position: fixed; top: 0; left: 0; right: 0; height: var(--inset); z-index: 2; }
+      #window-controls { position: fixed; top: 0; right: 0; height: var(--inset); display: flex; align-items: center; z-index: 3; color: inherit; }
+      #window-controls button { appearance: none; border: 0; border-radius: 0; margin: 0; padding: 0; min-width: 0; min-height: 0; box-shadow: none; font: inherit; display: grid; place-items: center; color: inherit; background: transparent; cursor: default; }
+      #window-controls svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; }
+      html[data-controls="windows"] #window-controls button { width: 46px; height: 100%; }
+      html[data-controls="windows"] #window-controls button:hover { background: #c42b1c; color: #fff; }
+      html[data-controls="linux"] #window-controls { padding: 0 8px; }
+      html[data-controls="linux"] #window-controls button { width: 24px; height: 24px; border-radius: 50%; background: rgba(127, 127, 127, .18); }
+      html[data-controls="linux"] #window-controls svg { width: 9px; height: 9px; stroke-width: 1.4; }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; }
       body {

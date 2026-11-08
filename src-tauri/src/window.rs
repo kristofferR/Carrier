@@ -103,6 +103,14 @@ pub(crate) fn show_title_bar(s: &Settings) -> bool {
     }
 }
 
+/// Linux: whether a Messenger or Settings window keeps the GTK header bar. Only "show"
+/// does: on floating desktops "auto" draws Carrier's own controls instead
+/// (crate::title_bar), and tiling window managers need none.
+#[cfg(target_os = "linux")]
+pub(crate) fn native_decorations(s: &Settings) -> bool {
+    show_title_bar(s) && crate::title_bar::controls(s).is_none()
+}
+
 /// A theme-appropriate window background so there's no white flash before the
 /// remote page paints (Facebook glares white in dark mode while loading).
 pub(crate) fn splash_background(s: &Settings) -> Color {
@@ -525,9 +533,8 @@ fn build_app_window_with_render_budget(
                     crate::pane_widths::push(&window, settings.pane_widths);
                 }
                 apply_custom_css(&window, payload.url());
-                // A reload starts from the initial inset; restate the current one.
-                #[cfg(target_os = "macos")]
-                crate::macos::title_bar::page_loaded(&window);
+                // A reload starts from the initial state; restate the current one.
+                crate::title_bar::page_loaded(&window);
             }
         })
         .on_navigation(allow_navigation)
@@ -693,10 +700,13 @@ fn build_app_window_with_render_budget(
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
+    // Windows: Carrier draws the window controls (see crate::title_bar).
+    #[cfg(target_os = "windows")]
+    let builder = builder.decorations(false);
     // Linux: drop the GTK header bar on tiling WMs (or by explicit setting).
     #[cfg(target_os = "linux")]
     let builder = builder
-        .decorations(show_title_bar(settings))
+        .decorations(native_decorations(settings))
         .on_permission_request(crate::linux::media_permission);
     let builder = match crate::user_agent::messenger_user_agent() {
         Some(user_agent) => builder.user_agent(user_agent),
@@ -737,6 +747,10 @@ fn build_app_window_with_render_budget(
             make_webview_transparent(window);
             crate::macos::title_bar::install(window);
         }
+        crate::title_bar::watch(window);
+        // Lets the page's strip drag the window natively (app-region).
+        #[cfg(target_os = "windows")]
+        crate::windows::webview2::enable_app_region(window);
     })?;
     let token_cleanup_value = download_reveal_token.clone();
     {
@@ -752,8 +766,7 @@ fn build_app_window_with_render_budget(
     let token_cleanup_label = label.to_string();
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Destroyed) {
-            #[cfg(target_os = "macos")]
-            crate::macos::title_bar::forget(&token_cleanup_label);
+            crate::title_bar::forget(&token_cleanup_label);
             let state = token_cleanup_handle.state::<AppState>();
             let mut tokens = state.download_reveal_tokens.lock().unwrap();
             if tokens.get(&token_cleanup_label) == Some(&token_cleanup_value) {
@@ -1220,13 +1233,17 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
-    // Linux: the dialog carries the same redundant header bar on tiling WMs.
-    #[cfg(target_os = "linux")]
-    let builder = builder.decorations({
+    // Windows and Linux: Carrier's title bar, as in the Messenger windows
+    // (crate::title_bar): the page draws the close button.
+    let builder = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
-        show_title_bar(&s)
-    });
+        #[cfg(target_os = "linux")]
+        let builder = builder.decorations(native_decorations(&s));
+        #[cfg(target_os = "windows")]
+        let builder = builder.decorations(false);
+        builder.initialization_script(crate::title_bar::initial_script(&s, false))
+    };
     match builder.build() {
         Ok(window) => {
             {
@@ -1282,14 +1299,8 @@ fn init_script(
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
     let reveal_token_literal =
         serde_json::to_string(download_reveal_token).expect("reveal token serialises");
-    // macOS: the strip under the window buttons, set before the features run.
-    #[cfg(target_os = "macos")]
-    let title_bar_inset = format!(
-        "\n  window.__CARRIER_TITLE_BAR_INSET__ = {};",
-        crate::macos::title_bar::css_inset(settings.zoom)
-    );
-    #[cfg(not(target_os = "macos"))]
-    let title_bar_inset = "";
+    // The strip for the window controls, set before the features run.
+    let title_bar_inset = crate::title_bar::initial_script(settings, true);
     format!(
         r#"(function () {{
   var carrierHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
@@ -1304,6 +1315,7 @@ fn init_script(
     carrierHost.endsWith('.facebook.com') ||
     carrierHost === 'messenger.com' ||
     carrierHost.endsWith('.messenger.com');
+{title_bar_inset}
   if (!carrierInjectable) {{
     // Keep normal feature injection off Carrier's trusted local pages. Debug
     // builds still need their MCP responder there so the connectivity screen
@@ -1315,7 +1327,7 @@ fn init_script(
   }}
 
   window.__CARRIER_HEARTBEAT_ID__ = {watchdog_id};
-  window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = {scheduled_send_available};{title_bar_inset}
+  window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = {scheduled_send_available};
 
   // Import the per-window secret as a non-extractable key. Only signed request
   // data crosses Tauri's page-visible serializer, so a hostile inherited
@@ -1510,6 +1522,20 @@ fn init_script(
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     return carrierAuthorizedEmit('carrier:open-download-privacy', {{}});
+  }};
+  // Carrier's title bar (title_bar.rs): signed, so a page can only act on its
+  // own window.
+  var carrierWindowControl = function (action) {{
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:window-control', {{ action: action }});
+  }};
+  var carrierMediaViewer = function (open) {{
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:media-viewer', {{ open: open }});
   }};
   var carrierClaimContextAction = function (action) {{
     if (!carrierAuthorizedEmit) {{

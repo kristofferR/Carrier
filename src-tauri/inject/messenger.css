@@ -27,17 +27,108 @@ html:has(body [role="navigation"] [role="grid"]) {
   --header-height: 0px !important;
 }
 
-/* macOS: the window buttons float over the top of the chat list, so the list
-   keeps a strip free under them (--carrier-title-bar-inset, set by Carrier; 0
-   elsewhere). The padding goes on the element that paints the list, so the
-   list's own colour fills the strip, and the chat beside it keeps even gaps
-   above and below. The skeleton Messenger shows while loading has the same
-   structure, so nothing moves once it has loaded. */
-:is([role="main"] ~ [role="navigation"], [role="navigation"]:has(~ [role="main"]))
+/* Carrier's title bar strip (--carrier-title-bar-inset, set by Carrier; see
+   src-tauri/src/title_bar.rs and features/title-bar.ts).
+   macOS: the window buttons float over the top of the chat list, so the list
+   keeps the strip free under them. The padding goes on the element that paints
+   the list, so the list's own colour fills the strip, and the chat beside it
+   keeps even gaps above and below. The skeleton Messenger shows while loading
+   has the same structure, so nothing moves once it has loaded. */
+html[data-carrier-title-bar="macos"]
+  :is([role="main"] ~ [role="navigation"], [role="navigation"]:has(~ [role="main"]))
   > div:first-child
   > div:first-child {
   padding-top: var(--carrier-title-bar-inset, 0px) !important;
   box-sizing: border-box !important;
+}
+
+/* Windows and Linux: Carrier draws minimize, maximize and close at the top
+   right, over a strip above the chat; the chat list starts at the top. */
+html:is([data-carrier-title-bar="windows"], [data-carrier-title-bar="linux"]) [role="main"] {
+  margin-top: var(--carrier-title-bar-inset, 0px) !important;
+}
+#carrier-title-strip {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: var(--carrier-title-bar-inset, 0px);
+  z-index: 2147483646;
+}
+/* Windows: WebView2 drags the window by it natively (snapping, double-click
+   to maximize, the system menu). */
+html[data-carrier-title-bar="windows"] #carrier-title-strip {
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+#carrier-window-controls {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: var(--carrier-title-bar-inset, 0px);
+  display: flex;
+  align-items: center;
+  z-index: 2147483647;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+  color: var(--primary-text, #050505);
+}
+#carrier-window-controls button {
+  appearance: none;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  min-height: 0;
+  box-shadow: none;
+  font: inherit;
+  display: grid;
+  place-items: center;
+  color: inherit;
+  background: transparent;
+  cursor: default;
+}
+/* Sized from the strip (32px at 100% zoom), which Carrier scales against the
+   page zoom, so the buttons keep their size at any zoom. */
+#carrier-window-controls svg {
+  width: calc(var(--carrier-title-bar-inset, 0px) * 10 / 32);
+  height: calc(var(--carrier-title-bar-inset, 0px) * 10 / 32);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* Windows 11 caption buttons. */
+html[data-carrier-title-bar="windows"] #carrier-window-controls button {
+  width: calc(var(--carrier-title-bar-inset, 0px) * 46 / 32);
+  height: 100%;
+}
+html[data-carrier-title-bar="windows"] #carrier-window-controls button:hover {
+  background: rgba(127, 127, 127, 0.18);
+}
+html[data-carrier-title-bar="windows"] #carrier-window-controls button[data-control="close"]:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+/* GNOME (Adwaita) style. */
+html[data-carrier-title-bar="linux"] #carrier-window-controls {
+  gap: calc(var(--carrier-title-bar-inset, 0px) * 10 / 32);
+  padding: 0 calc(var(--carrier-title-bar-inset, 0px) * 8 / 32);
+}
+html[data-carrier-title-bar="linux"] #carrier-window-controls button {
+  width: calc(var(--carrier-title-bar-inset, 0px) * 24 / 32);
+  height: calc(var(--carrier-title-bar-inset, 0px) * 24 / 32);
+  border-radius: 50%;
+  background: var(--secondary-button-background, rgba(127, 127, 127, 0.18));
+}
+html[data-carrier-title-bar="linux"] #carrier-window-controls button:hover {
+  filter: brightness(1.1);
+}
+html[data-carrier-title-bar="linux"] #carrier-window-controls svg {
+  width: calc(var(--carrier-title-bar-inset, 0px) * 9 / 32);
+  height: calc(var(--carrier-title-bar-inset, 0px) * 9 / 32);
+  stroke-width: 1.4;
 }
 
 body:not(:has([data-carrier-media-viewer])) div[role="banner"] {

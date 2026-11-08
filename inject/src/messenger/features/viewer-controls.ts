@@ -1,6 +1,6 @@
 import { isMediaViewerDialog, MEDIA_VIEWER_ATTR } from "../lib/media-viewer";
 import { viewerControlOffset } from "../lib/viewer-controls";
-import { reportMediaViewer } from "./title-bar";
+import { reportMediaViewer, windowControlsInset } from "./title-bar";
 
 const DIALOG = '[role="dialog"]';
 const BANNER = 'div[role="banner"]';
@@ -17,14 +17,16 @@ const visibleControls = (root: HTMLElement) =>
         rect.width >= 16 &&
         rect.height >= 16 &&
         rect.bottom > 0 &&
-        rect.top < 96 &&
+        // Controls sit near the top; Carrier's strip (and the offset clearing
+        // it) can move them further down, so the band grows with it.
+        rect.top < 96 + windowControlsInset() &&
         rect.right > 0 &&
         rect.left < window.innerWidth,
     );
 
 const applyOffset = (element: HTMLElement, controlTops: number[], attr: string) => {
   const currentOffset = Number.parseFloat(element.style.getPropertyValue(OFFSET)) || 0;
-  const offset = viewerControlOffset(controlTops, currentOffset);
+  const offset = viewerControlOffset(controlTops, currentOffset, windowControlsInset());
   if (!offset) return false;
   if (!element.hasAttribute(attr)) element.setAttribute(attr, "");
   const value = `${offset}px`;
