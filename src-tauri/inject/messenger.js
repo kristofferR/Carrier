@@ -14985,7 +14985,7 @@ ${text}`)) {
     strip.addEventListener("mousedown", (event) => {
       if (event.button !== 0 || !state2?.controls) return;
       event.preventDefault();
-      control(event.detail === 2 ? "toggle-maximize" : "drag");
+      control(event.detail === 2 && state2.maximize ? "toggle-maximize" : "drag");
     });
     return strip;
   }
@@ -15030,6 +15030,8 @@ ${text}`)) {
     const close = controls.querySelector('[data-control="close"]');
     if (minimize && !minimize.innerHTML) minimize.innerHTML = icon("minimize");
     if (close && !close.innerHTML) close.innerHTML = icon("close");
+    if (minimize) minimize.hidden = !next.minimize;
+    if (maximize) maximize.hidden = !next.maximize;
     if (maximize) {
       const name = next.maximized ? "restore" : "maximize";
       if (maximize.dataset.icon !== name) {

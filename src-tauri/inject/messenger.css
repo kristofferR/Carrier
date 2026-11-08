@@ -88,6 +88,9 @@ html[data-carrier-title-bar="windows"] #carrier-title-strip {
   background: transparent;
   cursor: default;
 }
+#carrier-window-controls button[hidden] {
+  display: none;
+}
 /* Sized from the strip (32px at 100% zoom), which Carrier scales against the
    page zoom, so the buttons keep their size at any zoom. */
 #carrier-window-controls svg {

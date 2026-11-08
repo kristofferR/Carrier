@@ -1,14 +1,16 @@
-//! Linux: whether the compositor tiles each window, so Carrier's own window
-//! controls (crate::title_bar) show on floating windows only.
+//! Linux: whether the compositor handles a window's controls, so Carrier draws
+//! its own (crate::title_bar) only where nothing else does.
 //!
-//! Floating desktops tile nothing. Under a tiling window manager a window
-//! counts as tiled until the compositor says it floats:
+//! Floating desktops leave every window to Carrier. Under a tiling window
+//! manager the compositor handles a window until it says the window floats:
 //! - Hyprland tells every window it is tiled, floating or not, so its event
-//!   socket says which ones float.
+//!   socket says which ones float. A floating window can still get the
+//!   compositor's own title bar from hyprbars (Omarchy's floating workspaces
+//!   use a fork of it), which has window buttons of its own.
 //! - Other Wayland compositors (sway, river, niri, ...) send xdg-shell's tiled
 //!   states, which GTK reports. They count once any window has reported one:
-//!   a compositor that never sends them leaves every window tiled.
-//! - X11 has no such state, so X11 tilers keep every window tiled.
+//!   a compositor that never sends them keeps every window handled.
+//! - X11 has no such state, so X11 tilers keep every window handled.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -24,41 +26,101 @@ use gtk::prelude::WidgetExt;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
-/// What the compositor last said about each window, by label: true when tiled.
-fn tiled_windows() -> &'static Mutex<HashMap<String, bool>> {
-    static TILED: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
-    TILED.get_or_init(Default::default)
+/// What the compositor last said about a window.
+#[derive(Clone, PartialEq, Debug)]
+struct Chrome {
+    /// It handles the window's controls.
+    handled: bool,
+    /// Hyprland only: it has the window maximized.
+    maximized: bool,
+    /// Hyprland only: its address for the window.
+    address: Option<String>,
+}
+
+/// Each window's [`Chrome`], by label.
+fn windows() -> &'static Mutex<HashMap<String, Chrome>> {
+    static WINDOWS: OnceLock<Mutex<HashMap<String, Chrome>>> = OnceLock::new();
+    WINDOWS.get_or_init(Default::default)
 }
 
 /// Set once any window reports an xdg-shell tiled state.
 static REPORTS_TILING: AtomicBool = AtomicBool::new(false);
 
-/// Whether the compositor tiles the window: its controls and strip go.
-pub(crate) fn is_tiled(label: &str) -> bool {
+/// Whether the compositor handles the window's controls (it tiles the window,
+/// or draws a title bar on it): Carrier's controls and strip go.
+pub(crate) fn compositor_handles(label: &str) -> bool {
     if !crate::linux::is_tiling_wm() {
         return false;
     }
     if hyprland().is_none() && !REPORTS_TILING.load(Ordering::Relaxed) {
         return true;
     }
-    tiled_windows()
+    windows()
         .lock()
         .unwrap()
         .get(label)
-        .copied()
-        .unwrap_or(true)
+        .is_none_or(|chrome| chrome.handled)
 }
 
-fn record(window: &WebviewWindow, tiled: bool) {
-    tiled_windows()
+/// Which of minimize and maximize Carrier's controls offer under a tiling
+/// window manager. None of them minimize; Hyprland maximizes on request
+/// ([`toggle_maximized`]), the others ignore it.
+pub(crate) fn buttons() -> (bool, bool) {
+    (false, hyprland().is_some())
+}
+
+/// Hyprland: whether it has the window maximized. GTK can't tell, as Hyprland
+/// reports every window maximized.
+pub(crate) fn hyprland_maximized(label: &str) -> Option<bool> {
+    hyprland()?;
+    windows()
         .lock()
         .unwrap()
-        .insert(window.label().to_string(), tiled);
+        .get(label)
+        .map(|chrome| chrome.maximized)
+}
+
+/// Hyprland: maximize or restore the window, as Omarchy suppresses the
+/// clients' own requests. False elsewhere.
+pub(crate) fn toggle_maximized(label: &str) -> bool {
+    let Some(dir) = hyprland() else {
+        return false;
+    };
+    let address = windows()
+        .lock()
+        .unwrap()
+        .get(label)
+        .and_then(|chrome| chrome.address.clone());
+    let Some(address) = address else {
+        log::warn!("Hyprland window for {label} unknown; can't maximize it");
+        return true;
+    };
+    // The Lua config (Hyprland 0.55 and later), then the older one, whose
+    // `fullscreen` acts on the focused window.
+    let toggled = [
+        format!(
+            r#"dispatch hl.dsp.window.fullscreen({{ mode = "maximized", action = "toggle", window = "address:{address}" }})"#
+        ),
+        format!("[[BATCH]]dispatch focuswindow address:{address}; dispatch fullscreen 1"),
+    ]
+    .iter()
+    .any(|command| request(dir, command).is_ok_and(|reply| reply.starts_with(b"ok")));
+    if !toggled {
+        log::warn!("Hyprland refused to maximize the window");
+    }
+    true
+}
+
+fn record(window: &WebviewWindow, chrome: Chrome) {
+    windows()
+        .lock()
+        .unwrap()
+        .insert(window.label().to_string(), chrome);
     crate::title_bar::sync(window);
 }
 
 pub(crate) fn forget(label: &str) {
-    tiled_windows().lock().unwrap().remove(label);
+    windows().lock().unwrap().remove(label);
 }
 
 /// Follow a window's xdg-shell tiled state (not on Hyprland, see above).
@@ -73,9 +135,16 @@ pub(crate) fn watch(window: &WebviewWindow) {
     gtk_window.connect_window_state_event(move |_, event| {
         let tiled = event.new_window_state().contains(WindowState::TILED);
         let first_report = tiled && !REPORTS_TILING.swap(true, Ordering::Relaxed);
-        record(&watched, tiled);
+        record(
+            &watched,
+            Chrome {
+                handled: tiled,
+                maximized: false,
+                address: None,
+            },
+        );
         if first_report {
-            // Every other window counted as tiled until now; recheck them.
+            // Every other window counted as handled until now; recheck them.
             crate::title_bar::sync_all(watched.app_handle());
         }
         Propagation::Proceed
@@ -109,7 +178,12 @@ pub(crate) fn start(app: &AppHandle) {
                         refresh(&app, dir);
                         for line in BufReader::new(events).lines() {
                             let Ok(line) = line else { break };
-                            if is_floating_event(&line) {
+                            if changes_window_chrome(&line) {
+                                if line.starts_with("movewindowv2>>") {
+                                    // Omarchy rearranges a moved window once
+                                    // the move has landed, on a timer.
+                                    std::thread::sleep(MOVE_SETTLE);
+                                }
                                 refresh(&app, dir);
                             }
                         }
@@ -125,21 +199,42 @@ pub(crate) fn start(app: &AppHandle) {
     }
 }
 
-/// Events after which a window may float or tile differently: a window opens
-/// (showing a hidden one opens it again), or its floating mode changes.
-fn is_floating_event(line: &str) -> bool {
-    line.starts_with("openwindow>>") || line.starts_with("changefloatingmode>>")
+/// How long a moved window's workspace takes to rearrange it.
+const MOVE_SETTLE: Duration = Duration::from_millis(100);
+
+/// Events after which a window may float, tile, maximize or get a title bar
+/// differently: a window opens (showing a hidden one opens it again), floats
+/// or tiles, maximizes or restores, moves to another workspace (Omarchy's
+/// floating workspaces give their windows title bars), or the config reloads
+/// (title bars on or off).
+fn changes_window_chrome(line: &str) -> bool {
+    [
+        "openwindow>>",
+        "changefloatingmode>>",
+        "fullscreen>>",
+        "movewindowv2>>",
+        "configreloaded>>",
+    ]
+    .iter()
+    .any(|event| line.starts_with(event))
 }
 
 #[derive(Deserialize)]
 struct HyprClient {
+    address: String,
     pid: i64,
     title: String,
     floating: bool,
+    /// 1 when maximized, 2 in full screen (a bool before Hyprland 0.42).
+    #[serde(default)]
+    fullscreen: serde_json::Value,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
-/// Ask Hyprland which of Carrier's windows float. Its windows are matched by
-/// process and title; same-titled windows that disagree keep their last state.
+/// Ask Hyprland which of Carrier's windows float without a title bar of its
+/// own. Its windows are matched by process and title; same-titled windows that
+/// disagree keep their last state.
 fn refresh(app: &AppHandle, dir: &Path) {
     let clients = match request(dir, "j/clients")
         .and_then(|reply| serde_json::from_slice::<Vec<HyprClient>>(&reply).map_err(Into::into))
@@ -151,24 +246,91 @@ fn refresh(app: &AppHandle, dir: &Path) {
         }
     };
     let pid = i64::from(std::process::id());
+    let bars = TitleBars::query(dir);
     for (label, window) in app.webview_windows() {
         if !crate::title_bar::has_title_bar(&label) {
             continue;
         }
         let Ok(title) = window.title() else { continue };
-        if let Some(floating) = agreed_floating(&clients, pid, &title) {
-            record(&window, !floating);
+        let chrome: Vec<Chrome> = clients
+            .iter()
+            .filter(|client| client.pid == pid && client.title == title)
+            .map(|client| Chrome {
+                handled: !client.floating || bars.drawn_on(dir, client),
+                maximized: client.fullscreen.as_i64() == Some(1),
+                address: Some(client.address.clone()),
+            })
+            .collect();
+        if let Some(chrome) = agreed(chrome) {
+            record(&window, chrome);
         }
     }
 }
 
-fn agreed_floating(clients: &[HyprClient], pid: i64, title: &str) -> Option<bool> {
-    let mut floating = clients
+/// One window's state, or that of several same-titled ones when they agree
+/// (without an address, which would be ambiguous).
+fn agreed(mut chromes: Vec<Chrome>) -> Option<Chrome> {
+    let first = chromes.pop()?;
+    if chromes.is_empty() {
+        return Some(first);
+    }
+    chromes
         .iter()
-        .filter(|client| client.pid == pid && client.title == title)
-        .map(|client| client.floating);
-    let first = floating.next()?;
-    floating.all(|other| other == first).then_some(first)
+        .all(|other| other.handled == first.handled && other.maximized == first.maximized)
+        .then_some(Chrome {
+            address: None,
+            ..first
+        })
+}
+
+/// hyprbars' settings: whether it draws, and the window tag it is limited to
+/// (Omarchy's fork draws only on windows tagged as on a floating workspace).
+struct TitleBars {
+    enabled: bool,
+    tag: Option<String>,
+}
+
+impl TitleBars {
+    fn query(dir: &Path) -> Self {
+        let option = |name: &str| {
+            request(dir, &format!("j/getoption plugin:hyprbars:{name}"))
+                .ok()
+                .and_then(|reply| serde_json::from_slice::<serde_json::Value>(&reply).ok())
+        };
+        // Older hyprbars has no `enabled` option and always draws.
+        let enabled = option("enabled").is_none_or(|value| {
+            value["bool"].as_bool().unwrap_or(true) && value["int"].as_i64() != Some(0)
+        });
+        let tag = option("workspace_tag")
+            .and_then(|value| value["str"].as_str().map(str::to_owned))
+            .filter(|tag| !tag.is_empty());
+        Self { enabled, tag }
+    }
+
+    fn drawn_on(&self, dir: &Path, client: &HyprClient) -> bool {
+        self.enabled
+            && self.tag.as_deref().is_none_or(|tag| has_tag(client, tag))
+            && request(dir, &format!("j/decorations address:{}", client.address))
+                .is_ok_and(|reply| has_title_bar_decoration(&reply))
+    }
+}
+
+/// Hyprland lists dynamic tags (set by rules) with a trailing `*`.
+fn has_tag(client: &HyprClient, tag: &str) -> bool {
+    client
+        .tags
+        .iter()
+        .any(|have| have.trim_end_matches('*') == tag)
+}
+
+fn has_title_bar_decoration(reply: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Decoration {
+        decoration_name: String,
+    }
+    serde_json::from_slice::<Vec<Decoration>>(reply)
+        .is_ok_and(|list| list.iter().any(|d| d.decoration_name == "Hyprbar"))
 }
 
 fn request(dir: &Path, command: &str) -> std::io::Result<Vec<u8>> {
@@ -184,32 +346,44 @@ fn request(dir: &Path, command: &str) -> std::io::Result<Vec<u8>> {
 mod tests {
     use super::*;
 
-    fn client(pid: i64, title: &str, floating: bool) -> HyprClient {
-        HyprClient {
-            pid,
-            title: title.into(),
-            floating,
-        }
-    }
-
-    #[test]
-    fn a_window_is_matched_by_process_and_title() {
-        let clients = [
-            client(1, "Carrier", true),
-            client(2, "Carrier", false),
-            client(1, "Carrier Settings", false),
-        ];
-        assert_eq!(agreed_floating(&clients, 1, "Carrier"), Some(true));
-        assert_eq!(
-            agreed_floating(&clients, 1, "Carrier Settings"),
-            Some(false)
-        );
-        assert_eq!(agreed_floating(&clients, 1, "Export"), None);
-    }
-
     #[test]
     fn same_titled_windows_must_agree() {
-        let clients = [client(1, "Carrier", true), client(1, "Carrier", false)];
-        assert_eq!(agreed_floating(&clients, 1, "Carrier"), None);
+        let chrome = |handled, address: &str| Chrome {
+            handled,
+            maximized: false,
+            address: Some(address.into()),
+        };
+        assert_eq!(agreed(vec![chrome(true, "0x1")]), Some(chrome(true, "0x1")));
+        let both = agreed(vec![chrome(true, "0x1"), chrome(true, "0x2")]).unwrap();
+        assert!(both.handled && both.address.is_none());
+        assert_eq!(
+            agreed(vec![chrome(true, "0x1"), chrome(false, "0x2")]),
+            None
+        );
+        assert_eq!(agreed(Vec::new()), None);
+    }
+
+    #[test]
+    fn title_bars_follow_the_tag_they_are_limited_to() {
+        let client = HyprClient {
+            address: "0x1".into(),
+            pid: 1,
+            title: "Carrier".into(),
+            floating: true,
+            fullscreen: serde_json::Value::Null,
+            tags: vec!["omarchy-floating-workspace".into(), "opened*".into()],
+        };
+        assert!(has_tag(&client, "omarchy-floating-workspace"));
+        assert!(has_tag(&client, "opened"));
+        assert!(!has_tag(&client, "other"));
+    }
+
+    #[test]
+    fn hyprbars_is_recognised_among_the_decorations() {
+        let with = br#"[{"decorationName":"Border","priority":10000},{"decorationName":"Hyprbar","priority":10005}]"#;
+        let without = br#"[{"decorationName":"Border","priority":10000}]"#;
+        assert!(has_title_bar_decoration(with));
+        assert!(!has_title_bar_decoration(without));
+        assert!(!has_title_bar_decoration(b"no such window"));
     }
 }

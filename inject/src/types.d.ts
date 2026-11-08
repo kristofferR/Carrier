@@ -174,6 +174,8 @@ interface Window {
   __CARRIER_TITLE_BAR__?: {
     inset: number;
     controls: "windows" | "linux" | null;
+    minimize: boolean;
+    maximize: boolean;
     maximized: boolean;
   };
   /** Called by the native side with the strip's current state. */
