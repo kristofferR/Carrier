@@ -64,17 +64,28 @@ let soundPlayerCalls = 0;
 const MESSAGE_SOUND_PENDING_MS = 3000;
 // A native notification this soon after Messenger's message sound is silent.
 const MESSAGE_SOUND_RING_MS = 5000;
-let pendingMessageSound: { thread: string; until: number } | null = null;
-let messageSound: { thread: string; at: number } | null = null;
+interface MessageSound {
+  thread: string;
+  /** Messenger's id for the message, when the row carried one. */
+  messageId: string;
+}
+let pendingMessageSound: (MessageSound & { until: number }) | null = null;
+let messageSound: (MessageSound & { at: number }) | null = null;
 
 /**
- * Messenger's own new-message sound just played for this conversation, so a
- * native notification for it shouldn't ring too: a message rings once.
+ * Messenger's own sound just played for this message, so its native
+ * notification shouldn't ring too: a message rings once. A notification that
+ * names its message matches by id; one that doesn't (the row fallback)
+ * matches the conversation, and only once, so a later message there rings.
  */
-export const messengerMessageSoundJustPlayed = (thread: string | null) =>
-  thread !== null &&
-  messageSound?.thread === thread &&
-  Date.now() - messageSound.at < MESSAGE_SOUND_RING_MS;
+export function messengerMessageSoundJustPlayed(thread: string | null, messageId = ""): boolean {
+  const sound = messageSound;
+  if (!sound || Date.now() - sound.at >= MESSAGE_SOUND_RING_MS) return false;
+  if (messageId) return sound.messageId === messageId;
+  if (thread === null || sound.thread !== thread) return false;
+  messageSound = null;
+  return true;
+}
 let context: AudioContext | null = null;
 let sounding = 0;
 const buffers = new Map<string, Promise<AudioBuffer>>();
@@ -157,7 +168,8 @@ export function installMessengerSoundPlayback() {
     // Do Not Disturb, Pause and Mute silence all of Messenger's sounds.
     if (notificationsGloballyMuted(window.__CARRIER_SETTINGS__)) return Promise.resolve();
     if (pendingMessageSound && Date.now() < pendingMessageSound.until) {
-      messageSound = { thread: pendingMessageSound.thread, at: Date.now() };
+      const { thread, messageId } = pendingMessageSound;
+      messageSound = { thread, messageId, at: Date.now() };
       pendingMessageSound = null;
     }
     const pausesAtStart = pausesOf(this);
@@ -204,7 +216,7 @@ function patchChatPopperCommon(exports: Record<string, unknown>): boolean {
   exports.playChatTabSound = function (this: unknown, ...args: unknown[]) {
     const settings = window.__CARRIER_SETTINGS__;
     const load = pageLoad();
-    const message = args[0] as { timestampMs?: unknown } | null | undefined;
+    const message = args[0] as { timestampMs?: unknown; messageId?: unknown } | null | undefined;
     const plays = playsMessageSound({
       globallyMuted: notificationsGloballyMuted(settings),
       oldNews: isOldNews(messengerMillis(message?.timestampMs, load), serverNowMs(load), null),
@@ -213,7 +225,10 @@ function patchChatPopperCommon(exports: Record<string, unknown>): boolean {
     });
     if (!plays) return undefined;
     const thread = messageThreadId(message, load);
-    pendingMessageSound = thread ? { thread, until: Date.now() + MESSAGE_SOUND_PENDING_MS } : null;
+    const messageId = typeof message?.messageId === "string" ? message.messageId : "";
+    pendingMessageSound = thread
+      ? { thread, messageId, until: Date.now() + MESSAGE_SOUND_PENDING_MS }
+      : null;
     return Reflect.apply(playChatTabSound, this, args);
   };
   return true;

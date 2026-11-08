@@ -93,6 +93,8 @@ function findChatRow(log: Element, main: Element): HTMLElement | null {
   return null;
 }
 
+const SIZE_PROPS = ["flex", "width", "max-width"] as const;
+
 export function initPaneResize() {
   let widths = storedWidths();
   const widthStyle = document.createElement("style");
@@ -155,6 +157,11 @@ export function initPaneResize() {
     );
     let width = Math.round(startWidth);
     let frame = 0;
+    // Messenger's own inline sizing, put back once the drag ends.
+    const inline = SIZE_PROPS.map(
+      (prop) =>
+        [prop, el.style.getPropertyValue(prop), el.style.getPropertyPriority(prop)] as const,
+    );
     document.documentElement.setAttribute(RESIZING_ATTR, "");
     edge.classList.add("dragging");
     // Only the dragged pane's own style changes per frame; rewriting a style
@@ -181,7 +188,10 @@ export function initPaneResize() {
         widths = { ...widths, [pane]: width };
         save();
       }
-      for (const prop of ["flex", "width", "max-width"]) el.style.removeProperty(prop);
+      for (const [prop, value, priority] of inline) {
+        if (value) el.style.setProperty(prop, value, priority);
+        else el.style.removeProperty(prop);
+      }
     };
     edge.addEventListener("pointermove", move);
     edge.addEventListener("lostpointercapture", end);

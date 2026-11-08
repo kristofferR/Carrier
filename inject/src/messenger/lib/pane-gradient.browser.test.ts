@@ -123,7 +123,8 @@ async function runFixtures(gradient: () => void, panes: () => void) {
         !document.documentElement.hasAttribute("data-carrier-resizing"),
       );
       assert("edge marker cleared", !edge.classList.contains("dragging"));
-      assert("temporary width cleared", edge.parentElement!.style.width === "");
+      // Messenger's own inline width comes back once the drag's sizing goes.
+      assert("original inline width restored", edge.parentElement!.style.width === "240px");
       const saved = saves;
       assert("changed width saved once", saved === before + 1);
       edge.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId }));

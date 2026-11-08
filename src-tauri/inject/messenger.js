@@ -6984,7 +6984,14 @@ ${button.innerHTML}`)
   var MESSAGE_SOUND_RING_MS = 5e3;
   var pendingMessageSound = null;
   var messageSound = null;
-  var messengerMessageSoundJustPlayed = (thread2) => thread2 !== null && messageSound?.thread === thread2 && Date.now() - messageSound.at < MESSAGE_SOUND_RING_MS;
+  function messengerMessageSoundJustPlayed(thread2, messageId = "") {
+    const sound = messageSound;
+    if (!sound || Date.now() - sound.at >= MESSAGE_SOUND_RING_MS) return false;
+    if (messageId) return sound.messageId === messageId;
+    if (thread2 === null || sound.thread !== thread2) return false;
+    messageSound = null;
+    return true;
+  }
   var context = null;
   var sounding = 0;
   var buffers = /* @__PURE__ */ new Map();
@@ -7048,7 +7055,8 @@ ${button.innerHTML}`)
       if (!isSound) return nativePlay.call(this);
       if (notificationsGloballyMuted(window.__CARRIER_SETTINGS__)) return Promise.resolve();
       if (pendingMessageSound && Date.now() < pendingMessageSound.until) {
-        messageSound = { thread: pendingMessageSound.thread, at: Date.now() };
+        const { thread: thread2, messageId } = pendingMessageSound;
+        messageSound = { thread: thread2, messageId, at: Date.now() };
         pendingMessageSound = null;
       }
       const pausesAtStart = pausesOf(this);
@@ -7100,7 +7108,8 @@ ${button.innerHTML}`)
       });
       if (!plays) return void 0;
       const thread2 = messageThreadId(message, load);
-      pendingMessageSound = thread2 ? { thread: thread2, until: Date.now() + MESSAGE_SOUND_PENDING_MS } : null;
+      const messageId = typeof message?.messageId === "string" ? message.messageId : "";
+      pendingMessageSound = thread2 ? { thread: thread2, messageId, until: Date.now() + MESSAGE_SOUND_PENDING_MS } : null;
       return Reflect.apply(playChatTabSound, this, args);
     };
     return true;
@@ -10601,8 +10610,8 @@ ${button.innerHTML}`)
           account: accountId(document.cookie) || "",
           row,
           sender,
-          // Messenger's own sound just rang for this conversation (see messenger-sounds).
-          silent: messengerMessageSoundJustPlayed(threadIdFromHref(threadPath))
+          // Messenger's own sound just rang for this message (see messenger-sounds).
+          silent: messengerMessageSoundJustPlayed(threadIdFromHref(threadPath), messageId)
         }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
@@ -11954,6 +11963,7 @@ ${button.innerHTML}`)
     }
     return null;
   }
+  var SIZE_PROPS = ["flex", "width", "max-width"];
   function initPaneResize() {
     let widths = storedWidths();
     const widthStyle = document.createElement("style");
@@ -12013,6 +12023,9 @@ ${button.innerHTML}`)
       );
       let width2 = Math.round(startWidth);
       let frame = 0;
+      const inline = SIZE_PROPS.map(
+        (prop) => [prop, el.style.getPropertyValue(prop), el.style.getPropertyPriority(prop)]
+      );
       document.documentElement.setAttribute(RESIZING_ATTR, "");
       edge.classList.add("dragging");
       const move = (moveEvent) => {
@@ -12037,7 +12050,10 @@ ${button.innerHTML}`)
           widths = { ...widths, [pane]: width2 };
           save();
         }
-        for (const prop of ["flex", "width", "max-width"]) el.style.removeProperty(prop);
+        for (const [prop, value, priority] of inline) {
+          if (value) el.style.setProperty(prop, value, priority);
+          else el.style.removeProperty(prop);
+        }
       };
       edge.addEventListener("pointermove", move);
       edge.addEventListener("lostpointercapture", end);

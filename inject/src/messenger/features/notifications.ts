@@ -292,8 +292,8 @@ export function initNotificationBridge() {
         account: accountId(document.cookie) || "",
         row,
         sender,
-        // Messenger's own sound just rang for this conversation (see messenger-sounds).
-        silent: messengerMessageSoundJustPlayed(threadIdFromHref(threadPath)),
+        // Messenger's own sound just rang for this message (see messenger-sounds).
+        silent: messengerMessageSoundJustPlayed(threadIdFromHref(threadPath), messageId),
       },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);
