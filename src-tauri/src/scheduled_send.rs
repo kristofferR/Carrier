@@ -459,6 +459,25 @@ fn respond(
     }
 }
 
+/// Scheduled messages, in the config directory.
+pub(crate) const STORE_FILE: &str = "scheduled-messages.json";
+
+/// Every file the scheduled-message store keeps in `dir`: the queue, its
+/// recovery marker, and snapshots a crash left mid-save. All hold account and
+/// thread ids, and the queue holds message text (Log Out and Reset; Ref #356).
+pub(crate) fn account_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let store = dir.join(STORE_FILE);
+    let mut files = vec![Store::recovery_marker(&store), store];
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        files.extend(entries.flatten().map(|entry| entry.path()).filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".scheduled-") && name.ends_with(".tmp"))
+        }));
+    }
+    files
+}
+
 pub(crate) fn install(app: &tauri::AppHandle, single_instance: bool) {
     let Ok(directory) = app.path().app_config_dir() else {
         return;
@@ -468,7 +487,7 @@ pub(crate) fn install(app: &tauri::AppHandle, single_instance: bool) {
     if !single_instance {
         return;
     }
-    let mut store = Store::load(directory.join("scheduled-messages.json"));
+    let mut store = Store::load(directory.join(STORE_FILE));
     let mut recovered = store.items.clone();
     let mut changed = false;
     for item in &mut recovered {

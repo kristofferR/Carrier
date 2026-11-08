@@ -36,6 +36,7 @@ mod install_environment;
 mod linux;
 #[cfg(any(target_os = "linux", test))]
 mod linux_startup;
+mod log_out;
 #[cfg(target_os = "macos")]
 mod macos;
 mod media_permissions;

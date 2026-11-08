@@ -534,7 +534,7 @@ fn late_notification_routes() -> &'static Mutex<LateNotificationRoutes> {
 }
 
 #[cfg(target_os = "macos")]
-const PERSISTED_NOTIFICATION_ROUTES_DIR: &str = "notification-routes";
+pub(crate) const PERSISTED_NOTIFICATION_ROUTES_DIR: &str = "notification-routes";
 #[cfg(any(target_os = "macos", test))]
 static PERSISTED_NOTIFICATION_ROUTE_IO: OnceLock<Mutex<()>> = OnceLock::new();
 #[cfg(any(target_os = "macos", test))]
@@ -1091,6 +1091,26 @@ pub(crate) fn clear_avatar_cache() {
                 // instance's avatars are never deleted out from under it.
                 let _ = std::fs::remove_dir(path);
             }
+        }
+    }
+}
+
+/// Delete every avatar directory, this run's and earlier runs' (Log Out and
+/// Reset; Ref #356). Like the startup sweep, never follows a symlink.
+pub(crate) fn remove_avatar_cache() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if is_dir
+            && entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("carrier-avatars-")
+            && let Err(error) = std::fs::remove_dir_all(entry.path())
+        {
+            log::warn!("failed to remove an avatar cache: {error}");
         }
     }
 }

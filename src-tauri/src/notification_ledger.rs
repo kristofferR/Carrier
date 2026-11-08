@@ -175,6 +175,20 @@ fn now_ms() -> u64 {
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
+/// The ledger in `dir` and any snapshot a crash left mid-save (Log Out and
+/// Reset; Ref #356).
+pub(crate) fn account_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut files = vec![dir.join(LEDGER_FILE)];
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        files.extend(entries.flatten().map(|entry| entry.path()).filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(LEDGER_FILE) && name.ends_with(".tmp"))
+        }));
+    }
+    files
+}
+
 /// Load the saved ledger. Call once at startup, before any window can notify.
 pub(crate) fn init(app: &tauri::AppHandle) {
     let Ok(directory) = app.path().app_data_dir() else {
@@ -225,6 +239,20 @@ mod tests {
     const A: &str = "aaaaaaaaaaaaaaaa";
     const B: &str = "bbbbbbbbbbbbbbbb";
     const C: &str = "cccccccccccccccc";
+
+    #[test]
+    fn reset_covers_the_ledger_and_its_crash_snapshots_only() {
+        let path = temp_path("reset");
+        let dir = path.parent().unwrap();
+        std::fs::create_dir_all(dir).unwrap();
+        let snapshot = dir.join(format!("{LEDGER_FILE}.42.tmp"));
+        std::fs::write(&snapshot, b"{}").unwrap();
+        std::fs::write(dir.join("settings.json"), b"{}").unwrap();
+
+        let mut files = account_files(dir);
+        files.sort();
+        assert_eq!(files, vec![path.clone(), snapshot]);
+    }
 
     #[test]
     fn a_restart_still_recognizes_an_announced_preview() {
