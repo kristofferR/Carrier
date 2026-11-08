@@ -3307,6 +3307,8 @@
         action = { selectAll: ran, selectedLength: String(sel).length, ranges: sel.rangeCount };
         sel.removeAllRanges();
       } else if (match[2]) {
+        // `dragged` means the pane changed width during the drag. Zero-distance
+        // and boundary-clamped drags can leave the width unchanged.
         var edge = document.querySelector('.carrier-pane-edge[data-pane="' + match[2] + '"]');
         if (!edge) action = { dragged: false, reason: "no edge" };
         else {
@@ -3326,7 +3328,8 @@
               edge.dispatchEvent(new PointerEvent("lostpointercapture", opts(x + Number(match[3]))));
               setTimeout(function () {
                 resolve({
-                  dragged: true,
+                  dragged: Math.round(during) !== Math.round(before),
+                  reason: Math.round(during) === Math.round(before) ? "width unchanged" : undefined,
                   before: Math.round(before),
                   during: Math.round(during),
                   after: Math.round(host.getBoundingClientRect().width),
@@ -3340,9 +3343,13 @@
         // Plays Messenger's message sound once through SoundPlayer, as
         // Messenger does, and reports whether its <audio> element played
         // (it shouldn't: Carrier routes the sound through Web Audio).
+        // `called` only confirms that SoundPlayer.play returned, not playback.
         try {
           var config = window.require("MWChatConfig");
-          var urls = [config.soundNotifOggUrl, config.soundNotifMp3Url];
+          var urls = [config.soundNotifOggUrl, config.soundNotifMp3Url].filter(function (url) {
+            return typeof url === "string" && url.length > 0;
+          });
+          if (!urls.length) throw new Error("no sound urls");
           window.require("SoundPlayer").play(urls, {});
           return new Promise(function (resolve) {
             setTimeout(function () {
@@ -3353,7 +3360,7 @@
               });
               var player = window.require("SoundPlayer");
               resolve({
-                played: true,
+                called: true,
                 patched: String(player && player.play).indexOf("soundPlayerCalls") !== -1,
                 contexts: typeof AudioContext,
                 elements: elements.length,
@@ -3364,7 +3371,7 @@
             }, 1500);
           });
         } catch (e) {
-          action = { played: false, error: String(e).slice(0, 200) };
+          action = { called: false, error: String(e).slice(0, 200) };
         }
       } else if (match[5]) {
         // Opens the nth conversation that is already read (one whose row has
