@@ -47,6 +47,10 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("oled-black", include_str!("../themes/oled-black.css")),
     ("graphite", include_str!("../themes/graphite.css")),
     ("warm", include_str!("../themes/warm.css")),
+    ("pink", include_str!("../themes/pink.css")),
+    ("lavender", include_str!("../themes/lavender.css")),
+    ("sage", include_str!("../themes/sage.css")),
+    ("slate", include_str!("../themes/slate.css")),
 ];
 
 /// Carrier's palette tokens and the Messenger variables each one sets.

@@ -1,0 +1,47 @@
+/* Carrier theme
+   name: Lavender
+   author: Carrier
+   preview: #e6e1f2 #f8f6fd #fdfcff #7b5cc4 #ece8f6
+*/
+
+/* Soft lilac surfaces with violet bubbles, light and dark. */
+:root {
+  --carrier-wash: #e6e1f2;
+  --carrier-page: #f8f6fd;
+  --carrier-chat: #fdfcff;
+  --carrier-field: #eee9f8;
+  --carrier-hover: rgba(70, 40, 130, 0.05);
+  --carrier-line: rgba(70, 40, 130, 0.1);
+  --carrier-text: #251d38;
+  --carrier-text-2: #706689;
+  --carrier-icon: #3f3360;
+  --carrier-brand: #7b5cc4;
+  --carrier-brand-soft: #e7e0f7;
+  --carrier-brand-soft-text: #4f3592;
+  --carrier-out: #7b5cc4;
+  --carrier-out-text: #ffffff;
+  --carrier-in: #ece8f6;
+  --carrier-in-text: #251d38;
+  --carrier-selection: rgba(123, 92, 196, 0.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --carrier-wash: #15121d;
+    --carrier-page: #1d1928;
+    --carrier-chat: #221d2e;
+    --carrier-field: #2c263b;
+    --carrier-hover: rgba(220, 210, 255, 0.06);
+    --carrier-line: rgba(220, 210, 255, 0.09);
+    --carrier-text: #ebe6f7;
+    --carrier-text-2: #a49cbc;
+    --carrier-icon: #d8d0ef;
+    --carrier-brand: #a98ff0;
+    --carrier-brand-soft: #322a47;
+    --carrier-brand-soft-text: #cfc1fa;
+    --carrier-out: #7356c0;
+    --carrier-out-text: #ffffff;
+    --carrier-in: #312a42;
+    --carrier-in-text: #ebe6f7;
+    --carrier-selection: rgba(169, 143, 240, 0.3);
+  }
+}

@@ -1,0 +1,47 @@
+/* Carrier theme
+   name: Pink
+   author: Carrier
+   preview: #f8dfe9 #fff5f9 #fffafc #d1307a #fbe3ee
+*/
+
+/* Blush surfaces with hot pink bubbles, light and dark. */
+:root {
+  --carrier-wash: #f8dfe9;
+  --carrier-page: #fff5f9;
+  --carrier-chat: #fffafc;
+  --carrier-field: #fbe6ef;
+  --carrier-hover: rgba(180, 40, 100, 0.06);
+  --carrier-line: rgba(180, 40, 100, 0.12);
+  --carrier-text: #3a1426;
+  --carrier-text-2: #8f5a72;
+  --carrier-icon: #6b2a49;
+  --carrier-brand: #d1307a;
+  --carrier-brand-soft: #fbd9e8;
+  --carrier-brand-soft-text: #a3195b;
+  --carrier-out: #d1307a;
+  --carrier-out-text: #ffffff;
+  --carrier-in: #fbe3ee;
+  --carrier-in-text: #3a1426;
+  --carrier-selection: rgba(209, 48, 122, 0.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --carrier-wash: #1a0f15;
+    --carrier-page: #24151d;
+    --carrier-chat: #2a1822;
+    --carrier-field: #361f2c;
+    --carrier-hover: rgba(255, 200, 225, 0.06);
+    --carrier-line: rgba(255, 200, 225, 0.09);
+    --carrier-text: #fbe7f0;
+    --carrier-text-2: #c095aa;
+    --carrier-icon: #f3cfe0;
+    --carrier-brand: #ff6fae;
+    --carrier-brand-soft: #43233a;
+    --carrier-brand-soft-text: #ffb3d4;
+    --carrier-out: #c93a7d;
+    --carrier-out-text: #ffffff;
+    --carrier-in: #3a2230;
+    --carrier-in-text: #fbe7f0;
+    --carrier-selection: rgba(255, 111, 174, 0.3);
+  }
+}

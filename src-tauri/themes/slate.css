@@ -1,0 +1,47 @@
+/* Carrier theme
+   name: Slate
+   author: Carrier
+   preview: #dfe4ec #f3f5f9 #fbfcfe #4a6fa5 #e7ebf2
+*/
+
+/* Cool blue-grays with a dusty blue accent, light and dark. */
+:root {
+  --carrier-wash: #dfe4ec;
+  --carrier-page: #f3f5f9;
+  --carrier-chat: #fbfcfe;
+  --carrier-field: #e6eaf1;
+  --carrier-hover: rgba(30, 50, 80, 0.05);
+  --carrier-line: rgba(30, 50, 80, 0.1);
+  --carrier-text: #1d2633;
+  --carrier-text-2: #64718a;
+  --carrier-icon: #34435a;
+  --carrier-brand: #4a6fa5;
+  --carrier-brand-soft: #dde6f3;
+  --carrier-brand-soft-text: #2c4c7c;
+  --carrier-out: #4a6fa5;
+  --carrier-out-text: #ffffff;
+  --carrier-in: #e7ebf2;
+  --carrier-in-text: #1d2633;
+  --carrier-selection: rgba(74, 111, 165, 0.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --carrier-wash: #161b23;
+    --carrier-page: #1e2430;
+    --carrier-chat: #222937;
+    --carrier-field: #2b3343;
+    --carrier-hover: rgba(200, 220, 255, 0.06);
+    --carrier-line: rgba(200, 220, 255, 0.09);
+    --carrier-text: #e3e9f2;
+    --carrier-text-2: #96a3b8;
+    --carrier-icon: #cdd6e4;
+    --carrier-brand: #88a9d8;
+    --carrier-brand-soft: #2c3749;
+    --carrier-brand-soft-text: #bcd0ee;
+    --carrier-out: #4f73a8;
+    --carrier-out-text: #ffffff;
+    --carrier-in: #2f3747;
+    --carrier-in-text: #e3e9f2;
+    --carrier-selection: rgba(136, 169, 216, 0.3);
+  }
+}

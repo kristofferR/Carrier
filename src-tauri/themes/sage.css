@@ -1,0 +1,47 @@
+/* Carrier theme
+   name: Sage
+   author: Carrier
+   preview: #e1e7dc #f5f7f1 #fbfcf8 #4f7a4a #e8ede1
+*/
+
+/* Muted greens with a leafy accent, light and dark. */
+:root {
+  --carrier-wash: #e1e7dc;
+  --carrier-page: #f5f7f1;
+  --carrier-chat: #fbfcf8;
+  --carrier-field: #e9eee3;
+  --carrier-hover: rgba(30, 60, 30, 0.05);
+  --carrier-line: rgba(30, 60, 30, 0.1);
+  --carrier-text: #1f2a1e;
+  --carrier-text-2: #67745f;
+  --carrier-icon: #36452f;
+  --carrier-brand: #4f7a4a;
+  --carrier-brand-soft: #dfe9d8;
+  --carrier-brand-soft-text: #2f5a2b;
+  --carrier-out: #4f7a4a;
+  --carrier-out-text: #ffffff;
+  --carrier-in: #e8ede1;
+  --carrier-in-text: #1f2a1e;
+  --carrier-selection: rgba(79, 122, 74, 0.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --carrier-wash: #121712;
+    --carrier-page: #1a201a;
+    --carrier-chat: #1e251e;
+    --carrier-field: #283028;
+    --carrier-hover: rgba(210, 240, 200, 0.06);
+    --carrier-line: rgba(210, 240, 200, 0.09);
+    --carrier-text: #e4ece0;
+    --carrier-text-2: #9aa893;
+    --carrier-icon: #cfdcc8;
+    --carrier-brand: #8fbf86;
+    --carrier-brand-soft: #2a3829;
+    --carrier-brand-soft-text: #bfe0b6;
+    --carrier-out: #4f7a4a;
+    --carrier-out-text: #ffffff;
+    --carrier-in: #2d362c;
+    --carrier-in-text: #e4ece0;
+    --carrier-selection: rgba(143, 191, 134, 0.3);
+  }
+}
