@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Carrier
+Name=Chatpane
 Comment=Distraction-free Messenger desktop client
-Exec=carrier
+Exec=chatpane
 Icon=${SNAP}/usr/share/icons/hicolor/512x512/apps/carrier.png
 Categories=Network;Chat;InstantMessaging;
 NoDisplay=true

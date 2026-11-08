@@ -71,14 +71,17 @@ struct Portal {
 impl Portal {
     fn connect() -> Result<Self, zbus::Error> {
         let pending = Pending::default();
+        // The portal's app ID is `snap.<name>`; it activates actions on that bus
+        // name at the matching object path. snapcraft.yaml declares the slot.
+        let snap = std::env::var("SNAP_NAME").unwrap_or_else(|_| "carrier".into());
         let connection = zbus::blocking::connection::Builder::session()?
             .serve_at(
-                "/snap/carrier",
+                format!("/snap/{}", snap.replace('-', "_")),
                 ApplicationActions {
                     pending: pending.clone(),
                 },
             )?
-            .name("snap.carrier")?
+            .name(format!("snap.{snap}"))?
             .build()?;
         let version = zbus::blocking::Proxy::new(
             &connection,
