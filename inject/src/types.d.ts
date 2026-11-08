@@ -94,6 +94,10 @@ interface CarrierToastOptions {
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
 /** Opens the OS settings pane that grants Carrier folder access (macOS). */
 declare const carrierOpenDownloadPrivacy: () => Promise<unknown> | undefined;
+declare const carrierWindowControl: (
+  action: "minimize" | "toggle-maximize" | "close" | "drag",
+) => Promise<unknown> | undefined;
+declare const carrierMediaViewer: (open: boolean) => Promise<unknown> | undefined;
 declare const carrierScheduledSend: (
   request: import("./messenger/lib/scheduled-send").ScheduleRequest,
 ) => Promise<import("./messenger/lib/scheduled-send").ScheduleResponse>;
@@ -166,8 +170,14 @@ interface Window {
     invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown>;
     metadata?: { currentWindow?: { label?: string } };
   };
-  /** macOS: height of the strip under the window buttons, in CSS pixels at 100%. */
-  __CARRIER_TITLE_BAR_INSET__?: number;
+  /** The title bar strip Carrier keeps (src-tauri/src/title_bar.rs). */
+  __CARRIER_TITLE_BAR__?: {
+    inset: number;
+    controls: "windows" | "linux" | null;
+    maximized: boolean;
+  };
+  /** Called by the native side with the strip's current state. */
+  __carrierTitleBar?: (state: unknown) => void;
   __CARRIER_SETTINGS__?: CarrierSettings;
   /** Scheduled delivery availability fixed when the native process starts. */
   __CARRIER_SCHEDULED_SEND_AVAILABLE__?: boolean;

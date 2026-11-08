@@ -151,6 +151,9 @@ windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32
 # actions::action_from_argv. Registration only — the plugin's JS API capability
 # and single-instance's deep-link feature are intentionally left off.
 tauri-plugin-deep-link = "2"
+# WebView2 settings wry doesn't expose: draggable regions for Carrier's own
+# title bar (title_bar.rs). The version wry already uses, so no new build cost.
+webview2-com = "0.39"
 # Raw WinRT for the toast module (text input, toast tag/group, Action Center
 # history removal — none of which notify-rust's backend exposes). Already in the
 # tree transitively via tauri-winrt-notification, so it adds no new build cost.

@@ -401,22 +401,22 @@
       await setDoNotDisturb(load, account2, change.value);
     }
     for (let attempt = 0; ; attempt++) {
-      const state2 = await readMessengerAccount(load, account2);
-      if (applied(state2, change)) return state2;
+      const state3 = await readMessengerAccount(load, account2);
+      if (applied(state3, change)) return state3;
       if (attempt === 3) throw new Error("Messenger didn't apply the change.");
       await new Promise((resolve) => setTimeout(resolve, 1e3));
     }
   }
-  function applied(state2, change) {
+  function applied(state3, change) {
     switch (change.setting) {
       case "activeStatus":
-        return state2.activeStatus === change.value;
+        return state3.activeStatus === change.value;
       case "sounds":
-        return state2.sounds === change.value;
+        return state3.sounds === change.value;
       case "doNotDisturb": {
-        if (change.value <= 0) return state2.dndUntil === change.value;
+        if (change.value <= 0) return state3.dndUntil === change.value;
         const expected = dndUntilFor(change.value, Date.now());
-        return state2.dndUntil !== null && Math.abs(state2.dndUntil - expected) <= 120;
+        return state3.dndUntil !== null && Math.abs(state3.dndUntil - expected) <= 120;
       }
     }
   }
@@ -505,12 +505,12 @@
         value: value === true
       }),
       "set-dnd": async (value) => {
-        const state2 = await changeMessengerAccount(pageRequire(), signedIn(), {
+        const state3 = await changeMessengerAccount(pageRequire(), signedIn(), {
           setting: "doNotDisturb",
           value: Number(value)
         });
-        setMessengerDndUntil(state2.dndUntil);
-        return state2;
+        setMessengerDndUntil(state3.dndUntil);
+        return state3;
       }
     };
     const reply = (request, payload) => invoke("plugin:event|emit", {
@@ -519,7 +519,7 @@
     });
     window.__carrierAccount = (request, action2, value) => {
       const run = actions[action2];
-      (run ? Promise.resolve().then(() => run(value)) : Promise.reject(new Error("Unknown request"))).then((state2) => reply(request, { ok: true, state: state2 })).catch((error) => {
+      (run ? Promise.resolve().then(() => run(value)) : Promise.reject(new Error("Unknown request"))).then((state3) => reply(request, { ok: true, state: state3 })).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         diag(`account.${action2}`, message.slice(0, 200));
         return reply(request, { ok: false, error: message });
@@ -776,25 +776,25 @@
       this.sockets.set(socket, { state: "open", since: now, lastInboundAt: now });
     }
     received(socket, now) {
-      const state2 = this.sockets.get(socket);
-      if (state2?.state !== "open") return;
-      state2.lastInboundAt = now;
+      const state3 = this.sockets.get(socket);
+      if (state3?.state !== "open") return;
+      state3.lastInboundAt = now;
     }
     closed(socket, now) {
       this.sockets.delete(socket);
       if (this.everOpened && !this.hasOpenSocket()) this.recoveryStartedAt ?? (this.recoveryStartedAt = now);
     }
     hasOpenSocket() {
-      return [...this.sockets.values()].some((state2) => state2.state === "open");
+      return [...this.sockets.values()].some((state3) => state3.state === "open");
     }
     health(now) {
       const states = [...this.sockets.values()];
-      const open = states.filter((state2) => state2.state === "open");
+      const open = states.filter((state3) => state3.state === "open");
       if (open.length) {
-        const freshestInbound = Math.max(...open.map((state2) => state2.lastInboundAt));
+        const freshestInbound = Math.max(...open.map((state3) => state3.lastInboundAt));
         return elapsed(now, freshestInbound) >= REALTIME_SILENCE_MS ? "stale" : "healthy";
       }
-      const connecting = states.filter((state2) => state2.state === "connecting");
+      const connecting = states.filter((state3) => state3.state === "connecting");
       if (!this.everOpened) return "starting";
       if (this.recoveryStartedAt !== null && elapsed(now, this.recoveryStartedAt) < REALTIME_CONNECT_GRACE_MS) {
         return "recovering";
@@ -974,9 +974,9 @@
     }
     for (const media of region.querySelectorAll('img, video, [role="progressbar"]')) {
       if (!isShown(media)) continue;
-      const control = media.closest('button, [role="button"]');
-      const bounds = control?.getBoundingClientRect();
-      if (media.tagName === "IMG" && control && bounds && bounds.width <= 48 && bounds.height <= 48 && !control.closest('[contenteditable="true"]'))
+      const control2 = media.closest('button, [role="button"]');
+      const bounds = control2?.getBoundingClientRect();
+      if (media.tagName === "IMG" && control2 && bounds && bounds.width <= 48 && bounds.height <= 48 && !control2.closest('[contenteditable="true"]'))
         continue;
       return true;
     }
@@ -1252,35 +1252,35 @@ ${button.innerHTML}`)
         if (this.sharedBridgeRepair?.scope !== startingScope) this.sharedBridgeRepair = void 0;
         if (this.lifecycleRestartUsedScope !== startingScope)
           this.lifecycleRestartUsedScope = void 0;
-        const state2 = this.load("MAWWaitForBackendSetup");
-        const settled = method(state2, "isBackendSetupSettled");
-        const inProgress = method(state2, "isBackendSetupInProgress");
-        const currentId = method(state2, "getCurrentWorkerID");
-        const reset = method(state2, "resetBackendSetup");
-        const reject = method(state2, "rejectBackendSetup");
-        const successful = method(state2, "isBackendSetupSuccessful");
+        const state3 = this.load("MAWWaitForBackendSetup");
+        const settled = method(state3, "isBackendSetupSettled");
+        const inProgress = method(state3, "isBackendSetupInProgress");
+        const currentId = method(state3, "getCurrentWorkerID");
+        const reset = method(state3, "resetBackendSetup");
+        const reject = method(state3, "rejectBackendSetup");
+        const successful = method(state3, "isBackendSetupSuccessful");
         const singleton = this.load("MAWWebWorkerSingleton");
         const health = method(singleton, "getWorkerHealthStatus");
         if (!settled || !inProgress || !currentId || !reset || !reject || !health) {
           return "unsupported";
         }
-        const pendingSetup = inProgress.call(state2) === true || settled.call(state2) !== true;
+        const pendingSetup = inProgress.call(state3) === true || settled.call(state3) !== true;
         const paused = this.pausedDedicatedSetup;
         const canResumeDedicated = () => {
           if (!paused || this.pausedDedicatedSetup !== paused) return false;
           const setup2 = this.load("MAWSetupWorker");
-          return paused.scope === startingScope && this.scope === startingScope && paused.replay === this.replay && paused.state === state2 && paused.setup === setup2 && currentId.call(state2) === "dedicated" && inProgress.call(state2) === false && settled.call(state2) === false && method(setup2, "waitForWorkerSetup")?.call(setup2) === null;
+          return paused.scope === startingScope && this.scope === startingScope && paused.replay === this.replay && paused.state === state3 && paused.setup === setup2 && currentId.call(state3) === "dedicated" && inProgress.call(state3) === false && settled.call(state3) === false && method(setup2, "waitForWorkerSetup")?.call(setup2) === null;
         };
         const resumingDedicated = canResumeDedicated();
         if (pendingSetup && !resumingDedicated && !escalate) return "busy";
         const currentConnectionState = () => record(this.load("WACommsConnectionState"))?.WACommsConnectionState;
         const connectionState = pendingSetup && !resumingDedicated ? currentConnectionState() : void 0;
         const connected = method(connectionState, "isConnected");
-        const stillPendingAndDisconnected = () => inProgress.call(state2) === true && settled.call(state2) === false && currentConnectionState() === connectionState && connected?.call(connectionState) === false;
+        const stillPendingAndDisconnected = () => inProgress.call(state3) === true && settled.call(state3) === false && currentConnectionState() === connectionState && connected?.call(connectionState) === false;
         const stalledSetup = pendingSetup && !resumingDedicated && escalate && !!this.replay && this.scope === startingScope && this.setupStartedAt !== void 0 && nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS && stillPendingAndDisconnected();
         if (pendingSetup && !resumingDedicated && !stalledSetup) return "busy";
         if (this.ownSetup && !stalledSetup) return "busy";
-        const initialId = currentId.call(state2);
+        const initialId = currentId.call(state3);
         if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
           return "busy";
         }
@@ -1306,16 +1306,16 @@ ${button.innerHTML}`)
         if (resumingDedicated && paused) {
           if (status.tag !== "dedicated_not_exists" || !canResumeDedicated()) return "busy";
           this.pausedDedicatedSetup = void 0;
-          return this.startSetup(paused.replay, (error) => reject.call(state2, error));
+          return this.startSetup(paused.replay, (error) => reject.call(state3, error));
         }
         if (stalledSetup) {
           if (!["shared_exists_and_connected", "dedicated_exists"].includes(String(status.tag)) || !stillPendingAndDisconnected()) {
             return "busy";
           }
-        } else if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
-        const id = currentId.call(state2);
+        } else if (inProgress.call(state3) === true || settled.call(state3) !== true) return "busy";
+        const id = currentId.call(state3);
         if (status.tag === "dedicated_exists") {
-          const setupSuccessful = successful?.call(state2);
+          const setupSuccessful = successful?.call(state3);
           if (typeof setupSuccessful !== "boolean") return "unsupported";
           if (!stalledSetup && id === "dedicated" && setupSuccessful) {
             return "reload";
@@ -1330,7 +1330,7 @@ ${button.innerHTML}`)
             this.currentPhase = "bridge-readiness";
             const readyBridge = await inspect(() => initialBridge);
             if (!method(readyBridge, "close")) return "unsupported";
-            if (!allowed() || startingScope !== this.accountScope() || this.lifecycle !== lifecycle || this.replay !== replay || this.scope !== replayScope || currentId.call(state2) !== id || bridge?.call(setup) !== initialBridge || !stillPendingAndDisconnected())
+            if (!allowed() || startingScope !== this.accountScope() || this.lifecycle !== lifecycle || this.replay !== replay || this.scope !== replayScope || currentId.call(state3) !== id || bridge?.call(setup) !== initialBridge || !stillPendingAndDisconnected())
               return "busy";
             this.lifecycleRestartUsedScope = startingScope;
             this.ownSetup = void 0;
@@ -1350,14 +1350,14 @@ ${button.innerHTML}`)
           if (startingScope !== this.accountScope() || this.replay !== replay || this.scope !== replayScope) {
             return "busy";
           }
-          if (bridge?.call(setup) != null || inProgress.call(state2) === true || settled.call(state2) === true) {
+          if (bridge?.call(setup) != null || inProgress.call(state3) === true || settled.call(state3) === true) {
             return "busy";
           }
           if (!allowed()) {
-            this.pausedDedicatedSetup = { scope: startingScope, replay, state: state2, setup };
+            this.pausedDedicatedSetup = { scope: startingScope, replay, state: state3, setup };
             return "busy";
           }
-          return this.startSetup(replay, (error) => reject.call(state2, error));
+          return this.startSetup(replay, (error) => reject.call(state3, error));
         }
         if (typeof id === "string" && id.length > 0) {
           if (status.tag === "dedicated_not_exists") return "unsupported";
@@ -1374,7 +1374,7 @@ ${button.innerHTML}`)
             } catch (error) {
               if (error instanceof InspectionTimeout) throw error;
             }
-            if (!allowed() || startingScope !== this.accountScope() || currentId.call(state2) !== id || this.replay !== replay || this.scope !== replayScope || bridge?.call(setup) !== initialBridge || (stalledSetup ? !stillPendingAndDisconnected() : inProgress.call(state2) === true || settled.call(state2) !== true)) {
+            if (!allowed() || startingScope !== this.accountScope() || currentId.call(state3) !== id || this.replay !== replay || this.scope !== replayScope || bridge?.call(setup) !== initialBridge || (stalledSetup ? !stillPendingAndDisconnected() : inProgress.call(state3) === true || settled.call(state3) !== true)) {
               return "busy";
             }
             if (soleWindow) {
@@ -1400,15 +1400,15 @@ ${button.innerHTML}`)
           return "unsupported";
         }
         try {
-          reset.call(state2);
-          if (this.replay !== replay || this.scope !== replayScope || inProgress.call(state2) === true || currentId.call(state2) != null) {
+          reset.call(state3);
+          if (this.replay !== replay || this.scope !== replayScope || inProgress.call(state3) === true || currentId.call(state3) != null) {
             return "busy";
           }
         } catch (error) {
-          reject.call(state2, error);
+          reject.call(state3, error);
           return "failed";
         }
-        return this.startSetup(replay, (error) => reject.call(state2, error));
+        return this.startSetup(replay, (error) => reject.call(state3, error));
       } catch (error) {
         if (error instanceof InspectionTimeout) return "inspection-timeout";
         return "failed";
@@ -1743,8 +1743,8 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/lib/worker-state.ts
   var unsupportedSubscriptions = /* @__PURE__ */ new WeakSet();
-  function observeWorkerConnection(state2, now = () => performance.now()) {
-    if (!state2 || unsupportedSubscriptions.has(state2)) return;
+  function observeWorkerConnection(state3, now = () => performance.now()) {
+    if (!state3 || unsupportedSubscriptions.has(state3)) return;
     let listening = false;
     let disposed = false;
     let receivedAt;
@@ -1754,20 +1754,20 @@ ${button.innerHTML}`)
     });
     let unsubscribe;
     try {
-      const subscribe = state2.onSet;
+      const subscribe = state3.onSet;
       if (typeof subscribe !== "function") return;
-      unsubscribe = subscribe.call(state2, (next) => {
+      unsubscribe = subscribe.call(state3, (next) => {
         if (listening && receivedAt === void 0) {
           receivedAt = now();
           resolve?.(typeof next === "boolean" ? next : void 0);
         }
       });
     } catch (_) {
-      unsupportedSubscriptions.add(state2);
+      unsupportedSubscriptions.add(state3);
       return;
     }
     if (typeof unsubscribe !== "function") {
-      unsupportedSubscriptions.add(state2);
+      unsupportedSubscriptions.add(state3);
       return;
     }
     const stop = unsubscribe;
@@ -1787,7 +1787,7 @@ ${button.innerHTML}`)
         try {
           stop();
         } catch (_) {
-          unsupportedSubscriptions.add(state2);
+          unsupportedSubscriptions.add(state3);
         }
       }
     };
@@ -1815,8 +1815,8 @@ ${button.innerHTML}`)
     try {
       const facebookRequire = window.require;
       const module = facebookRequire?.("WACommsConnectionState");
-      const state2 = module?.WACommsConnectionState;
-      return state2 && typeof state2 === "object" ? state2 : void 0;
+      const state3 = module?.WACommsConnectionState;
+      return state3 && typeof state3 === "object" ? state3 : void 0;
     } catch (_) {
       return void 0;
     }
@@ -1832,8 +1832,8 @@ ${button.innerHTML}`)
   var workerId = () => {
     try {
       const page = window;
-      const state2 = page.require?.("MAWWaitForBackendSetup");
-      return state2?.getCurrentWorkerID?.();
+      const state3 = page.require?.("MAWWaitForBackendSetup");
+      return state3?.getCurrentWorkerID?.();
     } catch (_) {
       return void 0;
     }
@@ -1841,11 +1841,11 @@ ${button.innerHTML}`)
   var workerSetupState = () => {
     try {
       const page = window;
-      const state2 = page.require?.("MAWWaitForBackendSetup");
-      if (state2?.isBackendSetupSettled?.() !== true) {
-        return state2?.isBackendSetupInProgress?.() === true ? "starting" : "unknown";
+      const state3 = page.require?.("MAWWaitForBackendSetup");
+      if (state3?.isBackendSetupSettled?.() !== true) {
+        return state3?.isBackendSetupInProgress?.() === true ? "starting" : "unknown";
       }
-      const successful = state2.isBackendSetupSuccessful?.();
+      const successful = state3.isBackendSetupSuccessful?.();
       return successful === true ? "ready" : successful === false ? "failed" : "unknown";
     } catch (_) {
       return "unknown";
@@ -1891,13 +1891,13 @@ ${button.innerHTML}`)
         workerExpected = rememberedConnection(key);
       }
       const id = workerId();
-      const state2 = workerConnectionState();
+      const state3 = workerConnectionState();
       if (!workerScope.current) {
-        workerScope.current = typeof id === "string" && id.length > 0 && id !== workerScope.id || state2 !== void 0 && state2 !== workerScope.state;
+        workerScope.current = typeof id === "string" && id.length > 0 && id !== workerScope.id || state3 !== void 0 && state3 !== workerScope.state;
       }
       if (workerScope.current) {
         if (typeof id === "string" && id.length > 0) workerScope.id = id;
-        if (state2 !== void 0) workerScope.state = state2;
+        if (state3 !== void 0) workerScope.state = state3;
       }
       return workerScope.current;
     };
@@ -1915,12 +1915,12 @@ ${button.innerHTML}`)
       return health;
     };
     const checkWorker = () => {
-      const state2 = workerConnectionState();
+      const state3 = workerConnectionState();
       const account2 = accountKey();
       const id = workerId();
-      if (!probeIdentity || probeIdentity.account !== account2 || probeIdentity.id !== id || probeIdentity.state !== state2) {
+      if (!probeIdentity || probeIdentity.account !== account2 || probeIdentity.id !== id || probeIdentity.state !== state3) {
         const replaced = probeIdentity !== void 0;
-        probeIdentity = { account: account2, id, state: state2 };
+        probeIdentity = { account: account2, id, state: state3 };
         workerFailures.succeeded();
         verified = void 0;
         stateRouteUnavailableFor = void 0;
@@ -1940,8 +1940,8 @@ ${button.innerHTML}`)
         return;
       }
       const sendAndReceive = bridge.sendAndReceive.bind(bridge);
-      const stillCurrent = () => account2 === accountKey() && state2 === workerConnectionState() && id === workerId();
-      const observation = stateRouteUnavailableFor?.() ? void 0 : observeWorkerConnection(state2, now);
+      const stillCurrent = () => account2 === accountKey() && state3 === workerConnectionState() && id === workerId();
+      const observation = stateRouteUnavailableFor?.() ? void 0 : observeWorkerConnection(state3, now);
       workerProbePending = true;
       let live = true;
       let timeout;
@@ -2187,9 +2187,9 @@ ${button.innerHTML}`)
     }
     setupSucceeded() {
       try {
-        const state2 = record2(this.load("MAWWaitForBackendSetup"));
-        const successful = state2?.isBackendSetupSuccessful;
-        return typeof successful === "function" && successful.call(state2) === true;
+        const state3 = record2(this.load("MAWWaitForBackendSetup"));
+        const successful = state3?.isBackendSetupSuccessful;
+        return typeof successful === "function" && successful.call(state3) === true;
       } catch (_) {
         return false;
       }
@@ -3041,8 +3041,8 @@ ${button.innerHTML}`)
   function explicitActionRecent(now = performance.now()) {
     return now - explicitActionAt < EXPLICIT_ACTION_HOLD_MS;
   }
-  function shouldFocusComposerOnReturn(state2) {
-    return state2.enabled && state2.threadOpen && !state2.dialogOpen && state2.focus !== "elsewhere";
+  function shouldFocusComposerOnReturn(state3) {
+    return state3.enabled && state3.threadOpen && !state3.dialogOpen && state3.focus !== "elsewhere";
   }
 
   // inject/src/messenger/features/composer-focus.ts
@@ -3117,12 +3117,12 @@ ${button.innerHTML}`)
             return;
           }
           readyAt ?? (readyAt = now);
-          const state2 = returnState();
+          const state3 = returnState();
           const active = document.activeElement;
           const incidental = link.contains(active) || !!active?.matches(":is(h1, h2)");
-          const focus = incidental ? "nothing" : state2.focus;
+          const focus = incidental ? "nothing" : state3.focus;
           if (composerFocused()) {
-          } else if (shouldFocusComposerOnReturn({ ...state2, focus })) {
+          } else if (shouldFocusComposerOnReturn({ ...state3, focus })) {
             focusComposer();
           } else if (focus === "elsewhere") {
             return stop();
@@ -3147,10 +3147,10 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/composer-keys.ts
-  function shouldKeepEnterInComposer(state2) {
-    if (state2.key !== "Enter") return false;
-    if (state2.isComposing || state2.compositionActive || state2.keyCode === 229) return true;
-    return state2.requireAccelerator && !state2.acceleratorPressed && !state2.shiftKey;
+  function shouldKeepEnterInComposer(state3) {
+    if (state3.key !== "Enter") return false;
+    if (state3.isComposing || state3.compositionActive || state3.keyCode === 229) return true;
+    return state3.requireAccelerator && !state3.acceleratorPressed && !state3.shiftKey;
   }
   var VOICE_CLIP_CANCEL_ICON = "M8 .5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z";
   var isVoiceClipCancelIcon = (path) => !!path?.startsWith(VOICE_CLIP_CANCEL_ICON);
@@ -4565,11 +4565,11 @@ ${button.innerHTML}`)
         for (const item of items) {
           const data = isRow(item) ? item.custom_template_data : null;
           if (!isRow(data) || data.__typename !== "XMSGXmaCallingTemplateData") continue;
-          const state2 = data.call_state;
+          const state3 = data.call_state;
           const duration = Number(data.call_duration_sec);
           return {
             type: data.call_type === "VIDEO" ? "video" : "audio",
-            outcome: state2 === "MISSED" ? "missed" : state2 === "ENDED" ? "ended" : state2 === "STARTED" ? "started" : null,
+            outcome: state3 === "MISSED" ? "missed" : state3 === "ENDED" ? "ended" : state3 === "STARTED" ? "started" : null,
             durationSec: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null
           };
         }
@@ -7328,8 +7328,8 @@ ${button.innerHTML}`)
   // inject/src/messenger/features/facebook-workers.ts
   function initFacebookWorkerOptimization() {
     if (typeof window.Worker !== "function" || typeof Proxy !== "function") return;
-    const state2 = { responsivenessWorkersStopped: 0 };
-    window.__CARRIER_WORKER_OPTIMIZATION__ = state2;
+    const state3 = { responsivenessWorkersStopped: 0 };
+    window.__CARRIER_WORKER_OPTIMIZATION__ = state3;
     const NativeWorker = window.Worker;
     window.Worker = new Proxy(NativeWorker, {
       construct(Target, args, NewTarget) {
@@ -7338,7 +7338,7 @@ ${button.innerHTML}`)
           worker,
           () => window.__CARRIER_SETTINGS__?.block_telemetry === true,
           () => {
-            state2.responsivenessWorkersStopped++;
+            state3.responsivenessWorkersStopped++;
           }
         );
       }
@@ -7349,7 +7349,7 @@ ${button.innerHTML}`)
   function initForceTheme() {
     const html = document.documentElement;
     let forcedClass = null;
-    const apply = () => {
+    const apply2 = () => {
       const forced = window.__CARRIER_SETTINGS__?.theme;
       if (forced !== "light" && forced !== "dark") {
         if (forcedClass) {
@@ -7366,22 +7366,22 @@ ${button.innerHTML}`)
       }
       forcedClass = want;
     };
-    apply();
-    window.addEventListener("carrier:settings", apply);
-    new MutationObserver(apply).observe(html, { attributes: true, attributeFilter: ["class"] });
+    apply2();
+    window.addEventListener("carrier:settings", apply2);
+    new MutationObserver(apply2).observe(html, { attributes: true, attributeFilter: ["class"] });
   }
   var DARK_MARKERS = ["data-carrier-dark", "data-fmess-dark"];
   function initThemeMarkers() {
     const html = document.documentElement;
     const query = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => {
+    const apply2 = () => {
       for (const marker of DARK_MARKERS) {
         if (query.matches) html.setAttribute(marker, "");
         else html.removeAttribute(marker);
       }
     };
-    apply();
-    query.addEventListener("change", apply);
+    apply2();
+    query.addEventListener("change", apply2);
   }
 
   // inject/src/messenger/features/fullscreen.ts
@@ -7808,7 +7808,7 @@ ${button.innerHTML}`)
       clearMarkers();
       window.removeEventListener("resize", schedule);
     }
-    const apply = () => {
+    const apply2 = () => {
       html.toggleAttribute("data-carrier-hide-names", namesHidden());
       html.toggleAttribute("data-carrier-hide-avatars", avatarsHidden());
       if (on2()) {
@@ -7818,8 +7818,8 @@ ${button.innerHTML}`)
         stop();
       }
     };
-    apply();
-    window.addEventListener("carrier:settings", apply);
+    apply2();
+    window.addEventListener("carrier:settings", apply2);
   }
 
   // inject/src/messenger/lib/image-paste.ts
@@ -8459,7 +8459,7 @@ ${button.innerHTML}`)
       observer?.disconnect();
       observer = null;
     };
-    const apply = () => {
+    const apply2 = () => {
       if (on2()) {
         start();
         scan(document, true);
@@ -8467,8 +8467,8 @@ ${button.innerHTML}`)
         stop();
       }
     };
-    apply();
-    window.addEventListener("carrier:settings", apply);
+    apply2();
+    window.addEventListener("carrier:settings", apply2);
   }
 
   // inject/src/messenger/lib/media-permissions.ts
@@ -8641,12 +8641,12 @@ ${button.innerHTML}`)
       button.addEventListener("click", async (event) => {
         if (!canActivateMediaPrivacy(event.isTrusted, navigator.userActivation?.isActive) || pending)
           return;
-        const state2 = snapshot[device];
+        const state3 = snapshot[device];
         pending = true;
         actionError = "";
         render();
         try {
-          if (state2 === "not-determined" && platform === "macos") {
+          if (state3 === "not-determined" && platform === "macos") {
             accept(await carrierMediaPermissionStatus(device));
           } else {
             await carrierOpenMediaPrivacy(device);
@@ -8676,12 +8676,12 @@ ${button.innerHTML}`)
       guidance.textContent = actionError || (failure === "denied" && !confirmation ? restricted ? "Access is restricted by system policy. Check with the person who manages this Mac." : devices.every((device) => snapshot[device] === "allowed") ? "macOS allows access. Check Messenger’s call settings and try again." : mediaPrivacyGuidance(platform) : "");
       guidance.hidden = !guidance.textContent;
       for (const { device, button, status, check } of rows) {
-        const state2 = snapshot[device];
-        status.textContent = state2 === "allowed" ? "Allowed by macOS" : state2 === "denied" ? "Blocked in macOS Settings" : state2 === "restricted" ? "Restricted by system policy" : state2 === "not-determined" ? "Not requested yet" : "Status unavailable";
-        status.dataset.tone = state2 === "allowed" ? "good" : state2 === "denied" || state2 === "restricted" ? "warning" : "neutral";
-        check.hidden = state2 !== "allowed";
-        const allow = state2 === "not-determined" && platform === "macos" && failures2.get(device) === "denied" && devices.includes(device);
-        const settings = state2 === "denied" && failures2.get(device) === "denied" || state2 === "unknown" && failures2.get(device) === "denied" && devices.includes(device) && platform !== "linux";
+        const state3 = snapshot[device];
+        status.textContent = state3 === "allowed" ? "Allowed by macOS" : state3 === "denied" ? "Blocked in macOS Settings" : state3 === "restricted" ? "Restricted by system policy" : state3 === "not-determined" ? "Not requested yet" : "Status unavailable";
+        status.dataset.tone = state3 === "allowed" ? "good" : state3 === "denied" || state3 === "restricted" ? "warning" : "neutral";
+        check.hidden = state3 !== "allowed";
+        const allow = state3 === "not-determined" && platform === "macos" && failures2.get(device) === "denied" && devices.includes(device);
+        const settings = state3 === "denied" && failures2.get(device) === "denied" || state3 === "unknown" && failures2.get(device) === "denied" && devices.includes(device) && platform !== "linux";
         button.hidden = !allow && !settings;
         button.textContent = allow ? "Allow access" : "Open Settings";
         button.setAttribute(
@@ -10622,7 +10622,7 @@ ${button.innerHTML}`)
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", messageId = "", row, sender) => {
+    const emitNotification = (id, title, body, icon2, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", messageId = "", row, sender) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -10638,7 +10638,7 @@ ${button.innerHTML}`)
           title,
           subtitle,
           body,
-          icon,
+          icon: icon2,
           image,
           dedupe_key: dedupeKey,
           thread_path: threadPath || "",
@@ -10843,7 +10843,7 @@ ${button.innerHTML}`)
           thumbnail,
           names2,
           groupPicture2(names2)
-        ]).then(([icon, , image, group, picture]) => {
+        ]).then(([icon2, , image, group, picture]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
           const deliverySettings = window.__CARRIER_SETTINGS__ || {};
@@ -10931,7 +10931,7 @@ ${button.innerHTML}`)
             id,
             hidePreview ? "Messenger" : text.title,
             hidePreview ? "New message" : text.body,
-            hidePreview ? "" : icon,
+            hidePreview ? "" : icon2,
             pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
             () => {
               this.onclick?.(new Event("click"));
@@ -11359,8 +11359,8 @@ ${button.innerHTML}`)
           conversation.isGroup,
           { sender, thread: thread2 }
         );
-        const { icon } = presentation;
-        if (!hiddenBeforeImages && !icon && !image && conversation.isGroup) {
+        const { icon: icon2 } = presentation;
+        if (!hiddenBeforeImages && !icon2 && !image && conversation.isGroup) {
           diag("notify.avatar", "group notification has no photo for its displayed identity");
         }
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
@@ -11409,7 +11409,7 @@ ${button.innerHTML}`)
           ++notifySeq,
           hidePreview ? "Messenger" : text.title,
           hidePreview ? "New message" : text.body,
-          hidePreview ? "" : icon,
+          hidePreview ? "" : icon2,
           dedupeKey,
           () => {
             window.__carrierOpenThread?.(conversation.threadPath);
@@ -11433,7 +11433,7 @@ ${button.innerHTML}`)
               "group",
               visiblePresentation.subtitle || visiblePresentation.title,
               // In a group the icon is the sender's only when their photo won.
-              Boolean(sender) && icon === sender
+              Boolean(sender) && icon2 === sender
             ),
             picture
           )
@@ -12398,10 +12398,10 @@ ${button.innerHTML}`)
       '[role="main"] [role="button"][aria-label], [role="main"] [role="switch"][aria-label], [role="main"] button[aria-label]'
     )) {
       if (stale.has(el) || !isShown(el)) continue;
-      const control = PANE_MUTE_CONTROL.exec((el.getAttribute("aria-label") || "").trim());
-      if (!control) continue;
+      const control2 = PANE_MUTE_CONTROL.exec((el.getAttribute("aria-label") || "").trim());
+      if (!control2) continue;
       const checked = el.getAttribute("aria-checked");
-      if (control[1] || control[2]?.toLowerCase() === "on" || checked === "true")
+      if (control2[1] || control2[2]?.toLowerCase() === "on" || checked === "true")
         return { muted: true, trigger: null };
       trigger ?? (trigger = el);
     }
@@ -12469,13 +12469,13 @@ ${button.innerHTML}`)
     let confirmed = null;
     try {
       while (true) {
-        const control = threadMuteControl(stale);
+        const control2 = threadMuteControl(stale);
         const chooser = phase === "chooser" ? chooserDialog(staleDialogs) : null;
         if (chooser) openedChooser = chooser.dialog;
         const dialog = phase === "dialog" ? muteDialog(staleDialogs) : null;
         const snapshot = {
           threadMatches: paneReady(),
-          muted: control.muted,
+          muted: control2.muted,
           chatNotifications: chatNotificationsControl(stale) !== null,
           chooser: !chooser ? "none" : chooser.muted ? "unmute" : "mute",
           infoRequested,
@@ -12496,7 +12496,7 @@ ${button.innerHTML}`)
             break;
           }
           case "open-dialog":
-            control.trigger?.click();
+            control2.trigger?.click();
             break;
           case "open-chooser":
             chatNotificationsControl(stale)?.click();
@@ -12624,7 +12624,7 @@ ${button.innerHTML}`)
     );
   };
   var validRequest = (path, text, id, attempt) => threadPathId(path) !== null && text.trim().length > 0 && [...text].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0;
-  async function deliver(path, text, id, state2) {
+  async function deliver(path, text, id, state3) {
     const wantedThread = threadPathId(path);
     if (!wantedThread || currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
       diag("quick-reply.open", "validated thread could not be opened");
@@ -12647,7 +12647,7 @@ ${button.innerHTML}`)
     document.addEventListener("click", onClick, true);
     try {
       while (true) {
-        if (state2.cancelled) return false;
+        if (state3.cancelled) return false;
         const box = composer();
         if (box && hasComposerMedia(box)) return false;
         const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
@@ -12677,8 +12677,8 @@ ${button.innerHTML}`)
             break;
           }
           case "send":
-            if (state2.cancelled) return false;
-            state2.clicked = true;
+            if (state3.cancelled) return false;
+            state3.clicked = true;
             button?.click();
             await pause2();
             break;
@@ -12750,12 +12750,12 @@ ${text}`)) {
       }
       const previous = replyAttempts.get(id);
       if (previous && previous.attempt >= attempt) return;
-      const state2 = { attempt, cancelled: false, clicked: false, sent: false };
-      replyAttempts.set(id, state2);
+      const state3 = { attempt, cancelled: false, clicked: false, sent: false };
+      replyAttempts.set(id, state3);
       if (replyAttempts.size > 128) replyAttempts.delete(replyAttempts.keys().next().value);
       void withComposerDelivery(async () => {
-        const ok = await deliver(path, text, id, state2);
-        state2.sent = ok;
+        const ok = await deliver(path, text, id, state3);
+        state3.sent = ok;
         return ok;
       }).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.exception", "reply flow raised an exception");
@@ -12769,20 +12769,20 @@ ${text}`)) {
         emitReplyResult(id, attempt, false);
         return;
       }
-      let state2 = replyAttempts.get(id);
-      if (state2 && state2.attempt > attempt) return;
-      if (!state2 || state2.attempt < attempt) {
-        if (state2) {
-          state2.cancelled = true;
-          state2.attempt = attempt;
+      let state3 = replyAttempts.get(id);
+      if (state3 && state3.attempt > attempt) return;
+      if (!state3 || state3.attempt < attempt) {
+        if (state3) {
+          state3.cancelled = true;
+          state3.attempt = attempt;
         } else {
-          state2 = { attempt, cancelled: true, clicked: false, sent: false };
-          replyAttempts.set(id, state2);
+          state3 = { attempt, cancelled: true, clicked: false, sent: false };
+          replyAttempts.set(id, state3);
           if (replyAttempts.size > 128) replyAttempts.delete(replyAttempts.keys().next().value);
         }
       }
       void withComposerDeliveryWhenAvailable(
-        () => state2?.clicked || state2?.sent ? Promise.resolve(true) : preserveDraft(path, text, id)
+        () => state3?.clicked || state3?.sent ? Promise.resolve(true) : preserveDraft(path, text, id)
       ).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");
         emitReplyResult(id, attempt, false);
@@ -13352,8 +13352,8 @@ ${text}`)) {
     };
     const syncColors = () => {
       if (!button || !emoji) return;
-      const icon = emoji.querySelector("svg path") || emoji.querySelector("svg");
-      const fill = icon ? getComputedStyle(icon).fill : "";
+      const icon2 = emoji.querySelector("svg path") || emoji.querySelector("svg");
+      const fill = icon2 ? getComputedStyle(icon2).fill : "";
       const accent = fill && fill !== "none" ? fill : getComputedStyle(emoji).color;
       button.style.color = accent;
       if (!panel) return;
@@ -14805,7 +14805,7 @@ ${text}`)) {
         clearGlyph(el);
       });
     }
-    const apply = () => {
+    const apply2 = () => {
       html.toggleAttribute("data-carrier-system-emoji", on2());
       if (on2()) {
         start();
@@ -14814,8 +14814,8 @@ ${text}`)) {
         stop();
       }
     };
-    apply();
-    window.addEventListener("carrier:settings", apply);
+    apply2();
+    window.addEventListener("carrier:settings", apply2);
     if (document.readyState === "loading")
       document.addEventListener("DOMContentLoaded", () => on2() && schedule(), { once: true });
   }
@@ -14923,34 +14923,140 @@ ${text}`)) {
 
   // inject/src/messenger/features/title-bar.ts
   var INSET_VAR = "--carrier-title-bar-inset";
-  var hasTitleBarStrip = () => typeof window.__CARRIER_TITLE_BAR_INSET__ === "number";
-  function initTitleBar() {
-    const inset = window.__CARRIER_TITLE_BAR_INSET__;
-    if (typeof inset !== "number") return;
-    const apply = (root) => {
-      if (!root.style.getPropertyValue(INSET_VAR)) root.style.setProperty(INSET_VAR, `${inset}px`);
+  var KIND_ATTR = "data-carrier-title-bar";
+  var STRIP_ID = "carrier-title-strip";
+  var CONTROLS_ID = "carrier-window-controls";
+  var state2 = null;
+  function control(action2) {
+    carrierWindowControl(action2)?.catch?.(
+      () => diag("title-bar.control", "carrier:window-control emit failed")
+    );
+  }
+  var ICONS = {
+    minimize: '<path d="M2 6h8" />',
+    maximize: '<rect x="2" y="2" width="8" height="8" rx="1" />',
+    restore: '<rect x="2" y="4" width="6" height="6" rx="1" /><path d="M4.5 4V3a1 1 0 0 1 1-1H9a1 1 0 0 1 1 1v3.5a1 1 0 0 1-1 1H8" />',
+    close: '<path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />'
+  };
+  function icon(name) {
+    return `<svg viewBox="0 0 12 12" aria-hidden="true">${ICONS[name]}</svg>`;
+  }
+  function buildControls() {
+    const box = document.createElement("div");
+    box.id = CONTROLS_ID;
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", "Window");
+    const button = (name, label2, action2) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.control = name;
+      b.setAttribute("aria-label", label2);
+      b.title = label2;
+      b.addEventListener("click", () => control(action2));
+      return b;
     };
-    if (document.documentElement) {
-      apply(document.documentElement);
+    box.append(
+      button("minimize", "Minimize", "minimize"),
+      button("maximize", "Maximize", "toggle-maximize"),
+      button("close", "Close", "close")
+    );
+    return box;
+  }
+  function buildStrip() {
+    const strip = document.createElement("div");
+    strip.id = STRIP_ID;
+    strip.setAttribute("aria-hidden", "true");
+    strip.addEventListener("mousedown", (event) => {
+      if (event.button !== 0 || !state2?.controls) return;
+      event.preventDefault();
+      control(event.detail === 2 ? "toggle-maximize" : "drag");
+    });
+    return strip;
+  }
+  var stripObserver = null;
+  var observedMain = null;
+  function placeStrip() {
+    const strip = document.getElementById(STRIP_ID);
+    if (!strip) return;
+    const main2 = document.querySelector('[role="main"]');
+    const left = main2 ? Math.max(0, Math.round(main2.getBoundingClientRect().left)) : 0;
+    strip.style.left = `${left}px`;
+    if (main2 !== observedMain) {
+      stripObserver?.disconnect();
+      observedMain = main2;
+      if (main2) {
+        stripObserver ?? (stripObserver = new ResizeObserver(placeStrip));
+        stripObserver.observe(main2);
+      }
+    }
+  }
+  function apply(next) {
+    state2 = next;
+    const root = document.documentElement;
+    if (!root) return;
+    root.style.setProperty(INSET_VAR, `${next.inset}px`);
+    const kind = next.inset > 0 ? next.controls ?? "macos" : null;
+    if (kind) root.setAttribute(KIND_ATTR, kind);
+    else root.removeAttribute(KIND_ATTR);
+    const drawn = next.controls && next.inset > 0;
+    let controls = document.getElementById(CONTROLS_ID);
+    let strip = document.getElementById(STRIP_ID);
+    if (!drawn) {
+      controls?.remove();
+      strip?.remove();
       return;
     }
-    const wait = new MutationObserver(() => {
-      if (!document.documentElement) return;
-      wait.disconnect();
-      apply(document.documentElement);
-    });
-    wait.observe(document, { childList: true });
+    if (!controls) controls = buildControls();
+    if (!strip) strip = buildStrip();
+    if (!controls.isConnected) root.append(strip, controls);
+    const maximize = controls.querySelector('[data-control="maximize"]');
+    const minimize = controls.querySelector('[data-control="minimize"]');
+    const close = controls.querySelector('[data-control="close"]');
+    if (minimize && !minimize.innerHTML) minimize.innerHTML = icon("minimize");
+    if (close && !close.innerHTML) close.innerHTML = icon("close");
+    if (maximize) {
+      const name = next.maximized ? "restore" : "maximize";
+      if (maximize.dataset.icon !== name) {
+        maximize.dataset.icon = name;
+        maximize.innerHTML = icon(name);
+        const label2 = next.maximized ? "Restore" : "Maximize";
+        maximize.setAttribute("aria-label", label2);
+        maximize.title = label2;
+      }
+    }
+    placeStrip();
+  }
+  function windowControlsInset() {
+    return state2?.controls && state2.inset > 0 ? state2.inset : 0;
+  }
+  function initTitleBar() {
+    const initial = window.__CARRIER_TITLE_BAR__;
+    if (!initial) return;
+    window.__carrierTitleBar = (next) => apply(next);
+    const root = document.documentElement;
+    if (root) {
+      root.style.setProperty(INSET_VAR, `${initial.inset}px`);
+      if (initial.inset > 0) root.setAttribute(KIND_ATTR, initial.controls ?? "macos");
+    }
+    const start = () => apply(state2 ?? initial);
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", start, { once: true });
+    } else start();
+    window.addEventListener("resize", placeStrip, { passive: true });
+    setInterval(() => {
+      if (document.hidden || !state2?.controls || state2.inset <= 0) return;
+      if (!document.getElementById(STRIP_ID)?.isConnected) apply(state2);
+      else if (document.querySelector('[role="main"]') !== observedMain) placeStrip();
+    }, 1e3);
   }
   var viewerReported = null;
   function reportMediaViewer(open) {
-    if (!hasTitleBarStrip() || open === viewerReported) return;
-    const label2 = window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label;
-    if (!label2) return;
+    if (!/Mac/.test(navigator.platform) || !window.__CARRIER_TITLE_BAR__) return;
+    if (open === viewerReported) return;
     viewerReported = open;
-    invoke("plugin:event|emit", {
-      event: "carrier:media-viewer",
-      payload: { window: label2, open }
-    })?.catch?.(() => diag("title-bar.viewer", "carrier:media-viewer emit failed"));
+    carrierMediaViewer(open)?.catch?.(
+      () => diag("title-bar.viewer", "carrier:media-viewer emit failed")
+    );
   }
 
   // inject/src/messenger/lib/typing-block.ts
@@ -15166,20 +15272,20 @@ ${text}`)) {
         let changed = false;
         for (const id of ids) {
           const read = states?.get(id);
-          const state2 = read && { ...read, muted: heldMute(id, read.muted) };
+          const state3 = read && { ...read, muted: heldMute(id, read.muted) };
           const old = threadStates.get(id);
-          if (!state2) {
+          if (!state3) {
             if (threadStates.delete(id)) changed = true;
             continue;
           }
-          if (old?.unread !== state2.unread || old?.muted !== state2.muted) changed = true;
+          if (old?.unread !== state3.unread || old?.muted !== state3.muted) changed = true;
           threadStates.delete(id);
-          threadStates.set(id, state2);
+          threadStates.set(id, state3);
           if (threadStates.size > THREAD_STATE_LIMIT) {
             threadStates.delete(threadStates.keys().next().value);
           }
         }
-        if (changed) apply(true);
+        if (changed) apply2(true);
       }).finally(() => {
         refreshingStates = false;
       });
@@ -15281,7 +15387,7 @@ ${text}`)) {
         () => diag("badge.emit", "carrier:unread emit failed")
       );
     };
-    const apply = (force) => {
+    const apply2 = (force) => {
       const s = window.__CARRIER_SETTINGS__ || {};
       const ignoreMuted = badgeIgnoresMutedConversations(s);
       if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
@@ -15329,7 +15435,7 @@ ${text}`)) {
       }
       const cached = threadStates.get(detail.id);
       if (cached) threadStates.set(detail.id, { ...cached, muted: detail.muted });
-      setTimeout(() => apply(true), 500);
+      setTimeout(() => apply2(true), 500);
     });
     let pending = false;
     const schedule = () => {
@@ -15337,8 +15443,8 @@ ${text}`)) {
       pending = true;
       setTimeout(() => {
         pending = false;
-        apply(false);
-        setTimeout(() => apply(false), 800);
+        apply2(false);
+        setTimeout(() => apply2(false), 800);
       }, 120);
     };
     const headObserver = new MutationObserver(schedule);
@@ -15353,21 +15459,21 @@ ${text}`)) {
       });
       waitForHead.observe(document.documentElement, { childList: true, subtree: true });
     }
-    window.addEventListener(RATE_LIMIT_EVENT, () => apply(true));
-    window.addEventListener("carrier:settings", () => apply(true));
+    window.addEventListener(RATE_LIMIT_EVENT, () => apply2(true));
+    window.addEventListener("carrier:settings", () => apply2(true));
     let pollTimer;
     const startPoll = () => {
       clearInterval(pollTimer);
-      pollTimer = setInterval(() => apply(false), document.hidden ? 6e4 : 5e3);
+      pollTimer = setInterval(() => apply2(false), document.hidden ? 6e4 : 5e3);
     };
     document.addEventListener("visibilitychange", () => {
       startPoll();
-      if (!document.hidden) apply(false);
+      if (!document.hidden) apply2(false);
     });
     startPoll();
-    apply(true);
-    setTimeout(() => apply(true), 1500);
-    setTimeout(() => apply(true), 4e3);
+    apply2(true);
+    setTimeout(() => apply2(true), 1500);
+    setTimeout(() => apply2(true), 4e3);
   }
 
   // inject/src/messenger/lib/media-viewer.ts
@@ -15435,10 +15541,13 @@ ${text}`)) {
   // inject/src/messenger/lib/viewer-controls.ts
   var SAFE_TOP = 8;
   var MAX_OFFSET = 64;
-  function viewerControlOffset(controlTops, appliedOffset = 0) {
+  function viewerControlOffset(controlTops, appliedOffset = 0, reserved = 0) {
     const naturalTops = controlTops.filter(Number.isFinite).map((top) => top - (Number.isFinite(appliedOffset) ? appliedOffset : 0));
     if (!naturalTops.length) return 0;
-    return Math.min(MAX_OFFSET, Math.max(0, Math.ceil(SAFE_TOP - Math.min(...naturalTops))));
+    return Math.min(
+      MAX_OFFSET,
+      Math.max(0, Math.ceil(SAFE_TOP + reserved - Math.min(...naturalTops)))
+    );
   }
 
   // inject/src/messenger/features/viewer-controls.ts
@@ -15448,12 +15557,12 @@ ${text}`)) {
   var BANNER_ATTR = "data-carrier-media-controls";
   var ACTIONS_ATTR = "data-carrier-media-actions";
   var OFFSET = "--carrier-media-controls-offset";
-  var visibleControls = (root) => [...root.querySelectorAll(CONTROL)].map((control) => control.getBoundingClientRect()).filter(
+  var visibleControls = (root) => [...root.querySelectorAll(CONTROL)].map((control2) => control2.getBoundingClientRect()).filter(
     (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && rect.top < 96 && rect.right > 0 && rect.left < window.innerWidth
   );
   var applyOffset = (element2, controlTops, attr) => {
     const currentOffset = Number.parseFloat(element2.style.getPropertyValue(OFFSET)) || 0;
-    const offset = viewerControlOffset(controlTops, currentOffset);
+    const offset = viewerControlOffset(controlTops, currentOffset, windowControlsInset());
     if (!offset) return false;
     if (!element2.hasAttribute(attr)) element2.setAttribute(attr, "");
     const value = `${offset}px`;
@@ -15533,7 +15642,7 @@ ${text}`)) {
       if (!frame) frame = requestAnimationFrame(refresh);
     };
     const resizeObserver = new ResizeObserver(schedule);
-    const affectsControls = (element2) => !!element2.closest(`${DIALOG2}, ${BANNER}`) || [...observedDialogs, ...markedControls].some((control) => element2.contains(control));
+    const affectsControls = (element2) => !!element2.closest(`${DIALOG2}, ${BANNER}`) || [...observedDialogs, ...markedControls].some((control2) => element2.contains(control2));
     new MutationObserver((records) => {
       if (records.some(
         (record4) => record4.target instanceof Element && affectsControls(record4.target) || record4.type === "childList" && [...record4.addedNodes, ...record4.removedNodes].some(

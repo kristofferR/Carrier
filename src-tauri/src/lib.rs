@@ -51,6 +51,7 @@ mod renderer_memory;
 mod scheduled_send;
 mod settings;
 mod themes;
+mod title_bar;
 mod tray;
 #[cfg(any(target_os = "linux", target_os = "windows", test))]
 mod tray_badge;
@@ -1179,6 +1180,7 @@ pub fn run() {
         .menu(menu::build_menu)
         .on_menu_event(menu::handle_menu_event)
         .invoke_handler(tauri::generate_handler![
+            title_bar::window_control,
             commands::get_settings,
             commands::runtime_capabilities,
             commands::set_settings,
@@ -1812,26 +1814,56 @@ pub fn run() {
                 refresh_unread_indicators(&h, &settings, n);
             });
 
+            // Windows and Linux: the minimize, maximize and close buttons and the
+            // drag strip Carrier draws in the page (see title_bar).
+            {
+                let h = app.handle().clone();
+                app.listen_any("carrier:window-control", move |event| {
+                    #[derive(serde::Deserialize)]
+                    struct ControlMsg {
+                        action: crate::title_bar::Action,
+                    }
+                    // Signed by the page's own window secret, so a page can only
+                    // act on its own window.
+                    let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
+                        return;
+                    };
+                    let Some(label) = signed_action_window(&h, "carrier:window-control", &signed)
+                    else {
+                        log::warn!("carrier:window-control was not authorized");
+                        return;
+                    };
+                    let Ok(msg) = serde_json::from_str::<ControlMsg>(&signed.message) else {
+                        return;
+                    };
+                    if let Some(window) = h.get_webview_window(&label) {
+                        crate::title_bar::perform(&window, msg.action);
+                    }
+                });
+            }
+
             // macOS: the photo viewer gets a title bar of its own while it's open
-            // (see macos::title_bar). The page names its own window; the
-            // payload is untrusted, so only a Messenger window's title bar can
-            // be switched, and only between its two styles.
+            // (see macos::title_bar). Signed by the page's window secret, so a
+            // page can only switch its own window's title bar.
             #[cfg(target_os = "macos")]
             {
                 let h = app.handle().clone();
                 app.listen_any("carrier:media-viewer", move |event| {
                     #[derive(serde::Deserialize)]
                     struct ViewerMsg {
-                        window: String,
                         open: bool,
                     }
-                    let Ok(msg) = serde_json::from_str::<ViewerMsg>(event.payload()) else {
+                    let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                         return;
                     };
-                    if !is_messenger_window_label(&msg.window) {
+                    let Some(label) = signed_action_window(&h, "carrier:media-viewer", &signed)
+                    else {
                         return;
-                    }
-                    if let Some(window) = h.get_webview_window(&msg.window) {
+                    };
+                    let Ok(msg) = serde_json::from_str::<ViewerMsg>(&signed.message) else {
+                        return;
+                    };
+                    if let Some(window) = h.get_webview_window(&label) {
                         crate::macos::title_bar::set_viewer_open(&window, msg.open);
                     }
                 });

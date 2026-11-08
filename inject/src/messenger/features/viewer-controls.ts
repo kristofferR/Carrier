@@ -1,6 +1,6 @@
 import { isMediaViewerDialog, MEDIA_VIEWER_ATTR } from "../lib/media-viewer";
 import { viewerControlOffset } from "../lib/viewer-controls";
-import { reportMediaViewer } from "./title-bar";
+import { reportMediaViewer, windowControlsInset } from "./title-bar";
 
 const DIALOG = '[role="dialog"]';
 const BANNER = 'div[role="banner"]';
@@ -24,7 +24,7 @@ const visibleControls = (root: HTMLElement) =>
 
 const applyOffset = (element: HTMLElement, controlTops: number[], attr: string) => {
   const currentOffset = Number.parseFloat(element.style.getPropertyValue(OFFSET)) || 0;
-  const offset = viewerControlOffset(controlTops, currentOffset);
+  const offset = viewerControlOffset(controlTops, currentOffset, windowControlsInset());
   if (!offset) return false;
   if (!element.hasAttribute(attr)) element.setAttribute(attr, "");
   const value = `${offset}px`;

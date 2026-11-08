@@ -1,39 +1,30 @@
-//! Messenger windows without a separate title bar, like the old Messenger
-//! app: the window buttons float over the top of the chat list, which keeps a
-//! strip of [`INSET`] points free under them (messenger.css). A transparent native view over that strip
-//! drags the window and answers a double-click as the system's title bar does,
-//! so the page needs no window permissions. While Messenger's photo viewer is
-//! open the window gets a title bar of its own, as the viewer puts its buttons
-//! at the very top: Tauri's Transparent style, which lays the page out below
-//! it and paints it in the window's themed background (Visible keeps the page
-//! under an opaque bar). In full screen the strip goes, with the title bar.
+//! macOS side of Carrier's title bar (see crate::title_bar): the window
+//! buttons float over the top of the chat list. A transparent native view over
+//! the strip drags the window and answers a double-click as the system's title
+//! bar does, so the page needs no window permissions. While Messenger's photo
+//! viewer is open the window gets a title bar of its own, as the viewer puts its
+//! buttons at the very top: Tauri's Transparent style, which lays the page out
+//! below it and paints it in the window's themed background (Visible keeps the
+//! page under an opaque bar).
 
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
 use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
 use objc2::{msg_send, sel};
-use tauri::{TitleBarStyle, WebviewWindow, WindowEvent};
+use tauri::{TitleBarStyle, WebviewWindow};
 
-/// Height of the strip under the window buttons, in points (CSS pixels at 100%).
-pub(crate) const INSET: f64 = 28.0;
-
-/// The page zoom in percent. Native zoom scales CSS pixels, so the page's
-/// inset shrinks as it grows. Kept here rather than read from the settings,
-/// whose lock may be held by whoever changes the zoom.
-static ZOOM_PERCENT: AtomicI32 = AtomicI32::new(100);
+use crate::title_bar::INSET;
 
 /// Windows whose photo viewer is open, by label.
-fn viewer_open() -> &'static Mutex<HashSet<String>> {
+fn viewers() -> &'static Mutex<HashSet<String>> {
     static OPEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     OPEN.get_or_init(Default::default)
 }
 
-/// The inset each window's page was last told, by label.
-fn told_inset() -> &'static Mutex<HashMap<String, f64>> {
-    static TOLD: OnceLock<Mutex<HashMap<String, f64>>> = OnceLock::new();
-    TOLD.get_or_init(Default::default)
+/// Whether this window's photo viewer is open (it then has a title bar).
+pub(crate) fn viewer_open(label: &str) -> bool {
+    viewers().lock().unwrap().contains(label)
 }
 
 /// The drag strip's class: an NSView that moves the window.
@@ -102,8 +93,7 @@ extern "C-unwind" fn mouse_down(this: &AnyObject, _cmd: Sel, event: *mut AnyObje
     }
 }
 
-/// Put the drag strip over the top of a Messenger window and keep it, and the
-/// page's inset, in step with full screen and the photo viewer.
+/// Put the drag strip over the top of a window.
 pub(crate) fn install(window: &WebviewWindow) {
     let Ok(ns_window) = window.ns_window() else {
         return;
@@ -141,19 +131,12 @@ pub(crate) fn install(window: &WebviewWindow) {
             let _: () = msg_send![view, release];
         }
     });
-    let watched = window.clone();
-    window.on_window_event(move |event| {
-        // Entering or leaving full screen resizes the window.
-        if matches!(event, WindowEvent::Resized(_)) {
-            sync(&watched);
-        }
-    });
 }
 
 /// Called when the page's photo viewer opens or closes.
 pub(crate) fn set_viewer_open(window: &WebviewWindow, open: bool) {
     let changed = {
-        let mut set = viewer_open().lock().unwrap();
+        let mut set = viewers().lock().unwrap();
         if open {
             set.insert(window.label().to_string())
         } else {
@@ -171,7 +154,7 @@ pub(crate) fn set_viewer_open(window: &WebviewWindow, open: bool) {
     if let Err(error) = window.set_title_bar_style(style) {
         log::warn!("could not switch the title bar for the photo viewer: {error}");
     }
-    sync(window);
+    crate::title_bar::sync(window);
     // Changing the style leaves the window without a first responder, so
     // Escape and the arrow keys wouldn't reach the viewer until clicked.
     let _ = window.with_webview(|webview| {
@@ -186,65 +169,14 @@ pub(crate) fn set_viewer_open(window: &WebviewWindow, open: bool) {
     });
 }
 
-/// Forget a closed window's state.
+/// Forget a closed window's viewer state.
 pub(crate) fn forget(label: &str) {
-    viewer_open().lock().unwrap().remove(label);
-    told_inset().lock().unwrap().remove(label);
+    viewers().lock().unwrap().remove(label);
 }
 
-/// A new page starts from the initial inset: tell it the current one.
-pub(crate) fn page_loaded(window: &WebviewWindow) {
-    told_inset().lock().unwrap().remove(window.label());
-    sync(window);
-}
-
-/// The strip the page keeps free right now: none in full screen or while the
-/// photo viewer has a title bar of its own.
-fn current_inset(window: &WebviewWindow) -> f64 {
-    let fullscreen = window.is_fullscreen().unwrap_or(false);
-    let viewer = viewer_open().lock().unwrap().contains(window.label());
-    if fullscreen || viewer {
-        0.0
-    } else {
-        css_inset(ZOOM_PERCENT.load(Ordering::Relaxed))
-    }
-}
-
-/// The strip in CSS pixels at a page zoom of `zoom_percent`.
-pub(crate) fn css_inset(zoom_percent: i32) -> f64 {
-    INSET * 100.0 / f64::from(zoom_percent.max(1))
-}
-
-/// Called whenever a Messenger window's page zoom is set.
-pub(crate) fn zoom_changed(window: &WebviewWindow, percent: i32) {
-    ZOOM_PERCENT.store(percent, Ordering::Relaxed);
-    sync(window);
-}
-
-/// The script that tells a page how much room to keep under the window buttons.
-pub(crate) fn inset_script(inset: f64) -> String {
-    format!(
-        "document.documentElement && document.documentElement.style.setProperty(\
-         '--carrier-title-bar-inset', '{inset}px');"
-    )
-}
-
-/// Bring the drag strip and the page's inset in line with the window's state,
-/// when it changed. Only Messenger windows have the strip; call windows keep a
-/// title bar.
-pub(crate) fn sync(window: &WebviewWindow) {
-    if !crate::window::is_messenger_window_label(window.label()) {
-        return;
-    }
-    let inset = current_inset(window);
-    let previous = told_inset()
-        .lock()
-        .unwrap()
-        .insert(window.label().to_string(), inset);
-    if previous == Some(inset) {
-        return;
-    }
-    let _ = window.eval(inset_script(inset));
+/// Show or hide the drag strip (it goes with the strip in full screen and while
+/// the photo viewer has a title bar).
+pub(crate) fn set_strip_hidden(window: &WebviewWindow, hidden: bool) {
     let Ok(ns_window) = window.ns_window() else {
         return;
     };
@@ -263,7 +195,7 @@ pub(crate) fn sync(window: &WebviewWindow) {
                 let view: *mut AnyObject = msg_send![subviews, objectAtIndex: index];
                 let is_strip: bool = msg_send![view, isKindOfClass: drag_view_class()];
                 if is_strip {
-                    let _: () = msg_send![view, setHidden: inset == 0.0];
+                    let _: () = msg_send![view, setHidden: hidden];
                 }
             }
         }

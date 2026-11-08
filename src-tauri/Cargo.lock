@@ -720,6 +720,7 @@ dependencies = [
  "url",
  "uuid",
  "webkit2gtk",
+ "webview2-com",
  "windows",
  "windows-sys 0.61.2",
  "zbus",

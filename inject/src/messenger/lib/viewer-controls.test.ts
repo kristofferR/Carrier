@@ -14,6 +14,10 @@ describe("viewerControlOffset", () => {
     expect(viewerControlOffset([8, 42], 28)).toBe(28);
   });
 
+  test("keeps controls clear of Carrier's window controls", () => {
+    expect(viewerControlOffset([8, 14], 0, 32)).toBe(32);
+  });
+
   test("caps pathological layout offsets and ignores invalid measurements", () => {
     expect(viewerControlOffset([Number.NaN, -500])).toBe(64);
     expect(viewerControlOffset([Number.NaN])).toBe(0);
