@@ -765,7 +765,7 @@ fn webview_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
 fn account_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Ok(data) = app.path().app_data_dir() {
-        paths.push(data.join(crate::notification_ledger::LEDGER_FILE));
+        paths.extend(crate::notification_ledger::account_files(&data));
         #[cfg(target_os = "macos")]
         paths.push(data.join(crate::notifications::PERSISTED_NOTIFICATION_ROUTES_DIR));
     }
