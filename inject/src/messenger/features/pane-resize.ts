@@ -168,7 +168,10 @@ export function initPaneResize() {
         el.style.setProperty("max-width", paneCap(pane), "important");
       });
     };
-    const end = () => {
+    const end = (endEvent: PointerEvent) => {
+      if (endEvent.pointerId !== event.pointerId) return;
+      document.removeEventListener("pointerup", end, true);
+      document.removeEventListener("pointercancel", end, true);
       edge.removeEventListener("pointermove", move);
       edge.removeEventListener("lostpointercapture", end);
       cancelAnimationFrame(frame);
@@ -182,6 +185,8 @@ export function initPaneResize() {
     };
     edge.addEventListener("pointermove", move);
     edge.addEventListener("lostpointercapture", end);
+    document.addEventListener("pointerup", end, true);
+    document.addEventListener("pointercancel", end, true);
   };
 
   const makeEdge = (pane: Pane) => {

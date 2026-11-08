@@ -34,13 +34,14 @@ export function initChatGradient() {
     }
   };
 
-  const timer = window.setInterval(() => {
+  let applied = 0;
+  window.setInterval(() => {
     if (document.hidden) return;
     if (!document.querySelector(`[role="main"] [style*="${GRADIENT_VAR}"]`)) return;
     readSheets();
-    if (!classes.size) return;
+    if (!classes.size || classes.size === applied) return;
+    applied = classes.size;
     style.textContent = chatGradientCss([...classes]);
-    document.documentElement.append(style);
-    window.clearInterval(timer);
+    if (!style.isConnected) document.documentElement.append(style);
   }, CHECK_MS);
 }

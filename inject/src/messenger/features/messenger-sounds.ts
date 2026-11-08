@@ -110,10 +110,13 @@ async function playThroughWebAudio(element: HTMLMediaElement): Promise<void> {
   if (!src || typeof Context !== "function") throw new Error("no Web Audio");
   context ??= new Context();
   const audio = context;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const awake = Promise.race([
     audio.resume(),
-    new Promise((resolve) => setTimeout(resolve, RESUME_WAIT_MS)),
-  ]);
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, RESUME_WAIT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
   const [data] = await Promise.all([decoded(audio, src), awake]);
   if (pausesOf(element) !== pausesAtStart) return;
   if (audio.state !== "running") throw new Error(`audio ${audio.state}`);

@@ -11,7 +11,7 @@ export interface PaneWidths {
   details: number | null;
 }
 
-/** Sanity bounds for a stored width, in CSS pixels. Mirrors `PANE_WIDTH_MIN/MAX` in settings.rs. */
+/** Sanity bounds for a stored width, in CSS pixels. Mirrors `PANE_WIDTH_MIN/MAX` in pane_widths.rs. */
 export const PANE_WIDTH_MIN = 160;
 export const PANE_WIDTH_MAX = 1600;
 /** The chat between the panes keeps at least this much room. */

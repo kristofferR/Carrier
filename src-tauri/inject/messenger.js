@@ -3020,14 +3020,15 @@ ${button.innerHTML}`)
         collectBubbleClasses(rules, classes);
       }
     };
-    const timer = window.setInterval(() => {
+    let applied2 = 0;
+    window.setInterval(() => {
       if (document.hidden) return;
       if (!document.querySelector(`[role="main"] [style*="${GRADIENT_VAR}"]`)) return;
       readSheets();
-      if (!classes.size) return;
+      if (!classes.size || classes.size === applied2) return;
+      applied2 = classes.size;
       style.textContent = chatGradientCss([...classes]);
-      document.documentElement.append(style);
-      window.clearInterval(timer);
+      if (!style.isConnected) document.documentElement.append(style);
     }, CHECK_MS);
   }
 
@@ -7008,10 +7009,13 @@ ${button.innerHTML}`)
     if (!src || typeof Context !== "function") throw new Error("no Web Audio");
     context ?? (context = new Context());
     const audio = context;
+    let timer;
     const awake = Promise.race([
       audio.resume(),
-      new Promise((resolve) => setTimeout(resolve, RESUME_WAIT_MS))
-    ]);
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, RESUME_WAIT_MS);
+      })
+    ]).finally(() => clearTimeout(timer));
     const [data] = await Promise.all([decoded(audio, src), awake]);
     if (pausesOf(element2) !== pausesAtStart) return;
     if (audio.state !== "running") throw new Error(`audio ${audio.state}`);
@@ -12020,7 +12024,10 @@ ${button.innerHTML}`)
           el.style.setProperty("max-width", paneCap(pane), "important");
         }));
       };
-      const end = () => {
+      const end = (endEvent) => {
+        if (endEvent.pointerId !== event.pointerId) return;
+        document.removeEventListener("pointerup", end, true);
+        document.removeEventListener("pointercancel", end, true);
         edge.removeEventListener("pointermove", move);
         edge.removeEventListener("lostpointercapture", end);
         cancelAnimationFrame(frame);
@@ -12034,6 +12041,8 @@ ${button.innerHTML}`)
       };
       edge.addEventListener("pointermove", move);
       edge.addEventListener("lostpointercapture", end);
+      document.addEventListener("pointerup", end, true);
+      document.addEventListener("pointercancel", end, true);
     };
     const makeEdge = (pane) => {
       const edge = document.createElement("div");
