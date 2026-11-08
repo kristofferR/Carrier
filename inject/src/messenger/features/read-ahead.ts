@@ -125,21 +125,30 @@ export function initReadAhead() {
           .take(READ_AHEAD.rowsRead),
       );
       if (!Array.isArray(rows)) return report("Messenger's thread APIs changed");
-      for (const thread of selectReadAheadThreads(rows, types, toId, openThreadId())) {
-        if (!allowed() || thread.id === openThreadId()) return;
+      const threads = selectReadAheadThreads(rows, types, toId, openThreadId());
+      let mappedCount = 0;
+      let loaded = 0;
+      for (const thread of threads) {
+        if (!allowed() || thread.id === openThreadId()) break;
         // The worker knows a chat only once it is mapped.
         const mapped = await q.firstAsync(
           q.fromTableAscending(db.tables.mi_act_mapping_table).getKeyRange(thread.threadKey),
         );
         if (!mapped) continue;
-        await Promise.race([
+        mappedCount += 1;
+        const done = await Promise.race([
           Promise.resolve(
             preload(db, thread.threadKey, READ_AHEAD.messages, thread.authorityLevel),
-          ).catch(() => {}),
-          pause(READ_AHEAD.chatTimeoutMs),
+          ).then(
+            () => true,
+            () => false,
+          ),
+          pause(READ_AHEAD.chatTimeoutMs).then(() => false),
         ]);
+        if (done) loaded += 1;
         await pause(READ_AHEAD.chatGapMs);
       }
+      diag("read-ahead.round", `chats=${threads.length} mapped=${mappedCount} loaded=${loaded}`);
     } catch (error) {
       // Facebook changed something this relies on; the next round tries again.
       report(error instanceof Error ? error.message.slice(0, 200) : "round failed");

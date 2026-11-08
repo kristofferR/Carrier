@@ -12852,21 +12852,29 @@ ${text}`)) {
           q.fromTableDescending(db.tables.threads.index("lastActivityTimestampMs")).take(READ_AHEAD.rowsRead)
         );
         if (!Array.isArray(rows)) return report("Messenger's thread APIs changed");
-        for (const thread2 of selectReadAheadThreads(rows, types, toId, openThreadId())) {
-          if (!allowed() || thread2.id === openThreadId()) return;
+        const threads = selectReadAheadThreads(rows, types, toId, openThreadId());
+        let mappedCount = 0;
+        let loaded = 0;
+        for (const thread2 of threads) {
+          if (!allowed() || thread2.id === openThreadId()) break;
           const mapped = await q.firstAsync(
             q.fromTableAscending(db.tables.mi_act_mapping_table).getKeyRange(thread2.threadKey)
           );
           if (!mapped) continue;
-          await Promise.race([
+          mappedCount += 1;
+          const done = await Promise.race([
             Promise.resolve(
               preload(db, thread2.threadKey, READ_AHEAD.messages, thread2.authorityLevel)
-            ).catch(() => {
-            }),
-            pause3(READ_AHEAD.chatTimeoutMs)
+            ).then(
+              () => true,
+              () => false
+            ),
+            pause3(READ_AHEAD.chatTimeoutMs).then(() => false)
           ]);
+          if (done) loaded += 1;
           await pause3(READ_AHEAD.chatGapMs);
         }
+        diag("read-ahead.round", `chats=${threads.length} mapped=${mappedCount} loaded=${loaded}`);
       } catch (error) {
         report(error instanceof Error ? error.message.slice(0, 200) : "round failed");
       } finally {
