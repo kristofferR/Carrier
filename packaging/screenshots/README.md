@@ -1,13 +1,22 @@
 # Store screenshots
 
 Use only fictional English content. Never capture a signed-in personal profile,
-real conversations, contact names, photos, notifications, IDs, or desktop content.
+real conversations, contact names, photos, notifications, IDs, or personal desktop content.
 
-The current images in `docs/screenshots/` are renders of the website's window
-mock in `docs/index.html`, framed as a KDE Breeze window with the title
-`Chatpane` and a File, Edit, View and Help menu bar. They are not captures of
-the app. Both PNGs are 1021 × 744 pixels. Light is the default AppStream
-screenshot; use dark first and light second in the Snap listing.
+None of the images in `docs/screenshots/` are captures of the app. They are
+renders of the website's window mock in `docs/index.html`.
+
+- **Linux** (`chatpane-linux-en-*.png`): the mock framed as a KDE Breeze window
+  with the title `Chatpane` and a File, Edit, View and Help menu bar. Both PNGs
+  are 1021 × 744 pixels. Light is the default AppStream screenshot; use dark
+  first and light second in the Snap listing.
+- **Windows** (`chatpane-windows-en-*.png`): the mock in its Windows mode,
+  rendered with Segoe UI and Segoe UI Emoji, composited onto a 1920 × 1080
+  capture of a clean Windows 11 test VM desktop with its taskbar. The website's
+  Windows notification mock sits above the system tray. The desktop holds only
+  default icons and a Chatpane shortcut; the VM's own Chatpane window was moved
+  off-screen before the capture. Use these for winget, Microsoft Store and
+  directory listings.
 
 ## Content provenance
 
@@ -16,16 +25,18 @@ and the seven portraits in `docs/avatars/en/`. All conversations are invented;
 all portraits depict AI-generated fictional people. The original provenance is
 documented in commits `17fab64` and `bc1c168` and the website's avatar CSS comment.
 
-Both images were visually inspected in full. Their PNGs hold only IHDR, IDAT
+All images were visually inspected in full. Their PNGs hold only IHDR, IDAT
 and IEND chunks: no text, account, location, or EXIF metadata.
 
 | Image | SHA-256 |
 | --- | --- |
 | `chatpane-linux-en-light.png` | `61c602d1cb33cf092157977f2b6e69e6bf735bf99807da49e59ab0b850795ebb` |
 | `chatpane-linux-en-dark.png` | `5c2367c82934a6245fedca067e0c734b452dc5cb5dcafe8b1de87bfb5eb8c99e` |
+| `chatpane-windows-en-light.png` | `153d5907a5b80bf29e6faa4fa9e94cc663546276a024c2dd9b88b161bb038fad` |
+| `chatpane-windows-en-dark.png` | `d913fe701daa14832571ca0e24e139b1e8a30c28f520c48439f323238a1df566` |
 
-The AppStream URLs point to these files on https://chatpane.app/screenshots/.
-Replacing either image requires a new privacy inspection.
+The AppStream URLs point to the Linux files on https://chatpane.app/screenshots/.
+Replacing any image requires a new privacy inspection.
 
 ## Real captures
 
