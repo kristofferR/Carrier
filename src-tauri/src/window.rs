@@ -1538,6 +1538,13 @@ fn init_script(
     }}
     return chatpaneAuthorizedEmit('chatpane:open-download-privacy', {{}});
   }};
+  // The star toast (growth.rs): 'shown' ends the prompt, 'star' opens GitHub.
+  var chatpaneStarPrompt = function (action) {{
+    if (!chatpaneAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return chatpaneAuthorizedEmit('chatpane:star-prompt', {{ action: action }});
+  }};
   // Chatpane's title bar (title_bar.rs): signed, so a page can only act on its
   // own window.
   var chatpaneWindowControl = function (action) {{

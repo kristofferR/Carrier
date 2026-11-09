@@ -30,6 +30,28 @@ use crate::tray::build_tray_menu;
 use crate::tray::show_main;
 use crate::window::show_settings_window;
 
+/// Help menu items that copy the share message and open the GitHub repository,
+/// labelled with `growth::NAME`.
+fn share_and_star_items(
+    app: &tauri::AppHandle,
+) -> tauri::Result<(MenuItem<tauri::Wry>, MenuItem<tauri::Wry>)> {
+    let name = crate::growth::NAME;
+    Ok((
+        menu_item(
+            app,
+            "share_chatpane",
+            &format!("Copy {name} Share Message"),
+            None,
+        )?,
+        menu_item(
+            app,
+            "star_chatpane",
+            &format!("Star {name} on GitHub"),
+            None,
+        )?,
+    ))
+}
+
 fn about_metadata(version: &str) -> AboutMetadata<'static> {
     AboutMetadata {
         name: Some("Chatpane".into()),
@@ -37,7 +59,7 @@ fn about_metadata(version: &str) -> AboutMetadata<'static> {
         authors: Some(vec!["kristofferR".into()]),
         comments: Some("A tiny, distraction-free desktop client for Facebook Messenger.".into()),
         license: Some("MIT".into()),
-        website: Some("https://github.com/kristofferR/Carrier".into()),
+        website: Some(crate::growth::REPO_URL.into()),
         website_label: Some("GitHub".into()),
         ..Default::default()
     }
@@ -194,10 +216,13 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         Some("CmdOrCtrl+/"),
     )?;
     let report_issue = menu_item(app, "report_issue", "Report an Issue…", None)?;
+    let (share, star) = share_and_star_items(app)?;
     let help = SubmenuBuilder::new(app, "Help")
         .item(&shortcuts)
         .separator()
         .item(&report_issue)
+        .item(&share)
+        .item(&star)
         .build()?;
 
     Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window, &help])
@@ -374,11 +399,14 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         "Clear Cache and Restart…",
         Some("CmdOrCtrl+Shift+Backspace"),
     )?;
+    let (share, star) = share_and_star_items(app)?;
     let about = about_metadata(&app.package_info().version.to_string());
     let help = SubmenuBuilder::new(app, "Help")
         .id("help")
         .item(&shortcuts)
         .item(&report_issue)
+        .item(&share)
+        .item(&star)
         .separator()
         .item(&clear_cache)
         .separator()
@@ -697,12 +725,22 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         }
         "report_issue" => {
             if let Err(error) = app.opener().open_url(
-                "https://github.com/kristofferR/Carrier/issues",
+                format!("{}/issues", crate::growth::REPO_URL),
                 None::<String>,
             ) {
                 log::warn!("failed to open issue tracker: {error}");
             }
         }
+        "share_chatpane" => {
+            let toast = match crate::growth::copy_share_message(app) {
+                Ok(()) => crate::growth::SHARE_COPIED.to_string(),
+                Err(error) => error,
+            };
+            if let (Some(window), Ok(toast)) = (target_window(app), serde_json::to_string(&toast)) {
+                let _ = window.eval(format!("window.__chatpaneToast?.({toast})"));
+            }
+        }
+        "star_chatpane" => crate::growth::open_repo(app),
         // Dock/tray "recent conversations" items ("recent:<thread-id>"). Handled
         // here (the app-wide menu handler) only — the tray's own handler must
         // not repeat this, since every menu event is broadcast to all handlers.

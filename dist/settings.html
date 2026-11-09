@@ -242,6 +242,8 @@
       }
       button.action:active { opacity: .85; }
       .ver { opacity: .55; font-size: 12px; }
+      .foot-links { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
+      .foot-links a:not(#reset) { color: #0866ff; text-decoration: none; }
       #status { opacity: .7; font-size: 12px; min-height: 16px; }
       @media (prefers-color-scheme: dark) {
         body { background: #242526; color: #e4e6eb; }
@@ -265,7 +267,7 @@
         .theme-card .preview { outline-color: rgba(255,255,255,.12); }
         .theme-card[aria-checked="true"] .preview { outline-color: #5b9bff; }
         .theme-add .preview { outline-color: #5a5c60; color: #b0b3b8; }
-        .link-button { color: #5b9bff; }
+        .link-button, .foot-links a:not(#reset) { color: #5b9bff; }
         .notice.error { background: #3a2422; border-color: #6b3530; }
         .notice.ok { background: #1e3326; border-color: #2f5a3d; }
         .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px #242526, 0 0 0 4px #e4e6eb; }
@@ -281,12 +283,16 @@
     <footer>
       <div>
         <div class="ver" id="version">Chatpane</div>
-        <div id="status"></div>
+        <div id="status" role="status"></div>
         <details id="update-notes" hidden>
           <summary></summary>
           <div class="update-notes-text"></div>
         </details>
-        <a href="#" id="reset" style="font-size:12px;opacity:.7">Reset to defaults</a>
+        <div class="foot-links">
+          <a href="#" id="share">Share Chatpane</a>
+          <a href="#" id="star">Star on GitHub</a>
+          <a href="#" id="reset" style="opacity:.7">Reset to defaults</a>
+        </div>
       </div>
       <button class="action" id="check" type="button" disabled>Check for updates</button>
     </footer>
@@ -1420,6 +1426,23 @@
         renderBody();
       }
 
+      document.getElementById("share").onclick = async (e) => {
+        e.preventDefault();
+        try {
+          await invoke("copy_share_message");
+          const confirmation = "Copied. Paste it to anyone you like.";
+          setStatus(confirmation);
+          setTimeout(() => {
+            if (document.getElementById("status").textContent === confirmation) setStatus("");
+          }, 3000);
+        } catch (err) {
+          setStatus(String(err && err.message ? err.message : err));
+        }
+      };
+      document.getElementById("star").onclick = (e) => {
+        e.preventDefault();
+        invoke("open_github").catch(console.error);
+      };
       document.getElementById("reset").onclick = async (e) => {
         e.preventDefault();
         try {

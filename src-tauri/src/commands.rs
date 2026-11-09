@@ -379,6 +379,9 @@ fn store_settings(
     if !reset {
         effective.pane_widths = state.settings.lock().unwrap().pane_widths;
     }
+    // Usage is native-owned: neither a stale Settings-window copy nor a reset
+    // may restart the count or bring the star prompt back.
+    effective.usage = state.settings.lock().unwrap().usage;
     let mut sync_errors = Vec::new();
 
     if new.autostart != prev_autostart {
@@ -453,6 +456,18 @@ async fn store_settings_off_main(
 #[tauri::command]
 pub(crate) async fn set_settings(app: tauri::AppHandle, new: Settings) -> Result<Settings, String> {
     store_settings_off_main(app, new, false).await
+}
+
+/// Copy the "Share Chatpane" message (Settings footer).
+#[tauri::command]
+pub(crate) fn copy_share_message(app: tauri::AppHandle) -> Result<(), String> {
+    crate::growth::copy_share_message(&app)
+}
+
+/// Open Chatpane's GitHub repository (Settings footer).
+#[tauri::command]
+pub(crate) fn open_github(app: tauri::AppHandle) {
+    crate::growth::open_repo(&app);
 }
 
 /// Reset all settings to their defaults.

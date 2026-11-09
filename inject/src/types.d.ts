@@ -81,10 +81,17 @@ interface ChatpaneSettings {
 
 type ChatpaneToastAction =
   | { label: string; kind: "reveal-download"; url: string }
-  | { label: string; kind: "open-download-privacy" };
+  | { label: string; kind: "open-download-privacy" }
+  | { label: string; kind: "star-github" };
 
 interface ChatpaneToastOptions {
   warning?: boolean;
+  /** Visible time in ms (hovering pauses it). */
+  duration?: number;
+  /** Show a close button. */
+  closable?: boolean;
+  /** Distance from the window bottom in px. */
+  bottom?: number;
 }
 
 /**
@@ -94,6 +101,8 @@ interface ChatpaneToastOptions {
 declare const chatpaneRevealDownload: (url: string) => Promise<unknown> | undefined;
 /** Opens the OS settings pane that grants Chatpane folder access (macOS). */
 declare const chatpaneOpenDownloadPrivacy: () => Promise<unknown> | undefined;
+/** Reports the star toast to native code (growth.rs). */
+declare const chatpaneStarPrompt: (action: "shown" | "star") => Promise<unknown> | undefined;
 declare const chatpaneWindowControl: (
   action: "minimize" | "toggle-maximize" | "close" | "drag",
 ) => Promise<unknown> | undefined;
@@ -202,6 +211,8 @@ interface Window {
   __chatpaneCheckUpdates?: () => void;
   __chatpaneToggleSettings?: () => void;
   __chatpaneToggleShortcuts?: () => void;
+  /** Called by native code when the one-time star toast is due. */
+  __chatpaneStarPrompt?: (productName: string) => void;
 
   // messenger.js — driven by the native menus (View ▸ Zoom, File ▸ New
   // Conversation, Dock/tray thread menus) and the dev-only mcp-bridge.

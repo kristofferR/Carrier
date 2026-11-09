@@ -31,6 +31,7 @@ mod debug_install;
 mod diag;
 mod download;
 mod export;
+mod growth;
 mod hotkey;
 #[cfg(target_os = "linux")]
 mod hotkey_portal;
@@ -302,8 +303,8 @@ fn spawn_taskbar_theme_watcher(app: tauri::AppHandle) {
 }
 
 #[derive(Deserialize)]
-struct SignedAction {
-    message: String,
+pub(crate) struct SignedAction {
+    pub(crate) message: String,
     nonce: String,
     timestamp: u64,
     signature: String,
@@ -436,7 +437,7 @@ fn authorize_signed_action(
     Some(label)
 }
 
-fn signed_action_window(
+pub(crate) fn signed_action_window(
     app: &tauri::AppHandle,
     event: &str,
     signed: &SignedAction,
@@ -1205,6 +1206,8 @@ pub fn run() {
             commands::open_log_folder,
             commands::open_custom_css,
             commands::send_test_notification,
+            commands::copy_share_message,
+            commands::open_github,
             account::messenger_account,
             account::set_messenger_account,
             themes::list_themes,
@@ -1226,6 +1229,7 @@ pub fn run() {
             clear_pending_webview_data(app.handle());
             account::install(app.handle());
             pane_widths::install(app.handle());
+            growth::install(app.handle());
 
             // Portable zips have no installer to register the scheme, and a moved
             // portable folder must re-point the handler at the new exe. Writing
@@ -2322,6 +2326,17 @@ pub fn run() {
                 && label == "main"
             {
                 app_icon::apply_app_icon_from_state(app);
+            }
+
+            // Counts days of use and may ask the page for the star prompt.
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Focused(true),
+                ..
+            } = &event
+                && label == "main"
+            {
+                growth::main_focused(app);
             }
 
             // App activation (Cmd+Tab) can make that transparent window key.

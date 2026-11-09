@@ -41,6 +41,19 @@ export function installToast() {
     cursor: "pointer",
   });
 
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "✕";
+  close.setAttribute("aria-label", "Close");
+  Object.assign(close.style, {
+    border: "0",
+    padding: "0 2px",
+    background: "transparent",
+    color: "#b0b3b8",
+    font: "inherit",
+    cursor: "pointer",
+  });
+
   let mounted = false;
   let action: ChatpaneToastAction | undefined;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -60,6 +73,35 @@ export function installToast() {
     if (action.kind === "reveal-download") chatpaneRevealDownload(action.url)?.catch?.(() => {});
     else if (action.kind === "open-download-privacy")
       chatpaneOpenDownloadPrivacy()?.catch?.(() => {});
+    else if (action.kind === "star-github") chatpaneStarPrompt("star")?.catch?.(() => {});
+    hide();
+  });
+  close.addEventListener("click", (event) => {
+    event.stopPropagation();
+    hide();
+  });
+
+  const hide = () => {
+    clearTimeout(toastTimer);
+    clearTimeout(toastRemoveTimer);
+    action = undefined;
+    toastEl.style.pointerEvents = "none";
+    toastEl.style.opacity = "0";
+    toastEl.style.transform = "translateX(-50%) translateY(8px)";
+    toastRemoveTimer = setTimeout(() => {
+      toastEl.remove();
+      mounted = false;
+      action = undefined;
+    }, 250);
+  };
+  const scheduleHide = (ms: number) => {
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(hide, ms);
+  };
+  // Hovering holds an interactive toast open; leaving gives a moment to go.
+  toastEl.addEventListener("mouseenter", () => clearTimeout(toastTimer));
+  toastEl.addEventListener("mouseleave", () => {
+    if (mounted) scheduleHide(2600);
   });
 
   const showToast = (
@@ -76,32 +118,22 @@ export function installToast() {
     toastEl.setAttribute("role", options?.warning ? "alert" : "status");
     toastEl.setAttribute("aria-live", options?.warning ? "assertive" : "polite");
     toastEl.style.border = options?.warning ? "1px solid #b58130" : "none";
+    toastEl.style.bottom = `${options?.bottom ?? 24}px`;
     message.textContent = msg;
     toastEl.replaceChildren(message);
-    toastEl.style.pointerEvents = action ? "auto" : "none";
+    toastEl.style.pointerEvents = action || options?.closable ? "auto" : "none";
     if (action) {
       button.textContent = action.label;
       toastEl.append(button);
     }
+    if (options?.closable) toastEl.append(close);
 
     requestAnimationFrame(() => {
       toastEl.style.opacity = "1";
       toastEl.style.transform = "translateX(-50%) translateY(0)";
     });
-    clearTimeout(toastTimer);
     clearTimeout(toastRemoveTimer);
-    toastTimer = setTimeout(
-      () => {
-        toastEl.style.opacity = "0";
-        toastEl.style.transform = "translateX(-50%) translateY(8px)";
-        toastRemoveTimer = setTimeout(() => {
-          toastEl.remove();
-          mounted = false;
-          action = undefined;
-        }, 250);
-      },
-      options?.warning ? 8000 : action ? 6000 : 2600,
-    );
+    scheduleHide(options?.duration ?? (options?.warning ? 8000 : action ? 6000 : 2600));
   };
 
   Object.defineProperty(window, "__chatpaneToast", {
