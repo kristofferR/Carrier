@@ -2974,6 +2974,7 @@ ${button.innerHTML}`)
     window.__chatpaneOnNotification = noteLifecycle;
     window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1e3, "rate-limit-manual"));
     window.addEventListener(SILENT_RECOVERY_RELOAD_EVENT, () => schedule(0, "manual"));
+    window.__chatpaneReloadWhenIdle = () => schedule(0, "manual");
     window.addEventListener(SILENT_RECOVERY_EVENT, (event) => {
       silentRecoveryFailed = event.detail === true;
       emitHeartbeat();

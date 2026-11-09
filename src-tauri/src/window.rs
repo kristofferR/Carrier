@@ -322,9 +322,15 @@ pub(crate) async fn open_facebook_language(app: tauri::AppHandle) {
             let _ = window.remove_menu();
             window.on_window_event(move |event| {
                 if matches!(event, WindowEvent::Destroyed) {
+                    // Messenger waits out a draft, a send or a call before
+                    // reloading. A page without Chatpane's scripts (login,
+                    // the offline screen) has nothing to lose.
                     for (label, window) in app.webview_windows() {
                         if is_messenger_window_label(&label) {
-                            let _ = window.eval("location.reload()");
+                            let _ = window.eval(
+                                "window.__chatpaneReloadWhenIdle \
+                                 ? window.__chatpaneReloadWhenIdle() : location.reload()",
+                            );
                         }
                     }
                 }

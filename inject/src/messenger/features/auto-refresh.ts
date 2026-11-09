@@ -400,6 +400,9 @@ export function initAutoRefresh() {
 
   window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1000, "rate-limit-manual"));
   window.addEventListener(SILENT_RECOVERY_RELOAD_EVENT, () => schedule(0, "manual"));
+  // Native, after Facebook's language settings close: the new language shows
+  // only after a reload, which waits out a draft, a send or a call.
+  window.__chatpaneReloadWhenIdle = () => schedule(0, "manual");
   window.addEventListener(SILENT_RECOVERY_EVENT, (event) => {
     silentRecoveryFailed = (event as CustomEvent<unknown>).detail === true;
     emitHeartbeat();
