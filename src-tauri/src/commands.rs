@@ -1161,6 +1161,13 @@ pub(crate) fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     open::that_detached(&dir).map_err(|e| e.to_string())
 }
 
+/// Settings → General: open Facebook's language settings, which Messenger's
+/// own language follows.
+#[tauri::command]
+pub(crate) fn open_facebook_language(app: tauri::AppHandle) {
+    crate::menu::request_extra_window(&app, crate::window::open_facebook_language);
+}
+
 /// Create (without overwriting) and open the user-owned custom stylesheet.
 /// Called only from the trusted local Settings window.
 #[tauri::command]

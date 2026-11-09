@@ -682,13 +682,18 @@ fn confirm_clear_cache(app: &tauri::AppHandle) {
     });
 }
 
-/// File > New Window. On macOS the first extra window reloads the open ones
+/// Open another window on Facebook's session (File > New Window, Facebook's
+/// language settings). On macOS the first extra window reloads the open ones
 /// onto Messenger's shared engine, so ask first if that would interrupt a call
 /// or an unsent message.
-fn request_new_window(app: &tauri::AppHandle) {
+pub(crate) fn request_extra_window<F, Fut>(app: &tauri::AppHandle, open: F)
+where
+    F: FnOnce(tauri::AppHandle) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
     // Off the event-loop handler to avoid the Windows window-creation deadlock.
-    let open = |app: tauri::AppHandle| {
-        tauri::async_runtime::spawn(crate::window::open_messenger_window(app));
+    let open = move |app: tauri::AppHandle| {
+        tauri::async_runtime::spawn(open(app));
     };
     #[cfg(target_os = "macos")]
     if crate::window::opening_window_reloads_others()
@@ -704,7 +709,10 @@ fn request_new_window(app: &tauri::AppHandle) {
                 t("menu.dialog.new_window.confirm").into(),
                 t("dialog.cancel").into(),
             ));
-        if let Some(window) = dialog_parent(app) {
+        // The window asking: Settings, for the language settings.
+        if let Some(window) =
+            focused_window(app).filter(|window| window.is_visible().unwrap_or(false))
+        {
             dialog = dialog.parent(&window);
         }
         dialog.show(move |confirmed| {
@@ -837,7 +845,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
                 }
             }
         }
-        "new_window" => request_new_window(app),
+        "new_window" => request_extra_window(app, crate::window::open_messenger_window),
         "close_window" => {
             if let Some(window) = focused_window(app) {
                 let _ = window.close();

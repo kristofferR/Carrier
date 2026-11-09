@@ -1218,6 +1218,7 @@ pub fn run() {
             commands::open_github,
             account::messenger_account,
             account::set_messenger_account,
+            commands::open_facebook_language,
             themes::list_themes,
             themes::add_theme,
             themes::remove_theme,
