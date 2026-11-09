@@ -57,7 +57,8 @@
 </p>
 
 <p align="center">
-  <code>brew install --cask kristofferR/tap/chatpane</code>
+  <code>brew install --cask kristofferR/tap/chatpane</code><br>
+  <code>winget install kristofferR.Chatpane</code>
 </p>
 
 ---
@@ -229,8 +230,9 @@ GitHub Releases.
 - Updates are cryptographically verified before installation.
 - macOS downloads are Developer ID signed and notarized by Apple.
 - Windows builds are currently unsigned, so SmartScreen may show an
-  “Unknown publisher” warning on first launch. Download only from this
-  repository’s Releases page while Windows signing is being arranged.
+  “Unknown publisher” warning on first launch and when winget installs or
+  upgrades it. Download only from this repository’s Releases page or winget
+  while Windows signing is being arranged.
 - The complete source is available here under the MIT license.
 
 Chatpane is a privacy-respecting client for Facebook Messenger, not a private
@@ -254,6 +256,16 @@ bundles WebKitGTK instead of using the system package.
 
 Chatpane loads `facebook.com/messages`, so you need an account that Meta permits
 to sign in there. The macOS build supports macOS 10.15 and later.
+
+### Windows (winget)
+
+```powershell
+winget install kristofferR.Chatpane
+```
+
+This installs the same per-user installer as the download above, for x64 or
+ARM64. Chatpane keeps updating itself, and `winget upgrade` sees the same
+install, so either way of updating works.
 
 ### Homebrew
 
