@@ -1271,10 +1271,45 @@ pub(crate) fn recreate_messenger_window(
     true
 }
 
+/// How long a closed Settings window stays loaded for a quick reopen. Its web
+/// process holds over 100 MB, so outside Windows it is released after that.
+/// (Windows keeps it: rebuilding WebView2 leaks handles, see below.)
+#[cfg(not(target_os = "windows"))]
+const SETTINGS_KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(3 * 60);
+
+/// Bumped on every Settings open and close, so a release only happens while
+/// the close that scheduled it is the latest.
+static SETTINGS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Destroy a closed Settings window once it has stayed closed for
+/// [`SETTINGS_KEPT_FOR`].
+#[cfg(not(target_os = "windows"))]
+fn release_settings_later(window: WebviewWindow) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let closed = SETTINGS_GENERATION.fetch_add(1, SeqCst).wrapping_add(1);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(SETTINGS_KEPT_FOR).await;
+        let target = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            if SETTINGS_GENERATION.load(SeqCst) == closed && !target.is_visible().unwrap_or(true) {
+                // WebKitGTK keeps a destroyed webview's web process running
+                // (over 100 MB each), so end it first.
+                #[cfg(target_os = "linux")]
+                let _ = target.with_webview(|webview| {
+                    use webkit2gtk::WebViewExt;
+                    webview.inner().terminate_web_process();
+                });
+                let _ = target.destroy();
+            }
+        });
+    });
+}
+
 /// Open (or focus) the dedicated settings window (a small local page, separate
 /// from the Messenger view).
 pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("settings") {
+        SETTINGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let _ = w.show();
         let _ = w.set_focus();
         return;
@@ -1345,10 +1380,24 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
                     });
                 }
             }
-            // A reopened Settings window starts from the initial state.
+            // A rebuilt Settings window starts from the initial state.
             window.on_window_event(|event| {
                 if matches!(event, WindowEvent::Destroyed) {
                     crate::title_bar::forget("settings");
+                }
+            });
+            // Closing hides the window, and an open soon after shows it again: a
+            // new webview is blank while its web process starts. Windows keeps
+            // it for good, since rebuilding WebView2 retains two shared-memory
+            // section handles per teardown, and the reused window's removed
+            // menu stays removed.
+            let close_window = window.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = close_window.hide();
+                    #[cfg(not(target_os = "windows"))]
+                    release_settings_later(close_window.clone());
                 }
             });
             #[cfg(target_os = "macos")]
@@ -1361,21 +1410,6 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
             let _ = window.remove_menu();
             #[cfg(target_os = "linux")]
             crate::linux_tiling::watch(&window);
-
-            #[cfg(target_os = "windows")]
-            {
-                // Keep the local Settings webview alive when its close button is
-                // pressed. Rebuilding WebView2 repeatedly retains two unnamed
-                // shared-memory section handles per teardown, and reusing the same
-                // native window also prevents its removed menu from resurfacing.
-                let close_window = window.clone();
-                window.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = close_window.hide();
-                    }
-                });
-            }
         }
         Err(error) => log::error!("failed to create Settings window: {error}"),
     }
