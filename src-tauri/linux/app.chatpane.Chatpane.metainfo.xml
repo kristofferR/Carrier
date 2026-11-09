@@ -42,9 +42,6 @@
     <name>kristofferR</name>
   </developer>
   <update_contact>481270+kristofferR@users.noreply.github.com</update_contact>
-  <requires>
-    <internet>always</internet>
-  </requires>
   <branding>
     <color type="primary" scheme_preference="light">#c4bdff</color>
     <color type="primary" scheme_preference="dark">#2d2580</color>
