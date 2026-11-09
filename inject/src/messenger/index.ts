@@ -37,6 +37,7 @@ import { initMessengerDnd } from "./features/messenger-dnd";
 import { initNotificationActions } from "./features/notification-actions";
 import { initNotificationBridge } from "./features/notifications";
 import { initPaneResize } from "./features/pane-resize";
+import { initPasskeyLoginNotice } from "./features/passkey-login-notice";
 import { initQuickMute } from "./features/quick-mute";
 import { initQuickReply } from "./features/quick-reply";
 import { initRateLimit } from "./features/rate-limit";
@@ -128,6 +129,7 @@ function main() {
   initFeature("linux-call-notice", initLinuxCallNotice);
   initFeature("cookie-consent", initCookieAutoDecline);
   initFeature("login-tidy", initLoginTidy);
+  initFeature("passkey-login-notice", initPasskeyLoginNotice);
   initFeature("media-viewer", initMediaViewer);
   initFeature("viewer-controls", initViewerControls);
   initFeature("fullscreen", initFullscreenPolyfill);
