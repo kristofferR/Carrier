@@ -2,7 +2,7 @@
 
 ## 2026-09-17 Linux incident
 
-Chatpane 1.14.0 debug remained blank on Hyprland 0.56.2, using WebKitGTK
+Carrier 1.14.0 debug remained blank on Hyprland 0.56.2, using WebKitGTK
 2.52.6, GTK 3.24.52 and the Wayland backend. The app, network process and web
 process were alive. There was no recent core dump, OOM kill or recorded GPU reset.
 
