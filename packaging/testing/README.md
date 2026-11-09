@@ -6,7 +6,7 @@ not validate desktop integration.
 ## Local lab
 
 The workstation lab lives outside the checkout at
-`~/.cache/carrier-store-tools/vm/`. It uses Ubuntu 24.04.4, KVM, four vCPUs,
+`~/.cache/chatpane-store-tools/vm/`. It uses Ubuntu 24.04.4, KVM, four vCPUs,
 6 GiB RAM, and a 48 GiB sparse overlay over a checksummed official Ubuntu cloud
 image. Ubuntu Desktop, snapd, Snapcraft, and desktop portals are installed.
 The lab has been tested with GNOME on X11 and Wayland. Its current virtual
@@ -18,11 +18,11 @@ HTTPS proxy on port 8443 makes the console available privately to the tailnet. T
 no host home-directory mount or copied personal profile.
 
 ```sh
-lab_dir="$HOME/.cache/carrier-store-tools/vm"
+lab_dir="$HOME/.cache/chatpane-store-tools/vm"
 # Start only when stopped; the overlay preserves the test installation.
 bash "$lab_dir/start.sh"
-ssh -F "$lab_dir/ssh-config" -O check carrier-lab
-ssh -F "$lab_dir/ssh-config" carrier-lab
+ssh -F "$lab_dir/ssh-config" -O check chatpane-lab
+ssh -F "$lab_dir/ssh-config" chatpane-lab
 # Graceful shutdown:
 bun "$lab_dir/qmp.ts" '{"execute":"system_powerdown"}'
 ```
@@ -74,7 +74,7 @@ installed in the Ubuntu VM on 2026-09-09. Host and guest SHA-256 hashes match:
 
 | Artifact | SHA-256 |
 | --- | --- |
-| `carrier_1.13.0_amd64.snap` | `801d353a0673e25e4630f7b84db450e6ba88176bbb0e3786798aa99658118eeb` |
+| 1.13.0 amd64 Snap | `801d353a0673e25e4630f7b84db450e6ba88176bbb0e3786798aa99658118eeb` |
 
 Confirmed on X11:
 
@@ -87,7 +87,7 @@ Confirmed on Wayland:
 - Replacing standard VGA with Virtio VGA enabled `/dev/dri/card0` and
   `/dev/dri/renderD128`; `loginctl` confirmed the desktop's session type.
 - The CI Snap rendered signed-in Messenger after the VM restart. Explicit
-  `GDK_BACKEND=wayland` launches succeeded; Carrier was absent from `xlsclients`.
+  `GDK_BACKEND=wayland` launches succeeded; Chatpane was absent from `xlsclients`.
 - Stock Ubuntu's portal did not expose `org.freedesktop.portal.GlobalShortcuts`.
   Global-hotkey registration cannot be validated on this desktop without that
   portal; the desktop was not modified to add it.
@@ -111,7 +111,7 @@ Source commit `fa47dbc` was rebuilt with Snapcraft in the Ubuntu VM on
 Installing the resulting strict-confinement Snap as local revision `x8`
 preserved login and rendered Messenger on native Wayland. A real message
 displayed the sender avatar, but clicking still produced GNOME's extra
-“Carrier is ready” notice. A second test with no concurrent VM interaction
+“Chatpane is ready” notice. A second test with no concurrent VM interaction
 reproduced the failure. The protocol trace showed GTK requesting a new token
 instead of using the notification's supplied token.
 
@@ -141,11 +141,11 @@ notification activation has not passed for Snap.
 
 A confined GTK probe on the same stock Wayland desktop passed a direct click
 from a minimized window, with no secondary activation banner. The probe used
-the portal's `snap.carrier` app ID, a matching preserved desktop file, and an
+the portal's `snap.chatpane` app ID, a matching preserved desktop file, and an
 exported `app.probe` action. A log confirmed that the action handler ran.
 This required normal package declarations only, with no host policy edits.
 
-A second probe compiled Carrier's production Rust portal module into a minimal
+A second probe compiled Chatpane's production Rust portal module into a minimal
 GTK window, packaged it inside the same strict Snap, and repeated the click.
 It returned `Open` with an activation token and restored the minimized window
 directly, without a secondary banner. The version-1 portal rejected the newer
@@ -155,15 +155,15 @@ to version 2 or newer. The rebuilt signed-in application's result is below.
 Packaging checks then caught two desktop-identity requirements. Snapcraft's
 app `desktop` extraction renames the file, so the portal entry must be supplied
 directly through `snap/gui/`. Ubuntu 24.04 also associates the running window
-with the normal `carrier_carrier.desktop` Snap ID; replacing that entry loses
+with the normal `chatpane_chatpane.desktop` Snap ID; replacing that entry loses
 the dock icon and badge. The package therefore retains the regular launcher
-and adds a preserved `snap.carrier.desktop` with `NoDisplay=true` for portal
+and adds a preserved `snap.chatpane.desktop` with `NoDisplay=true` for portal
 actions. CI verifies both entries and that the portal entry stays hidden.
 
 The final local candidate installed as strict revision `x17` on 2026-09-09.
 The artifact identity check passed, and the confined GTK probe repeated its
 one-click activation successfully through the hidden portal entry. The package
-contains only the production Carrier executable; probe scripts stayed outside
+contains only the production Chatpane executable; probe scripts stayed outside
 the package.
 
 - Portal candidate SHA-256: `bb4220e219c2b1ffda249bc1ac14e785ffddfa70e2b180afd8e825e582e25440`
@@ -172,17 +172,17 @@ the package.
 
 On 2026-09-09, a fresh message arrived while the signed-in Snap was minimized
 on a different conversation. One click on its native notification brought
-Carrier forward and selected the sender's chat, without a second “Carrier is
+Chatpane forward and selected the sender's chat, without a second “Chatpane is
 ready” banner. The sender's unread marker cleared; tray and dock counts both
 fell from four to three.
 
 The avatar did not appear. The host portal logged `Icon validation: Child
 process exited with code 1`. At the same instant, AppArmor denied `setpcap` and
 `net_admin` to the icon validator's Bubblewrap process under `unprivileged_userns`.
-The packaged Carrier PNG passed direct icon validation, while the same validator
+The packaged Chatpane PNG passed direct icon validation, while the same validator
 with `--sandbox` failed with `Failed RTM_NEWADDR: Operation not permitted`.
 This establishes a host icon-validation failure independent of Messenger's
-avatar extraction or Carrier's PNG payload.
+avatar extraction or Chatpane's PNG payload.
 
 Ubuntu's installed and available versions were xdg-desktop-portal
 `1.18.4-1ubuntu2.24.04.2`, AppArmor `4.0.1really4.0.1-0ubuntu0.24.04.7`, and

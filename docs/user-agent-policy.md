@@ -30,7 +30,7 @@ and video calls stopped working (#335).
 
 - Reported on macOS 15.7.5 (Apple silicon): call buttons are greyed out or open
   "This feature isn't supported by your browser" with an Install Chrome button.
-- Observed on 2026-11-05 in Carrier 2.0.6 on macOS 27.2 / Safari 27.2: Facebook's
+- Observed on 2026-11-05 in Chatpane 2.0.6 on macOS 27.2 / Safari 27.2: Facebook's
   `UserAgentData` module reports `browserName: "Unknown"` with engine `WebKit`.
   `ZenonIncomingRingSDK.isCallSupported` defers to
   `RTWebIncomingRingConfiguration.isSupportedClient()`, a list of browser checks
@@ -55,7 +55,7 @@ capabilities:
   Safari can load; apps keep the system WebKit. The [safarier
   project](https://github.com/Cd1s/safarier/issues/8) recorded this on macOS
   15.7.3: Safari 27.2 and its staged WebKit report `20625.2.8.18.4`, while
-  third-party processes load `20621.3.11.11.3` (Safari 18.6). Carrier 2.0.7 used
+  third-party processes load `20621.3.11.11.3` (Safari 18.6). Chatpane 2.0.7 used
   Safari's version only when the builds matched, so on such systems it kept the
   native UA and #335 persisted (reported again on macOS 15.7.5).
 - So when the builds differ, or Safari can't be read, the version comes from the
@@ -92,7 +92,7 @@ On 2026-09-07 (Europe/Oslo; 2026-09-06 UTC), a standalone GTK 3 / WebKitGTK 2.52
 probe on Omarchy used a fresh
 ephemeral WebContext to visit `https://www.facebook.com/messages/` without a UA
 override. It reached `/login.php` and, after client rendering (checked at 35
-seconds), displayed both email and password inputs. Carrier's previous Chrome 124
+seconds), displayed both email and password inputs. Chatpane's previous Chrome 124
 override produced the same result. The initial load-finished event preceded the
 form's rendering in both runs. This verifies reaching the login form, not
 successful authentication. No credentials or conversation content were collected.
@@ -115,7 +115,7 @@ there is no tested Windows/Linux minimum implied by this table.
 | Current supported Windows / current WebView2 | Pending | Pending | Pending | Pending | Pending | Pending |
 | Oldest supported Linux packages / system WebKitGTK | Pending | Pending | Pending | Pending | Pending | Pending |
 | Omarchy / system WebKitGTK 2.52.6 (standalone probe) | Form only | Pending | Pending | Pending | Pending | Pending |
-| Omarchy / system WebKitGTK 2.54.1 (Carrier 2.0.8 debug) | Pending | Pending | Microphone granted | Unsupported: no WebRTC | Pending | Pending |
+| Omarchy / system WebKitGTK 2.54.1 (Chatpane 2.0.8 debug) | Pending | Pending | Microphone granted | Unsupported: no WebRTC | Pending | Pending |
 | Linux AppImage / bundled WebKitGTK | Pending | Pending | Pending | Pending | Pending | Pending |
 
 Linux calls depend on how WebKitGTK was built. On 2026-11-05 Omarchy's Arch
