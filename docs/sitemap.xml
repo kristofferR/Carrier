@@ -1021,7 +1021,43 @@
     <xhtml:link rel="alternate" hreflang="x-default" href="https://chatpane.app/"/>
   </url>
   <url>
+    <loc>https://chatpane.app/ar/iqaf-messenger-lil-computer/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/ar/tahmil-messenger-lil-computer/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/bn/messenger-desktop-app-bondho/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/bn/pc-te-messenger/</loc>
+  </url>
+  <url>
     <loc>https://chatpane.app/caprine-alternative/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/cs/messenger-na-pocitaci-skoncil/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/cs/messenger-pro-pc/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/da/messenger-til-computer-lukket/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/da/messenger-til-computer/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/de/facebook-messenger-fuer-pc/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/de/messenger-desktop-app-eingestellt/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/el/messenger-gia-ypologisti/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/el/telos-messenger-ypologisti/</loc>
   </url>
   <url>
     <loc>https://chatpane.app/es/descargar-messenger-para-pc/</loc>
@@ -1036,10 +1072,46 @@
     <loc>https://chatpane.app/fil/messenger-sa-laptop/</loc>
   </url>
   <url>
+    <loc>https://chatpane.app/fr/messenger-pc-ne-fonctionne-plus/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/fr/telecharger-messenger-pour-pc/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/hi/laptop-me-messenger-kaise-chalaye/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/hi/messenger-desktop-app-band/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/hu/megszunt-a-messenger-a-szamitogepen/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/hu/messenger-letoltes-pc-re/</loc>
+  </url>
+  <url>
     <loc>https://chatpane.app/id/download-messenger-di-laptop/</loc>
   </url>
   <url>
     <loc>https://chatpane.app/id/messenger-desktop-dihentikan/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/it/messenger-pc-non-funziona-piu/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/it/scaricare-messenger-per-pc/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/km/messenger-desktop-shutdown/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/km/messenger-pc/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/lo/messenger-desktop-shutdown/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/lo/messenger-pc/</loc>
   </url>
   <url>
     <loc>https://chatpane.app/messenger-desktop-app-discontinued/</loc>
@@ -1054,6 +1126,24 @@
     <loc>https://chatpane.app/messenger-for-windows/</loc>
   </url>
   <url>
+    <loc>https://chatpane.app/my/messenger-desktop-shutdown/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/my/messenger-pc/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/nb/messenger-pa-pc/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/nb/messenger-pc-lagt-ned/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/ne/computer-ma-messenger/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/ne/messenger-desktop-app-banda/</loc>
+  </url>
+  <url>
     <loc>https://chatpane.app/pl/messenger-na-komputer-przestal-dzialac/</loc>
   </url>
   <url>
@@ -1066,9 +1156,57 @@
     <loc>https://chatpane.app/pt-BR/o-que-aconteceu-com-o-messenger-para-pc/</loc>
   </url>
   <url>
+    <loc>https://chatpane.app/ro/descarca-messenger-pentru-pc/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/ro/messenger-pe-calculator-nu-mai-merge/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/si/messenger-desktop-app-shutdown/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/si/messenger-pc-download/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/sv/messenger-for-datorn-nedlagd/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/sv/messenger-pa-datorn/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/th/messenger-desktop-shutdown/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/th/messenger-pc/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/tr/messenger-bilgisayara-indir/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/tr/messenger-masaustu-kapandi/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/uk/chomu-ne-pratsiuie-messenger-na-kompiuteri/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/uk/messenger-na-kompiuter/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/ur/messenger-desktop-app-band/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/ur/messenger-download-pc-laptop/</loc>
+  </url>
+  <url>
     <loc>https://chatpane.app/vi/messenger-may-tinh-bi-khai-tu/</loc>
   </url>
   <url>
     <loc>https://chatpane.app/vi/tai-messenger-ve-may-tinh/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/zh-CN/messenger-desktop-shutdown/</loc>
+  </url>
+  <url>
+    <loc>https://chatpane.app/zh-CN/messenger-pc/</loc>
   </url>
 </urlset>

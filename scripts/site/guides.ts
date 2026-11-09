@@ -27,12 +27,35 @@ export const GROUPS: Record<string, string> = {
 
 /** Open Graph locale per language (Facebook's own codes). */
 const OG_LOCALES: Record<string, string> = {
+  ar: "ar_AR",
+  bn: "bn_IN",
+  cs: "cs_CZ",
+  da: "da_DK",
+  de: "de_DE",
+  el: "el_GR",
   es: "es_LA",
   fil: "tl_PH",
+  fr: "fr_FR",
+  hi: "hi_IN",
+  hu: "hu_HU",
   id: "id_ID",
+  it: "it_IT",
+  km: "km_KH",
+  lo: "lo_LA",
+  my: "my_MM",
+  nb: "nb_NO",
+  ne: "ne_NP",
   pl: "pl_PL",
   "pt-BR": "pt_BR",
+  ro: "ro_RO",
+  si: "si_LK",
+  sv: "sv_SE",
+  th: "th_TH",
+  tr: "tr_TR",
+  uk: "uk_UA",
+  ur: "ur_PK",
   vi: "vi_VN",
+  "zh-CN": "zh_CN",
 };
 
 export type Guide = {
@@ -53,6 +76,8 @@ export type GuideContext = {
   generated: string;
   /** The landing page template, for the language menu's names. */
   template: string;
+  /** Whether a language is written right to left. */
+  rtl: (lang: string) => boolean;
   /** Flat landing-page strings per language, with download tokens resolved. */
   strings: (lang: string) => Record<string, string>;
   write: (path: string, contents: string) => Promise<void>;
@@ -182,7 +207,7 @@ function render(
 
   return `<!DOCTYPE html>
 ${ctx.generated} from scripts/site/guides/${guide.lang}. Do not edit. -->
-<html lang="${guide.lang}">
+<html lang="${guide.lang}"${ctx.rtl(guide.lang) ? ' dir="rtl"' : ""}>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

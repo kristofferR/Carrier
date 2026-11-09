@@ -110,6 +110,7 @@ await buildGuides(
     version,
     generated: GENERATED,
     template,
+    rtl: (lang) => locales.get(lang)?.rtl === true,
     strings: (lang) => {
       const locale = locales.get(lang);
       if (!locale) throw new Error(`A guide is written in ${lang}, which has no translation`);
