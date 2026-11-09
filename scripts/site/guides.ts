@@ -323,6 +323,7 @@ ${translations
     </nav>
     <p class="foot-note">${s("foot.license")}</p>
     <p class="foot-note">${s("foot.disclaimer")}</p>
+    <p class="foot-note">${s("foot.analytics")}</p>
     <p class="foot-heart">${s("foot.credit")}</p>
   </div>
 </footer>
