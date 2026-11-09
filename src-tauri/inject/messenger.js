@@ -3715,8 +3715,9 @@ ${button.innerHTML}`)
     const normalized = text2.replace(/\s+/g, " ").trim();
     return DRIVEN_ACTIONS.find((action2) => MESSENGER_ROW_TEXT2[action2] === normalized) ?? null;
   }
-  function toolbarAction(label2) {
-    if (/^Reply\b/.test(label2)) return "shared.context.reply";
+  var REPLY_ICON_PATH = "M6.497 1.035C7.593-.088 9.5.688 9.5 2.257V4.54c1.923.215 3.49 1.246 4.593 2.672C15.328 8.808 16 10.91 16 13v.305c0 .632-.465 1.017-.893 1.127-.422.11-.99.005-1.318-.493-.59-.894-1.2-1.482-1.951-1.859-.611-.307-1.359-.496-2.338-.558v2.23c0 1.57-1.908 2.346-3.003 1.222L.893 9.223a1.75 1.75 0 0 1 .001-2.444l5.603-5.744z";
+  function toolbarAction(label2, iconPath = "") {
+    if (iconPath === REPLY_ICON_PATH || /^Reply\b/.test(label2)) return "shared.context.reply";
     if (/^Forward\b/.test(label2)) return "shared.context.forward";
     return null;
   }
@@ -4273,7 +4274,7 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/message-menu.ts
-  var MESSAGE = '[aria-roledescription="message"]';
+  var MESSAGE = '[data-message-id], [aria-roledescription="message"]';
   var TOOLBAR_WAIT_MS = 600;
   var MAX_REACTIONS = 12;
   var messageFor = (target) => target.closest(MESSAGE);
@@ -4305,7 +4306,10 @@ ${button.innerHTML}`)
     for (const button of message.querySelectorAll(
       '[role="toolbar"] [role="button"][aria-label]'
     )) {
-      const action2 = toolbarAction(button.getAttribute("aria-label") ?? "");
+      const action2 = toolbarAction(
+        button.getAttribute("aria-label") ?? "",
+        button.querySelector("svg path")?.getAttribute("d") ?? ""
+      );
       if (action2) found.push([action2, button]);
     }
     return found;
@@ -4359,32 +4363,29 @@ ${button.innerHTML}`)
     },
     "reaction"
   );
-  var runMessageAction = (message, action2) => drive(
-    message,
-    async () => {
-      if (!await ensureToolbar(message)) return false;
-      const button = toolbarActions(message).find(([offered]) => offered === action2)?.[1];
-      if (button) {
-        button.click();
-        return true;
-      }
-      const more = toolbarButton(message, "More");
-      if (!more) return false;
-      const picked = await withHiddenMenu(
-        more,
-        (menu) => {
-          const row = [...moreRows(menu)].find(
-            (item) => menuRowAction(item.textContent ?? "") === action2
-          );
-          row?.click();
-          return row !== void 0;
-        },
-        true
-      );
-      return picked === true;
-    },
-    action2
-  );
+  async function pressMessageAction(message, action2) {
+    if (!await ensureToolbar(message)) return false;
+    const button = toolbarActions(message).find(([offered]) => offered === action2)?.[1];
+    if (button) {
+      button.click();
+      return true;
+    }
+    const more = toolbarButton(message, "More");
+    if (!more) return false;
+    const picked = await withHiddenMenu(
+      more,
+      (menu) => {
+        const row = [...moreRows(menu)].find(
+          (item) => menuRowAction(item.textContent ?? "") === action2
+        );
+        row?.click();
+        return row !== void 0;
+      },
+      true
+    );
+    return picked === true;
+  }
+  var runMessageAction = (message, action2) => drive(message, () => pressMessageAction(message, action2), action2);
 
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
@@ -9016,6 +9017,98 @@ ${button.innerHTML}`)
       }
       return stream;
     };
+  }
+
+  // inject/src/messenger/lib/message-reply.ts
+  var REPLACED = /* @__PURE__ */ new Set(["img", "video", "svg", "canvas", "picture", "iframe"]);
+  function isTransparent(color) {
+    const value = color.trim().toLowerCase();
+    if (value === "" || value === "transparent") return true;
+    if (!value.startsWith("rgba") && !value.includes("/")) return false;
+    const alpha = /([\d.]+%?)\s*\)$/.exec(value)?.[1];
+    return alpha !== void 0 && Number.parseFloat(alpha) === 0;
+  }
+  function isInk(shape, backdrop = "") {
+    return REPLACED.has(shape.tag.toLowerCase()) || !isTransparent(shape.backgroundColor) && shape.backgroundColor !== backdrop || shape.backgroundImage !== "" && shape.backgroundImage !== "none" || shape.radii.some((radius) => Number.parseFloat(radius) > 0);
+  }
+  function besideInk(x, boxes) {
+    if (!boxes.length) return false;
+    const left = Math.min(...boxes.map((box) => box.left));
+    const right = Math.max(...boxes.map((box) => box.right));
+    return x < left || x > right;
+  }
+
+  // inject/src/messenger/features/message-reply.ts
+  var CONTROL = 'a, button, input, textarea, [role="button"], [role="link"], [contenteditable]';
+  function shapeOf(element2, style) {
+    return {
+      tag: element2.tagName,
+      backgroundColor: style.backgroundColor,
+      backgroundImage: style.backgroundImage,
+      radii: [
+        style.borderTopLeftRadius,
+        style.borderTopRightRadius,
+        style.borderBottomRightRadius,
+        style.borderBottomLeftRadius
+      ]
+    };
+  }
+  function backdropOf(message) {
+    for (let node = message.parentElement; node; node = node.parentElement) {
+      const color = getComputedStyle(node).backgroundColor;
+      if (!isTransparent(color)) return color;
+    }
+    return "";
+  }
+  function inkBoxes(message) {
+    const boxes = [];
+    const backdrop = backdropOf(message);
+    const add = (box) => {
+      if (box.width > 1 && box.height > 1) boxes.push(box);
+    };
+    const walker = document.createTreeWalker(
+      message,
+      NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: (node) => node instanceof Element && node.matches('[role="toolbar"]') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+      }
+    );
+    const range = document.createRange();
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node instanceof Element) {
+        const style = getComputedStyle(node);
+        if (style.visibility !== "hidden" && isInk(shapeOf(node, style), backdrop))
+          add(node.getBoundingClientRect());
+      } else if (node.nodeValue?.trim() && node.parentElement && getComputedStyle(node.parentElement).visibility !== "hidden") {
+        range.selectNodeContents(node);
+        add(range.getBoundingClientRect());
+      }
+    }
+    return boxes;
+  }
+  function initMessageReply() {
+    document.addEventListener(
+      "dblclick",
+      (event) => {
+        if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey)
+          return;
+        const target = event.target instanceof Element ? event.target : null;
+        const message = target && messageFor(target);
+        if (!target || !message) return;
+        const control2 = target.closest(CONTROL);
+        if (control2 && message.contains(control2)) return;
+        if (getSelection()?.isCollapsed === false) return;
+        if (!besideInk(event.clientX, inkBoxes(message))) return;
+        void pressMessageAction(message, "shared.context.reply").then((replied) => {
+          if (!replied) return;
+          focusComposer();
+          requestAnimationFrame(() => {
+            if (!document.activeElement?.closest('[contenteditable="true"]')) focusComposer();
+          });
+        });
+      },
+      { capture: true }
+    );
   }
 
   // inject/src/messenger/features/messenger-dnd.ts
@@ -16088,11 +16181,11 @@ ${text2}`)) {
   // inject/src/messenger/features/viewer-controls.ts
   var DIALOG2 = '[role="dialog"]';
   var BANNER = 'div[role="banner"]';
-  var CONTROL = 'a[href], button, [role="button"]';
+  var CONTROL2 = 'a[href], button, [role="button"]';
   var BANNER_ATTR = "data-chatpane-media-controls";
   var ACTIONS_ATTR = "data-chatpane-media-actions";
   var OFFSET = "--chatpane-media-controls-offset";
-  var visibleControls = (root) => [...root.querySelectorAll(CONTROL)].map((control2) => control2.getBoundingClientRect()).filter(
+  var visibleControls = (root) => [...root.querySelectorAll(CONTROL2)].map((control2) => control2.getBoundingClientRect()).filter(
     (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && // Controls sit near the top; Chatpane's strip (and the offset clearing
     // it) can move them further down, so the band grows with it.
     rect.top < 96 + windowControlsInset() && rect.right > 0 && rect.left < window.innerWidth
@@ -16315,6 +16408,7 @@ ${text2}`)) {
     initFeature("login-tidy", initLoginTidy);
     initFeature("passkey-login-notice", initPasskeyLoginNotice);
     initFeature("media-viewer", initMediaViewer);
+    initFeature("message-reply", initMessageReply);
     initFeature("viewer-controls", initViewerControls);
     initFeature("fullscreen", initFullscreenPolyfill);
   }
