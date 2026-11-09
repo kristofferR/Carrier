@@ -16,7 +16,7 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 
-static NSString *const kChatpanePasteboardPrefix = @"io.github.kristofferr.carrier.share.";
+static NSString *const kChatpanePasteboardPrefix = @"app.chatpane.Chatpane.share.";
 static NSString *const kChatpaneHandoffURLPrefix = @"chatpane://share-pasteboard";
 /// Mirrors the intake's cap; a larger selection is refused here so the sheet
 /// reports the failure instead of the app silently dropping it.
@@ -215,7 +215,7 @@ static const NSUInteger kChatpaneMaxBytes = 100 * 1024 * 1024;
       totalBytes += [entry[@"bytes"] unsignedIntegerValue];
       if (totalBytes > kChatpaneMaxBytes) {
         NSLog(@"Chatpane Share: selection over the size cap");
-        [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
+        [context cancelRequestWithError:[NSError errorWithDomain:@"app.chatpane.Chatpane.share"
                                                             code:3
                                                         userInfo:nil]];
         return;
@@ -226,7 +226,7 @@ static const NSUInteger kChatpaneMaxBytes = 100 * 1024 * 1024;
     if (payload.count == 0 || failed.count > 0 || payload.count != index) {
       NSLog(@"Chatpane Share: refusing partial selection (%lu attachment(s) failed)",
             (unsigned long)failed.count);
-      [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
+      [context cancelRequestWithError:[NSError errorWithDomain:@"app.chatpane.Chatpane.share"
                                                           code:2
                                                       userInfo:nil]];
       return;
@@ -238,7 +238,7 @@ static const NSUInteger kChatpaneMaxBytes = 100 * 1024 * 1024;
                                 : nil;
     if (!serialized) {
       NSLog(@"Chatpane Share: serializing the payload failed");
-      [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
+      [context cancelRequestWithError:[NSError errorWithDomain:@"app.chatpane.Chatpane.share"
                                                           code:4
                                                       userInfo:nil]];
       return;
@@ -255,7 +255,7 @@ static const NSUInteger kChatpaneMaxBytes = 100 * 1024 * 1024;
           opened ? @"opened" : @"FAILED");
     if (!wrote || !opened) {
       [pasteboard clearContents];
-      [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
+      [context cancelRequestWithError:[NSError errorWithDomain:@"app.chatpane.Chatpane.share"
                                                           code:5
                                                       userInfo:nil]];
       return;

@@ -3,10 +3,10 @@ Type=Application
 Name=Chatpane
 Comment=Distraction-free Messenger desktop client
 Exec=chatpane
-Icon=${SNAP}/usr/share/icons/hicolor/512x512/apps/carrier.png
+Icon=${SNAP}/usr/share/icons/hicolor/512x512/apps/chatpane.png
 Categories=Network;Chat;InstantMessaging;
 Keywords=Messenger;Facebook;Chat;Message;Chatpane;
-StartupWMClass=carrier
+StartupWMClass=chatpane
 Terminal=false
 Actions=new-conversation;settings;
 

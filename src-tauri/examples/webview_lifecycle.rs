@@ -70,7 +70,7 @@ mod macos {
         // Use a separate identifier and only blank pages, without Chatpane's
         // plugins, injected scripts, or Messenger session.
         let mut context = tauri::generate_context!();
-        context.config_mut().identifier = "io.github.kristofferr.carrier.lifecycle-test".into();
+        context.config_mut().identifier = "app.chatpane.Chatpane.lifecycle-test".into();
         tauri::Builder::default()
             .setup(|app| {
                 let handle = app.handle().clone();

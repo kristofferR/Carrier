@@ -1,4 +1,4 @@
-export const repo = "kristofferR/Carrier";
+export const repo = "kristofferR/Chatpane";
 export const revisionPattern = /^[0-9a-f]{40}$/;
 export interface BuildInfo {
   version: string;

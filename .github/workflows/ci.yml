@@ -68,7 +68,7 @@ jobs:
           set -euo pipefail
           validation_tmp=$(mktemp -d)
           trap 'rm -rf "$validation_tmp"' EXIT
-          metadata=src-tauri/linux/io.github.kristofferr.carrier.metainfo.xml
+          metadata=src-tauri/linux/app.chatpane.Chatpane.metainfo.xml
           if [[ "$(appstreamcli validate --help)" == *"--strict"* ]]; then
             appstreamcli validate --no-net --strict "$metadata"
           else
@@ -90,10 +90,10 @@ jobs:
             -e '/{{\/if}}/d' \
             -e 's/{{categories}}/Network;/' \
             -e 's/{{comment}}/Distraction-free Messenger desktop client/' \
-            -e 's/{{exec}}/carrier/g' \
-            -e 's/{{icon}}/carrier/g' \
+            -e 's/{{exec}}/chatpane/g' \
+            -e 's/{{icon}}/chatpane/g' \
             -e 's/{{name}}/Chatpane/g' \
-            src-tauri/linux/carrier.desktop.hbs > "$rendered"
+            src-tauri/linux/chatpane.desktop.hbs > "$rendered"
           desktop-file-validate "$rendered"
 
       - name: Reject private contact details in packaging

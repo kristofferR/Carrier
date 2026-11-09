@@ -86,21 +86,18 @@ describe("classifyHref", () => {
 
 describe("stripFacebookTracking", () => {
   test("removes the reported fbclid spam without leaving an empty query", () => {
-    expect(
-      stripFacebookTracking(
-        "https://kristofferr.github.io/Carrier/?fbclid=IwZXh0bgNhZW0CMTAA",
-        BASE,
-      ),
-    ).toBe("https://kristofferr.github.io/Carrier/");
+    expect(stripFacebookTracking("https://chatpane.app/?fbclid=IwZXh0bgNhZW0CMTAA", BASE)).toBe(
+      "https://chatpane.app/",
+    );
   });
 
   test("removes Facebook attribution case-insensitively and preserves real parameters", () => {
     expect(
       stripFacebookTracking(
-        "https://example.com/search?q=carrier&FBCLID=one&lang=no&mibextid=two#results",
+        "https://example.com/search?q=chatpane&FBCLID=one&lang=no&mibextid=two#results",
         BASE,
       ),
-    ).toBe("https://example.com/search?q=carrier&lang=no#results");
+    ).toBe("https://example.com/search?q=chatpane&lang=no#results");
     expect(
       stripFacebookTracking(
         "https://example.com/?fb_action_ids=1&fb_action_types=share&fb_ref=x&fb_source=y&keep=1",

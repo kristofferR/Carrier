@@ -42,7 +42,7 @@ a running diagnostics build checks every ten minutes for a staged build and post
 one notification per staged build saying that quitting Chatpane installs it.
 
 - macOS app: `/Applications/Chatpane.app`
-- Linux app: `~/.local/bin/carrier` (both desktop and autostart entries use it)
+- Linux app: `~/.local/bin/chatpane` (both desktop and autostart entries use it)
 - Check now: `~/.local/bin/chatpane-debug-update --check`
 - macOS scheduler: `io.github.kristofferr.chatpane.debug-update` LaunchAgent
 - Linux scheduler: `chatpane-debug-update.timer` user unit
@@ -82,14 +82,16 @@ release package manager.
 ### Machines enrolled before the rename to Chatpane
 
 The rename changed the tooling's names (`chatpane-debug-update`, the
-`Chatpane-debug-*` assets and the `Chatpane debug ready` draft marker), so an
+`Chatpane-debug-*` assets and the `Chatpane debug ready` draft marker), the
+repository (`kristofferR/Chatpane`) and the app binary (`chatpane`), so an
 updater enrolled as `carrier-debug-update` ignores every later debug draft.
 Re-enroll each machine once, by hand:
 
 1. Remove the old updater. On Linux:
    `systemctl --user disable --now carrier-debug-update.timer`, then delete
-   `~/.config/systemd/user/carrier-debug-update.{service,timer}` and
-   `~/.local/bin/carrier-debug-update`. On macOS:
+   `~/.config/systemd/user/carrier-debug-update.{service,timer}`,
+   `~/.local/bin/carrier-debug-update` and the old app `~/.local/bin/carrier`.
+   On macOS:
    `launchctl bootout gui/$(id -u)/io.github.kristofferr.carrier.debug-update`,
    then delete `~/Library/LaunchAgents/io.github.kristofferr.carrier.debug-update.plist`.
 2. Follow steps 3 to 5 above. New state lives in `~/.local/share/chatpane-debug`
@@ -97,6 +99,10 @@ Re-enroll each machine once, by hand:
    `carrier-debug` / `CarrierDebug` folder once the new install runs.
 3. On macOS the debug app now installs as `/Applications/Chatpane.app`. Delete
    the old `/Applications/Carrier.app` after the new one runs.
+
+The first launch of the new build moves the app's data (settings, login and
+logs) from the old `io.github.kristofferr.carrier` folders to
+`app.chatpane.Chatpane`, stopping a still-running old build first.
 
 ## Diagnostics and failure preservation
 

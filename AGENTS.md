@@ -1,4 +1,4 @@
-# Chatpane (formerly Carrier) — project guide & agent handoff
+# Chatpane — project guide & agent handoff
 
 ## Contributor pull requests
 
@@ -13,23 +13,20 @@
 - Routine automated review bots need not be listed. Put this disclosure in
   the PR description, never in commit authorship or co-author trailers.
 
-**Naming:** the app is **Chatpane** ("Chatpane for Messenger" in stores), renamed
-from Carrier. Code, CSS, storage keys, events and docs all say Chatpane; data
-saved under the old names is converted on first launch (page storage keys,
-`custom.css` and installed themes, startup entries, the Settings tab). Only
-these keep `carrier`, on purpose:
-- the bundle identifier `io.github.kristofferr.carrier` and names derived from
-  it: it locates app data, logins, OS permissions and the Windows toast identity
-- the crate binary `carrier` (deb/rpm `/usr/bin/carrier`, `carrier.exe`,
-  `~/.local/bin/carrier` for debug installs, the Linux window class)
-- the code that migrates from the old name, which has to name it
-- the repo `kristofferR/Carrier`. The site is https://chatpane.app/; the old
-  `kristofferr.github.io/Carrier/` links redirect there only while the repo
-  keeps its name
+**Naming:** the app is **Chatpane** ("Chatpane for Messenger" in stores): bundle
+identifier `app.chatpane.Chatpane`, binary `chatpane`, repo `kristofferR/Chatpane`,
+site https://chatpane.app/. It was called Carrier, and only code that moves
+things over from that name says `carrier`: the first launch moves the old
+identifier's data folders (`identity.rs`) and the macOS bundle
+(`bundle_rename.rs`), and converts startup entries, page storage keys,
+`custom.css`, installed themes and the Settings tab. The packages replace the
+`carrier` packages, and the Windows installer removes the old install. Never
+create a GitHub repo named `Carrier`: old installs update through GitHub's
+redirect from that name.
 
 Chatpane is a tiny **Tauri v2** desktop client for **Facebook Messenger** (wraps
 `facebook.com/messages` in a chrome-stripped native window). Repo:
-**`kristofferR/Carrier`** (use the **kristofferR** GitHub account). **v1.0.0 is
+**`kristofferR/Chatpane`** (use the **kristofferR** GitHub account). **v1.0.0 is
 released.** **Cross-platform: macOS, Windows, and Linux** (CI builds all six
 targets). The "macOS theme rendering" section below is platform-specific; on
 Windows/Linux the window chrome follows `set_theme` directly and there's none of
@@ -177,7 +174,7 @@ On `main` (committed `d8a25a6`).
   subframe isolation), so it **cannot call Chatpane's own commands**. Tauri could expose
   an app command to a remote origin if it were declared in
   `tauri_build::AppManifest::commands` and granted per origin; Chatpane does not.
-  Any script on a granted origin can emit any `carrier:*` event, so treat event
+  Any script on a granted origin can emit any `chatpane:*` event, so treat event
   payloads as untrusted. Page→backend goes through Tauri **plugins**
   (`plugin:opener|open_url`, `plugin:window|set_badge_count`,
   `plugin:event|emit`) and **core events** the Rust side handles via

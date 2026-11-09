@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.kristofferr.carrier</id>
+  <id>app.chatpane.Chatpane</id>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
   <name>Chatpane</name>
@@ -17,11 +17,11 @@
   </description>
   <launchable type="desktop-id">Chatpane.desktop</launchable>
   <provides>
-    <binary>carrier</binary>
+    <binary>chatpane</binary>
   </provides>
   <url type="homepage">https://chatpane.app/</url>
-  <url type="bugtracker">https://github.com/kristofferR/Carrier/issues</url>
-  <url type="vcs-browser">https://github.com/kristofferR/Carrier</url>
+  <url type="bugtracker">https://github.com/kristofferR/Chatpane/issues</url>
+  <url type="vcs-browser">https://github.com/kristofferR/Chatpane</url>
   <developer id="io.github.kristofferr">
     <name>kristofferR</name>
   </developer>

@@ -37,8 +37,8 @@ const root = join(
   mac ? "Library/Application Support/ChatpaneDebug" : ".local/share/chatpane-debug",
 );
 const builds = join(root, "builds");
-const target = mac ? "/Applications/Chatpane.app" : join(home, ".local/bin/carrier");
-const binary = (path: string) => (mac ? join(path, "Contents/MacOS/carrier") : path);
+const target = mac ? "/Applications/Chatpane.app" : join(home, ".local/bin/chatpane");
+const binary = (path: string) => (mac ? join(path, "Contents/MacOS/chatpane") : path);
 const args = process.argv.slice(2);
 const apply = args.includes("--apply");
 const automatic = args.includes("--automatic");
@@ -94,7 +94,7 @@ async function removeBestEffort(path: string, description: string) {
 }
 async function running() {
   const { out, status } = await command(
-    ["pgrep", "-u", String(userInfo().uid), "-x", "carrier"],
+    ["pgrep", "-u", String(userInfo().uid), "-x", "chatpane"],
     [0, 1],
   );
   if (status !== 0) return false;
@@ -181,7 +181,7 @@ async function updateLockBinary() {
       if (!entry.isDirectory()) continue;
       const directory = join(backupRoot, entry.name);
       candidates.push(
-        binary(join(directory, mac ? "Chatpane.app" : "carrier")),
+        binary(join(directory, mac ? "Chatpane.app" : "chatpane")),
         binary(join(directory, mac ? "interrupted-new.app" : "interrupted-new")),
       );
     }
@@ -203,7 +203,7 @@ async function updateLockBinary() {
     for (const entry of await readdir(builds, { withFileTypes: true })) {
       if (!entry.isDirectory() || !revisionPattern.test(entry.name)) continue;
       const candidate = binary(
-        join(builds, entry.name, "extracted", mac ? "Chatpane.app" : "carrier"),
+        join(builds, entry.name, "extracted", mac ? "Chatpane.app" : "chatpane"),
       );
       try {
         const identity = object(await json(join(builds, entry.name, "extracted.json")));
@@ -232,7 +232,7 @@ async function recoverInterruptedSwap() {
     return false;
   }
   const backup = join(root, "backups", transaction.backup);
-  const previous = join(backup, mac ? "Chatpane.app" : "carrier");
+  const previous = join(backup, mac ? "Chatpane.app" : "chatpane");
   const discarded = join(backup, mac ? "interrupted-new.app" : "interrupted-new");
   const previousExists = await exists(previous);
   if (transaction.hadPrevious && !previousExists && !(await exists(target))) {
@@ -310,7 +310,7 @@ async function verify(path: string, info: BuildInfo, symbols?: string) {
     if (
       (await p.exited) !== 0 ||
       !detail.includes("TeamIdentifier=S5Q742QZEL") ||
-      !detail.includes("Identifier=io.github.kristofferr.carrier\n")
+      !detail.includes("Identifier=app.chatpane.Chatpane\n")
     )
       throw new Error("Wrong signing identity");
     await command(["spctl", "--assess", "--type", "execute", path]);
@@ -345,10 +345,10 @@ async function extract(dir: string, info: BuildInfo) {
     await verify(join(extracted, "Chatpane.app"), info, join(extracted, symbols[0]!));
   } else {
     await command(["tar", "-xzf", join(dir, "Chatpane-debug-linux.tar.gz"), "-C", extracted]);
-    await chmod(join(extracted, "carrier"), 0o755);
-    await verify(join(extracted, "carrier"), info);
+    await chmod(join(extracted, "chatpane"), 0o755);
+    await verify(join(extracted, "chatpane"), info);
   }
-  const source = join(extracted, mac ? "Chatpane.app" : "carrier");
+  const source = join(extracted, mac ? "Chatpane.app" : "chatpane");
   await atomicJson(join(dir, "extracted.json"), {
     revision: info.revision,
     binarySha256: await sha256(binary(source)),
@@ -361,7 +361,7 @@ async function install(dir: string, info: BuildInfo) {
     return;
   }
   const source = apply
-    ? join(dir, "extracted", mac ? "Chatpane.app" : "carrier")
+    ? join(dir, "extracted", mac ? "Chatpane.app" : "chatpane")
     : await extract(dir, info);
   if (!apply) {
     // The incoming binary supplies the same lock even for the first migration.
@@ -396,7 +396,7 @@ async function install(dir: string, info: BuildInfo) {
   }
   await verify(staged, info);
   const backupName = `${Date.now()}-${info.revision}`;
-  const previous = join(root, "backups", backupName, mac ? "Chatpane.app" : "carrier");
+  const previous = join(root, "backups", backupName, mac ? "Chatpane.app" : "chatpane");
   const backup = dirname(previous);
   await mkdir(backup, { recursive: true });
   const hadPrevious = await exists(target);

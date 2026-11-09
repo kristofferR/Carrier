@@ -1,5 +1,5 @@
 {
-  "name": "carrier",
+  "name": "chatpane",
   "version": "3.0.1",
   "description": "A tiny, distraction-free desktop client for Facebook Messenger, built with Tauri.",
   "license": "MIT",

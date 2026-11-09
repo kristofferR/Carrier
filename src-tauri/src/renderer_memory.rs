@@ -212,10 +212,10 @@ mod linux {
     #[cfg(target_os = "linux")]
     pub(super) fn web_processes_footprint() -> Option<u64> {
         let status = |pid: u32| std::fs::read_to_string(format!("/proc/{pid}/status")).ok();
-        let carrier = std::process::id();
+        let chatpane = std::process::id();
         let descends_from_chatpane = |mut parent: u32| {
             for _ in 0..4 {
-                if parent == carrier {
+                if parent == chatpane {
                     return true;
                 }
                 let Some(next) = status(parent)

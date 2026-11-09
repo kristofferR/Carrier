@@ -348,7 +348,7 @@ fn windows_blocker_message(setting: NotificationSetting) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<()> {
-    // Carrier used the main app AUMID before the dedicated notification
+    // Older versions used the main app AUMID before the dedicated notification
     // identity existed. Keep honoring an application-specific or system-wide
     // opt-out recorded against that original identity; otherwise an upgrade
     // could expose message previews the user had already disabled in Windows.
@@ -609,7 +609,7 @@ pub(crate) fn init(app: &tauri::AppHandle) {
 #[cfg(target_os = "windows")]
 fn toast_app_id(app: &tauri::AppHandle) -> String {
     // Windows caches a notification identity's display assets after its first
-    // toast. Carrier previously used the main AUMID without an IconUri, so that
+    // toast. Older versions used the main AUMID without an IconUri, so that
     // identity remains stuck with the generic glyph even after registration.
     // A dedicated, stable toast identity starts with the correct assets while
     // leaving the shortcut/taskbar identity unchanged.
@@ -828,10 +828,10 @@ mod tests {
     #[test]
     fn toast_history_includes_dedicated_and_legacy_identities() {
         assert_eq!(
-            toast_history_app_ids("io.github.kristofferr.carrier"),
+            toast_history_app_ids("app.chatpane.Chatpane"),
             [
-                "io.github.kristofferr.carrier.notifications".to_string(),
-                "io.github.kristofferr.carrier".to_string(),
+                "app.chatpane.Chatpane.notifications".to_string(),
+                "app.chatpane.Chatpane".to_string(),
             ]
         );
     }

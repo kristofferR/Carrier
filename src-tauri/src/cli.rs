@@ -49,11 +49,11 @@ mod tests {
     #[test]
     fn parses_each_supported_desktop_action() {
         assert_eq!(
-            parse_cli_action(["carrier", "--new-conversation"]),
+            parse_cli_action(["chatpane", "--new-conversation"]),
             Some(AppAction::NewConversation)
         );
         assert_eq!(
-            parse_cli_action(["carrier", "--settings"]),
+            parse_cli_action(["chatpane", "--settings"]),
             Some(AppAction::Settings)
         );
     }
@@ -61,10 +61,10 @@ mod tests {
     #[test]
     fn ignores_unknown_arguments_and_uses_the_first_supported_action() {
         assert_eq!(
-            parse_cli_action(["carrier", "--verbose", "--settings", "--new-conversation"]),
+            parse_cli_action(["chatpane", "--verbose", "--settings", "--new-conversation"]),
             Some(AppAction::Settings)
         );
-        assert_eq!(parse_cli_action(["carrier", "--verbose"]), None);
+        assert_eq!(parse_cli_action(["chatpane", "--verbose"]), None);
     }
 
     #[cfg(unix)]

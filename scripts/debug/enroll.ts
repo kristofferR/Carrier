@@ -13,12 +13,12 @@ const root = join(
   mac ? "Library/Application Support/ChatpaneDebug" : ".local/share/chatpane-debug",
 );
 const binary = mac
-  ? "/Applications/Chatpane.app/Contents/MacOS/carrier"
-  : join(home, ".local/bin/carrier");
+  ? "/Applications/Chatpane.app/Contents/MacOS/chatpane"
+  : join(home, ".local/bin/chatpane");
 const config = mac
   ? join(home, "Library/Application Support")
   : process.env.XDG_CONFIG_HOME || join(home, ".config");
-const settingsFile = join(config, "io.github.kristofferr.carrier/settings.json");
+const settingsFile = join(config, "app.chatpane.Chatpane/settings.json");
 async function loadSettings() {
   const original = await readFile(settingsFile, "utf8").catch((error: NodeJS.ErrnoException) => {
     // Rust's serde defaults fill in missing preferences on a fresh install.
@@ -52,7 +52,7 @@ for (const name of ["carrier", "chatpane"]) {
     throw new Error(`Remove the AUR ${name} package before enrolling`);
 }
 if (process.argv.includes("--hold-failures")) {
-  const active = Bun.spawnSync(["pgrep", "-u", String(userInfo().uid), "-x", "carrier"]);
+  const active = Bun.spawnSync(["pgrep", "-u", String(userInfo().uid), "-x", "chatpane"]);
   if (active.exitCode !== 1) throw new Error("Quit Chatpane before enrolling with --hold-failures");
   const { original, settings } = await loadSettings();
   await mkdir(dirname(settingsFile), { recursive: true });
@@ -123,7 +123,7 @@ if (mac) {
   await mkdir(icons, { recursive: true });
   await copyFile(
     join(import.meta.dir, "../../src-tauri/icons/128x128.png"),
-    join(icons, "io.github.kristofferr.carrier.png"),
+    join(icons, "app.chatpane.Chatpane.png"),
   );
   const desktopQuote = (s: string) =>
     `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("`", "\\`").replaceAll("$", "\\$")}"`;
@@ -131,7 +131,7 @@ if (mac) {
   await rm(join(applications, "carrier.desktop"), { force: true });
   await writeFile(
     join(applications, "Chatpane.desktop"),
-    `[Desktop Entry]\nCategories=Network;InstantMessaging;\nComment=Distraction-free Messenger desktop client\nExec=${desktopQuote(binary)}\nStartupWMClass=carrier\nIcon=io.github.kristofferr.carrier\nName=Chatpane\nTerminal=false\nType=Application\nActions=new-conversation;settings;\n\n[Desktop Action new-conversation]\nName=New Conversation\nExec=${desktopQuote(binary)} --new-conversation\n\n[Desktop Action settings]\nName=Settings\nExec=${desktopQuote(binary)} --settings\n`,
+    `[Desktop Entry]\nCategories=Network;InstantMessaging;\nComment=Distraction-free Messenger desktop client\nExec=${desktopQuote(binary)}\nStartupWMClass=chatpane\nIcon=app.chatpane.Chatpane\nName=Chatpane\nTerminal=false\nType=Application\nActions=new-conversation;settings;\n\n[Desktop Action new-conversation]\nName=New Conversation\nExec=${desktopQuote(binary)} --new-conversation\n\n[Desktop Action settings]\nName=Settings\nExec=${desktopQuote(binary)} --settings\n`,
   );
   const { settings } = await loadSettings();
   if ("autostart" in settings && settings.autostart === true) {

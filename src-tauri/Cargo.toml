@@ -1,5 +1,5 @@
 [package]
-name = "carrier"
+name = "chatpane"
 version = "3.0.1"
 description = "A tiny, distraction-free desktop client for Facebook Messenger"
 authors = ["kristofferR"]
@@ -121,7 +121,7 @@ objc2 = "0.6"
 # Start on System Startup as an "Open at Login" item (SMAppService, macOS 13+).
 objc2-service-management = { version = "0.3.2", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 # NSSound and NSBeep: Settings → Notification sound → Preview.
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSGraphics", "NSPasteboard", "NSSound", "NSWorkspace"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSGraphics", "NSPasteboard", "NSRunningApplication", "NSSound", "NSWorkspace", "libc"] }
 # Communication notifications: the sender's face and group name (Ref #366).
 objc2-intents = { version = "0.3.2", default-features = false, features = ["std", "INSendMessageIntent", "INIntent", "INPerson", "INPersonHandle", "INImage", "INInteraction", "INSpeakableString", "INOutgoingMessageType", "INIntentResponse", "INSendMessageAttachment", "block2"] }
 objc2-foundation = { version = "0.3", features = ["NSBundle", "NSData", "NSString", "NSValue", "NSObject", "NSDictionary", "NSArray", "NSSet", "NSURL", "NSError"] }

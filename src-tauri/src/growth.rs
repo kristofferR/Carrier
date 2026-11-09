@@ -17,8 +17,7 @@ use crate::settings::{AppState, SaveOutcome, save_settings};
 
 /// The landing page; the link people share.
 pub(crate) const SITE_URL: &str = "https://chatpane.app/";
-/// GitHub redirects this after a repository rename.
-pub(crate) const REPO_URL: &str = "https://github.com/kristofferR/Carrier";
+pub(crate) const REPO_URL: &str = "https://github.com/kristofferR/Chatpane";
 
 const STAR_PROMPT_DAYS_USED: u32 = 14;
 const STAR_PROMPT_MIN_AGE_DAYS: i32 = 21;

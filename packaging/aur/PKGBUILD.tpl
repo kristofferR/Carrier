@@ -6,19 +6,19 @@
 pkgname=chatpane
 pkgver=@PKGVER@
 pkgrel=1
-pkgdesc="Distraction-free desktop client for Facebook Messenger (formerly Carrier)"
+pkgdesc="Distraction-free desktop client for Facebook Messenger"
 arch=('x86_64' 'aarch64')
 url="https://chatpane.app/"
 license=('MIT')
 depends=('webkit2gtk-4.1' 'gtk3' 'hicolor-icon-theme')
-# Renamed from carrier: take over its installs and its /usr/bin/carrier.
+# Replaces the package from before the rename.
 provides=('carrier')
 conflicts=('carrier')
 replaces=('carrier')
 options=('!strip' '!debug')
-source=("LICENSE-${pkgver}::https://raw.githubusercontent.com/kristofferR/Carrier/v${pkgver}/LICENSE")
-source_x86_64=("${pkgname}-${pkgver}-x86_64.deb::https://github.com/kristofferR/Carrier/releases/download/v${pkgver}/Chatpane_${pkgver}_lin_x64.deb")
-source_aarch64=("${pkgname}-${pkgver}-aarch64.deb::https://github.com/kristofferR/Carrier/releases/download/v${pkgver}/Chatpane_${pkgver}_lin_arm.deb")
+source=("LICENSE-${pkgver}::https://raw.githubusercontent.com/kristofferR/Chatpane/v${pkgver}/LICENSE")
+source_x86_64=("${pkgname}-${pkgver}-x86_64.deb::https://github.com/kristofferR/Chatpane/releases/download/v${pkgver}/Chatpane_${pkgver}_lin_x64.deb")
+source_aarch64=("${pkgname}-${pkgver}-aarch64.deb::https://github.com/kristofferR/Chatpane/releases/download/v${pkgver}/Chatpane_${pkgver}_lin_arm.deb")
 sha256sums=('@SHA_LICENSE@')
 sha256sums_x86_64=('@SHA_X64@')
 sha256sums_aarch64=('@SHA_ARM@')

@@ -19,31 +19,31 @@ function completionEvent(url: string, success: boolean, id = "download-id", deni
 describe("waitForNativeDownload", () => {
   test("resolves only for the matching successful native download", async () => {
     const target = new EventTarget();
-    const pending = waitForNativeDownload(target, "blob:carrier/expected", acceptCompletion, 100);
+    const pending = waitForNativeDownload(target, "blob:chatpane/expected", acceptCompletion, 100);
 
-    target.dispatchEvent(completionEvent("blob:carrier/other", true));
-    target.dispatchEvent(completionEvent("blob:carrier/expected", true));
+    target.dispatchEvent(completionEvent("blob:chatpane/other", true));
+    target.dispatchEvent(completionEvent("blob:chatpane/expected", true));
 
     await expect(pending).resolves.toEqual({
       id: "download-id",
-      url: "blob:carrier/expected",
+      url: "blob:chatpane/expected",
     });
   });
 
   test("rejects a matching native failure", async () => {
     const target = new EventTarget();
-    const pending = waitForNativeDownload(target, "blob:carrier/expected", acceptCompletion, 100);
+    const pending = waitForNativeDownload(target, "blob:chatpane/expected", acceptCompletion, 100);
 
-    target.dispatchEvent(completionEvent("blob:carrier/expected", false));
+    target.dispatchEvent(completionEvent("blob:chatpane/expected", false));
 
     await expect(pending).rejects.toThrow("native download failed");
   });
 
   test("rejects a folder-access refusal with its own error", async () => {
     const target = new EventTarget();
-    const pending = waitForNativeDownload(target, "blob:carrier/expected", acceptCompletion, 100);
+    const pending = waitForNativeDownload(target, "blob:chatpane/expected", acceptCompletion, 100);
 
-    target.dispatchEvent(completionEvent("blob:carrier/expected", false, "download-id", true));
+    target.dispatchEvent(completionEvent("blob:chatpane/expected", false, "download-id", true));
 
     await expect(pending).rejects.toThrow(DOWNLOAD_ACCESS_DENIED);
   });
@@ -52,24 +52,24 @@ describe("waitForNativeDownload", () => {
     const target = new EventTarget();
 
     await expect(
-      waitForNativeDownload(target, "blob:carrier/missing", acceptCompletion, 1),
+      waitForNativeDownload(target, "blob:chatpane/missing", acceptCompletion, 1),
     ).rejects.toThrow("native download timed out");
   });
 
   test("rejects when the verification bridge is unavailable", async () => {
     const target = new EventTarget();
-    const pending = waitForNativeDownload(target, "blob:carrier/expected", undefined, 100);
+    const pending = waitForNativeDownload(target, "blob:chatpane/expected", undefined, 100);
 
-    target.dispatchEvent(completionEvent("blob:carrier/expected", true));
+    target.dispatchEvent(completionEvent("blob:chatpane/expected", true));
 
     await expect(pending).rejects.toThrow("native download bridge unavailable");
   });
 
   test("ignores an unauthenticated completion", async () => {
     const target = new EventTarget();
-    const pending = waitForNativeDownload(target, "blob:carrier/expected", async () => false, 20);
+    const pending = waitForNativeDownload(target, "blob:chatpane/expected", async () => false, 20);
 
-    target.dispatchEvent(completionEvent("blob:carrier/expected", true));
+    target.dispatchEvent(completionEvent("blob:chatpane/expected", true));
 
     await expect(pending).rejects.toThrow("native download timed out");
   });
@@ -78,14 +78,14 @@ describe("waitForNativeDownload", () => {
     const target = new EventTarget();
     const pending = waitForNativeDownload(
       target,
-      "blob:carrier/expected",
+      "blob:chatpane/expected",
       async () => {
         throw new Error("bridge failure");
       },
       20,
     );
 
-    target.dispatchEvent(completionEvent("blob:carrier/expected", true));
+    target.dispatchEvent(completionEvent("blob:chatpane/expected", true));
 
     await expect(pending).rejects.toThrow("native download timed out");
   });
@@ -110,8 +110,8 @@ describe("watchDeniedDownloads", () => {
     );
 
     target.dispatchEvent(completionEvent("https://cdn.fbsbx.com/file.pdf", false, "a", true));
-    target.dispatchEvent(completionEvent("blob:carrier/failed", false, "b", false));
-    target.dispatchEvent(completionEvent("blob:carrier/saved", true, "c", false));
+    target.dispatchEvent(completionEvent("blob:chatpane/failed", false, "b", false));
+    target.dispatchEvent(completionEvent("blob:chatpane/saved", true, "c", false));
     await settle();
 
     expect(denied).toBe(1);
@@ -132,7 +132,7 @@ describe("watchDeniedDownloads", () => {
       },
     );
 
-    target.dispatchEvent(completionEvent("blob:carrier/forged", false, "a", true));
+    target.dispatchEvent(completionEvent("blob:chatpane/forged", false, "a", true));
     await settle();
 
     expect(denied).toBe(0);

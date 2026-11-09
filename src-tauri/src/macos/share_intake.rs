@@ -19,7 +19,7 @@ use url::Url;
 
 use crate::settings::AppState;
 
-const PASTEBOARD_NAME_PREFIX: &str = "io.github.kristofferr.carrier.share.";
+const PASTEBOARD_NAME_PREFIX: &str = "app.chatpane.Chatpane.share.";
 /// The extension's activation rule allows up to 10 images + 1 movie + 10
 /// files in one mixed selection, so the intake must accept every selection
 /// the sheet can produce.
@@ -260,7 +260,7 @@ mod tests {
         assert!(is_share_handoff(url));
         assert_eq!(
             pasteboard_name_for_handoff(url).as_deref(),
-            Some("io.github.kristofferr.carrier.share.550e8400-e29b-41d4-a716-446655440000")
+            Some("app.chatpane.Chatpane.share.550e8400-e29b-41d4-a716-446655440000")
         );
         assert!(!is_share_handoff("chatpane://share-pasteboard"));
         assert!(!is_share_handoff("chatpane://share-pasteboard/not-a-uuid"));

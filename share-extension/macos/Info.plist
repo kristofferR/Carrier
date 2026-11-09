@@ -9,7 +9,7 @@
   <key>CFBundleExecutable</key>
   <string>Chatpane Share</string>
   <key>CFBundleIdentifier</key>
-  <string>io.github.kristofferr.carrier.share</string>
+  <string>app.chatpane.Chatpane.share</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>

@@ -277,23 +277,23 @@ mod tests {
     #[test]
     fn action_from_argv_reads_flags_urls_and_threads() {
         assert_eq!(
-            action_from_argv(["carrier.exe", "--new-conversation"]),
+            action_from_argv(["chatpane.exe", "--new-conversation"]),
             Some(AppAction::NewConversation)
         );
         assert_eq!(
-            action_from_argv(["carrier.exe", "--settings"]),
+            action_from_argv(["chatpane.exe", "--settings"]),
             Some(AppAction::Settings)
         );
         assert_eq!(
-            action_from_argv(["carrier.exe", "--thread", "123456"]),
+            action_from_argv(["chatpane.exe", "--thread", "123456"]),
             Some(AppAction::OpenThread("/t/123456/".into()))
         );
         assert_eq!(
-            action_from_argv(["carrier.exe", "chatpane://t/789"]),
+            action_from_argv(["chatpane.exe", "chatpane://t/789"]),
             Some(AppAction::OpenThread("/t/789/".into()))
         );
         assert_eq!(
-            action_from_argv(["carrier.exe", "chatpane://compose"]),
+            action_from_argv(["chatpane.exe", "chatpane://compose"]),
             Some(AppAction::NewConversation)
         );
     }
@@ -307,16 +307,16 @@ mod tests {
         );
         // First recognized action wins; later ones are ignored.
         assert_eq!(
-            action_from_argv(["carrier.exe", "--settings", "--new-conversation"]),
+            action_from_argv(["chatpane.exe", "--settings", "--new-conversation"]),
             Some(AppAction::Settings)
         );
         // Junk, a missing --thread value, and an over-long id all fall through.
-        assert_eq!(action_from_argv(["carrier.exe", "--verbose"]), None);
-        assert_eq!(action_from_argv(["carrier.exe", "--thread"]), None);
-        assert_eq!(action_from_argv(["carrier.exe", "--thread", "12x"]), None);
+        assert_eq!(action_from_argv(["chatpane.exe", "--verbose"]), None);
+        assert_eq!(action_from_argv(["chatpane.exe", "--thread"]), None);
+        assert_eq!(action_from_argv(["chatpane.exe", "--thread", "12x"]), None);
         assert_eq!(
             action_from_argv([
-                "carrier.exe".to_string(),
+                "chatpane.exe".to_string(),
                 "--thread".to_string(),
                 "1".repeat(33)
             ]),

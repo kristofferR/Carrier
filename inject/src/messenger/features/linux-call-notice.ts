@@ -15,7 +15,7 @@ const CALL_BUTTON_LABELS = [
 const CALL_BUTTONS = CALL_BUTTON_LABELS.map(
   (label) => `[role="button"][aria-label="${label}"]`,
 ).join(", ");
-const ISSUE_URL = "https://github.com/kristofferR/Carrier/issues/345";
+const ISSUE_URL = "https://github.com/kristofferR/Chatpane/issues/345";
 const WIDTH = 280;
 const GAP = 8;
 

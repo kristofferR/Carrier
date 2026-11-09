@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Chatpane",
   "version": "3.0.1",
-  "identifier": "io.github.kristofferr.carrier",
+  "identifier": "app.chatpane.Chatpane",
   "build": {
     "frontendDist": "../dist"
   },
@@ -26,7 +26,7 @@
     "publisher": "kristofferR",
     "category": "SocialNetworking",
     "shortDescription": "Distraction-free Messenger desktop client",
-    "longDescription": "Chatpane (formerly Carrier) wraps the Facebook Messenger web app in a tiny native window and strips away the surrounding Facebook chrome \u2014 no Feed, no Reels, no Marketplace. Built with Tauri.",
+    "longDescription": "Chatpane wraps the Facebook Messenger web app in a tiny native window and strips away the surrounding Facebook chrome \u2014 no Feed, no Reels, no Marketplace. Built with Tauri.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -45,13 +45,13 @@
     },
     "linux": {
       "deb": {
-        "desktopTemplate": "linux/carrier.desktop.hbs",
+        "desktopTemplate": "linux/chatpane.desktop.hbs",
         "depends": [
           "libwebkit2gtk-4.1-0",
           "libgtk-3-0"
         ],
         "files": {
-          "/usr/share/metainfo/io.github.kristofferr.carrier.metainfo.xml": "linux/io.github.kristofferr.carrier.metainfo.xml"
+          "/usr/share/metainfo/app.chatpane.Chatpane.metainfo.xml": "linux/app.chatpane.Chatpane.metainfo.xml"
         },
         "section": "net",
         "provides": ["carrier"],
@@ -59,7 +59,7 @@
         "replaces": ["carrier"]
       },
       "rpm": {
-        "desktopTemplate": "linux/carrier.desktop.hbs",
+        "desktopTemplate": "linux/chatpane.desktop.hbs",
         "depends": [
           "webkit2gtk4.1",
           "gtk3"
@@ -67,13 +67,13 @@
         "provides": ["carrier"],
         "obsoletes": ["carrier"],
         "files": {
-          "/usr/share/metainfo/io.github.kristofferr.carrier.metainfo.xml": "linux/io.github.kristofferr.carrier.metainfo.xml"
+          "/usr/share/metainfo/app.chatpane.Chatpane.metainfo.xml": "linux/app.chatpane.Chatpane.metainfo.xml"
         }
       },
       "appimage": {
         "bundleMediaFramework": true,
         "files": {
-          "/usr/share/metainfo/io.github.kristofferr.carrier.metainfo.xml": "linux/io.github.kristofferr.carrier.metainfo.xml"
+          "/usr/share/metainfo/app.chatpane.Chatpane.metainfo.xml": "linux/app.chatpane.Chatpane.metainfo.xml"
         }
       }
     }
@@ -82,7 +82,7 @@
     "updater": {
       "requireSignedVersion": true,
       "endpoints": [
-        "https://github.com/kristofferR/carrier/releases/latest/download/latest.json"
+        "https://github.com/kristofferR/Chatpane/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYyNUU2MkMzRUU2MTdGMkQKUldRdGYySHV3MkplWXFtdnR2aUV6YVQ2V3NQRWwwNC9kcE43MmZSSnQwMFgwcEM4SHgrS3NPeGkK"
     }

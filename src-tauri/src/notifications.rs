@@ -1521,7 +1521,7 @@ fn show_linux_notification<F>(
     if !body.is_empty() {
         notification.body(body);
     }
-    notification.icon("carrier");
+    notification.icon("chatpane");
     notification.action("default", t("notification.action.open"));
     if allow_inline_reply {
         notification.action("inline-reply", t("notification.action.reply"));
