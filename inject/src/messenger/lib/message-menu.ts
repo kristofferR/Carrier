@@ -49,11 +49,16 @@ export function menuRowAction(text: string): DrivenAction | null {
   return DRIVEN_ACTIONS.find((action) => MESSENGER_ROW_TEXT[action] === normalized) ?? null;
 }
 
-/** The action a hover-toolbar button performs, by its accessible label.
- * Text messages show "Reply to this message"; media messages show "Forward"
- * there and move Reply into More. */
-export function toolbarAction(label: string): DrivenAction | null {
-  if (/^Reply\b/.test(label)) return "shared.context.reply";
+/** The path of the Reply button's icon (Messenger's FBNucleusReplyFilled16Icon),
+ * which marks the button in every language. */
+export const REPLY_ICON_PATH =
+  "M6.497 1.035C7.593-.088 9.5.688 9.5 2.257V4.54c1.923.215 3.49 1.246 4.593 2.672C15.328 8.808 16 10.91 16 13v.305c0 .632-.465 1.017-.893 1.127-.422.11-.99.005-1.318-.493-.59-.894-1.2-1.482-1.951-1.859-.611-.307-1.359-.496-2.338-.558v2.23c0 1.57-1.908 2.346-3.003 1.222L.893 9.223a1.75 1.75 0 0 1 .001-2.444l5.603-5.744z";
+
+/** The action a hover-toolbar button performs, by its icon or its English
+ * accessible label. Text messages show "Reply to this message"; media
+ * messages show "Forward" there and move Reply into More. */
+export function toolbarAction(label: string, iconPath = ""): DrivenAction | null {
+  if (iconPath === REPLY_ICON_PATH || /^Reply\b/.test(label)) return "shared.context.reply";
   if (/^Forward\b/.test(label)) return "shared.context.forward";
   return null;
 }

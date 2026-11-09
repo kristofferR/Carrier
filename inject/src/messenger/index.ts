@@ -33,6 +33,7 @@ import { initLoginTidy } from "./features/login-tidy";
 import { initMediaAutoplay } from "./features/media-autoplay";
 import { initMediaPermissionWarning } from "./features/media-permissions";
 import { initMediaViewer } from "./features/media-viewer";
+import { initMessageReply } from "./features/message-reply";
 import { initMessengerDnd } from "./features/messenger-dnd";
 import { initNotificationActions } from "./features/notification-actions";
 import { initNotificationBridge } from "./features/notifications";
@@ -131,6 +132,8 @@ function main() {
   initFeature("login-tidy", initLoginTidy);
   initFeature("passkey-login-notice", initPasskeyLoginNotice);
   initFeature("media-viewer", initMediaViewer);
+  // After the media viewer: a double-click on a photo or video stays its.
+  initFeature("message-reply", initMessageReply);
   initFeature("viewer-controls", initViewerControls);
   initFeature("fullscreen", initFullscreenPolyfill);
 }

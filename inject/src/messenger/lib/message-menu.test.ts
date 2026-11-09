@@ -5,6 +5,7 @@ import {
   menuRowAction,
   messageActions,
   messageNodeText,
+  REPLY_ICON_PATH,
   reactionLabel,
   toolbarAction,
   uniqueReactions,
@@ -22,6 +23,9 @@ describe("message actions", () => {
     expect(toolbarAction("Forward")).toBe("shared.context.forward");
     expect(toolbarAction("React with an emoji")).toBeNull();
     expect(toolbarAction("More actions")).toBeNull();
+    // A translated label still finds Reply by its icon.
+    expect(toolbarAction("Svar på denne meldingen", REPLY_ICON_PATH)).toBe("shared.context.reply");
+    expect(toolbarAction("Videresend", "M0 0h16v16H0z")).toBeNull();
   });
 
   test("lists only what the message offers, in menu order", () => {
