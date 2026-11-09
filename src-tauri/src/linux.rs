@@ -269,7 +269,8 @@ fn apply_portal_color_scheme(app: &tauri::AppHandle, scheme: ColorScheme) {
         let _ = tray.set_symbolic_dark(dark_panel);
     }
 
-    let follows_system = state.settings.lock().unwrap().theme == "system";
+    let follows_system =
+        state.settings.lock().unwrap().theme == crate::settings::ThemeChoice::System;
     if !follows_system {
         return;
     }

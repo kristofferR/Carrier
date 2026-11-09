@@ -102,8 +102,8 @@ use settings::AppState;
 #[cfg(any(target_os = "macos", test))]
 use settings::ContextMenuActivation;
 use settings::{
-    SaveOutcome, apply_page_zoom, apply_settings, clamp_zoom, clear_pending_webview_data,
-    load_settings, load_settings_early, save_settings,
+    BadgeMode, SaveOutcome, apply_page_zoom, apply_settings, clamp_zoom,
+    clear_pending_webview_data, load_settings, load_settings_early, save_settings,
 };
 use tray::show_main;
 #[cfg(target_os = "macos")]
@@ -125,7 +125,7 @@ pub(crate) fn refresh_unread_indicators(
     };
     let state = app.state::<AppState>();
     // Dot mode says that something is unread, never how much.
-    let dot = settings.badge_mode == "dot";
+    let dot = settings.badge_mode == BadgeMode::Dot;
     let tooltip = match (unread > 0, dot) {
         (false, _) => APP_TITLE.to_string(),
         (true, true) => i18n::tf("window.tooltip.unread", &[("title", &APP_TITLE)]),
@@ -158,7 +158,7 @@ pub(crate) fn refresh_unread_indicators(
             // Cheap re-check of the taskbar theme alongside the registry
             // watcher, so a flip retints even if the watcher ever stops.
             #[cfg(target_os = "windows")]
-            crate::tray::set_windows_tray_icon_style(app, &tray, &settings.tray_icon_style);
+            crate::tray::set_windows_tray_icon_style(app, &tray, settings.tray_icon_style);
         }
     }
 
@@ -211,10 +211,10 @@ fn update_windows_overlay_badges(app: &tauri::AppHandle, bucket: tray_badge::Unr
 #[cfg(target_os = "windows")]
 fn refresh_windows_tray_icon(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
-    let style = state.settings.lock().unwrap().tray_icon_style.clone();
+    let style = state.settings.lock().unwrap().tray_icon_style;
     let tray = state.tray.lock().unwrap().clone();
     if let Some(tray) = tray {
-        tray::set_windows_tray_icon_style(app, &tray, &style);
+        tray::set_windows_tray_icon_style(app, &tray, style);
     }
 }
 

@@ -58,7 +58,7 @@ pub(crate) async fn choose_download(window: WebviewWindow, signed: SignedAction)
         .lock()
         .unwrap()
         .download_behavior
-        == "ask";
+        == crate::settings::DownloadBehavior::Ask;
     let name = sanitize_filename(&msg.name);
     let allowed_url = url::Url::parse(&msg.url)
         .ok()

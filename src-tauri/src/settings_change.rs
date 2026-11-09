@@ -1,6 +1,8 @@
 //! Changes from Settings, applied to the latest snapshot inside the settings worker.
 
-use crate::settings::{NicknameScope, Settings};
+use crate::settings::{
+    BadgeMode, DownloadBehavior, NicknameScope, Settings, ThemeChoice, TrayIconStyle,
+};
 use crate::sound::NotificationSound;
 
 macro_rules! setting_changes {
@@ -36,16 +38,16 @@ macro_rules! setting_changes {
 setting_changes! {
     AlwaysOnTop => always_on_top: bool,
     ShowTray => show_tray: bool,
-    TrayIconStyle => tray_icon_style: String,
+    TrayIconStyle => tray_icon_style: TrayIconStyle,
     StartToTray => start_to_tray: bool,
     Autostart => autostart: bool,
     HideOnClose => hide_on_close: bool,
     MultiInstance => multi_instance: bool,
     Spellcheck => spellcheck: bool,
     UnreadBadge => unread_badge: bool,
-    BadgeMode => badge_mode: String,
+    BadgeMode => badge_mode: BadgeMode,
     MutedConversations => muted_conversations: Option<String>,
-    Theme => theme: String,
+    Theme => theme: ThemeChoice,
     ColorTheme => color_theme: String,
     AccentColor => accent_color: String,
     MessageFont => message_font: String,
@@ -79,7 +81,7 @@ setting_changes! {
     BlockTelemetry => block_telemetry: bool,
     StripLinkTracking => strip_link_tracking: bool,
     SendWithAccelerator => send_with_accelerator: bool,
-    DownloadBehavior => download_behavior: String,
+    DownloadBehavior => download_behavior: DownloadBehavior,
     HoldFailures => hold_failures: bool,
     Language => language: String,
 }
@@ -132,6 +134,7 @@ mod tests {
     fn changes_reject_wrong_types_and_native_owned_fields() {
         for value in [
             serde_json::json!({"key": "spellcheck", "value": "true"}),
+            serde_json::json!({"key": "theme", "value": "sepia"}),
             serde_json::json!({"key": "pane_widths", "value": {"list": 300}}),
             serde_json::json!({"key": "usage", "value": {}}),
             serde_json::json!({"key": "tray_notice_shown", "value": false}),

@@ -819,7 +819,7 @@
           ["light", settingsText("settings.appearance.theme.mode.light")],
           ["dark", settingsText("settings.appearance.theme.mode.dark")]
         ],
-        settings.theme || "system",
+        settings.theme,
         (value) => persist({ key: "theme", value })
       )
     );

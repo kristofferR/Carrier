@@ -1,6 +1,14 @@
 // GENERATED from Rust wire types. Do not edit.
 // Regenerate: bun run build:settings-types
 
+export type ThemeChoice = "system" | "light" | "dark";
+
+export type BadgeMode = "messages" | "conversations" | "dot";
+
+export type TrayIconStyle = "color" | "symbolic";
+
+export type DownloadBehavior = "downloads" | "ask";
+
 export type NicknameScope = "all" | "direct" | "groups" | "off";
 
 export type PaneWidths = { list: number | null, details: number | null, };
@@ -21,11 +29,7 @@ star_prompt_done: boolean, };
 
 export type NotificationSound = "off" | "default" | { "system": { platform: string, name: string, } } | { "file": string };
 
-export type Settings = { always_on_top: boolean, show_tray: boolean, 
-/**
- * macOS/Linux tray artwork: full-color app icon or a monochrome mark.
- */
-tray_icon_style: string, start_to_tray: boolean, autostart: boolean, hide_on_close: boolean, 
+export type Settings = { always_on_top: boolean, show_tray: boolean, tray_icon_style: TrayIconStyle, start_to_tray: boolean, autostart: boolean, hide_on_close: boolean, 
 /**
  * Whether the one-time "still running in the tray" close notice has been
  * shown. Persisted internally; it is not an end-user preference.
@@ -39,13 +43,7 @@ multi_instance: boolean, spellcheck: boolean,
 /**
  * Show the unread count on the Dock/taskbar icon.
  */
-unread_badge: boolean, 
-/**
- * What the unread badge counts: "messages" (Facebook's total unread message
- * count, from the page title), "conversations" (unread chats in the list),
- * or "dot" (that something is unread, without a number).
- */
-badge_mode: string, 
+unread_badge: boolean, badge_mode: BadgeMode, 
 /**
  * Skip Dock/taskbar badges and native notifications for conversations the
  * user has muted in Messenger. Legacy; `muted_conversations` wins when set.
@@ -55,11 +53,7 @@ ignore_muted_conversations: boolean,
  * Muted conversations: "ignore" (no badge, no notification), "badge"
  * (badge only) or "include". None keeps `ignore_muted_conversations`.
  */
-muted_conversations: string | null, 
-/**
- * Force the Messenger theme: "system" (follow FB), "light", or "dark".
- */
-theme: string, 
+muted_conversations: string | null, theme: ThemeChoice, 
 /**
  * The color theme on top of light/dark: a built-in id or an imported
  * theme's id (see themes.rs). "default" is Messenger's own look.
@@ -243,12 +237,7 @@ strip_link_tracking: boolean,
  * Require Cmd+Enter on macOS or Ctrl+Enter elsewhere to send a message.
  * Plain Enter inserts a line break. Off by default.
  */
-send_with_accelerator: boolean, 
-/**
- * Where downloads go: "downloads" saves automatically to the system
- * Downloads folder, while "ask" opens a native save dialog first.
- */
-download_behavior: string, 
+send_with_accelerator: boolean, download_behavior: DownloadBehavior, 
 /**
  * Keep broken webviews intact for live inspection. Manual reload still works.
  */
@@ -259,7 +248,7 @@ hold_failures: boolean,
  */
 language: string, };
 
-export type SettingsChange = { "key": "always_on_top", "value": boolean } | { "key": "show_tray", "value": boolean } | { "key": "tray_icon_style", "value": string } | { "key": "start_to_tray", "value": boolean } | { "key": "autostart", "value": boolean } | { "key": "hide_on_close", "value": boolean } | { "key": "multi_instance", "value": boolean } | { "key": "spellcheck", "value": boolean } | { "key": "unread_badge", "value": boolean } | { "key": "badge_mode", "value": string } | { "key": "muted_conversations", "value": string | null } | { "key": "theme", "value": string } | { "key": "color_theme", "value": string } | { "key": "accent_color", "value": string } | { "key": "message_font", "value": string } | { "key": "app_icon", "value": string } | { "key": "app_icon_dark", "value": string } | { "key": "menu_bar_only", "value": boolean } | { "key": "hide_menu_bar", "value": boolean } | { "key": "hide_on_minimize", "value": boolean } | { "key": "hide_on_focus_loss", "value": boolean } | { "key": "hide_taskbar_icon", "value": boolean } | { "key": "mute_notifications", "value": boolean } | { "key": "automatic_update_checks", "value": boolean } | { "key": "update_check_hours", "value": number } | { "key": "notification_sound_choice", "value": NotificationSound | null } | { "key": "hide_notification_preview", "value": boolean } | { "key": "notify_group_chats", "value": boolean } | { "key": "notify_reactions", "value": boolean } | { "key": "notification_reaction", "value": string } | { "key": "group_notifications_by_conversation", "value": boolean } | { "key": "clear_notifications_on_view", "value": boolean } | { "key": "attention_on_message", "value": boolean } | { "key": "hide_names", "value": boolean | null } | { "key": "hide_avatars", "value": boolean | null } | { "key": "nickname_scope", "value": NicknameScope | null } | { "key": "system_emoji", "value": boolean } | { "key": "stop_media_autoplay", "value": boolean } | { "key": "focus_composer_on_return", "value": boolean } | { "key": "block_typing_indicator", "value": boolean } | { "key": "zoom", "value": number } | { "key": "global_hotkey", "value": boolean } | { "key": "block_telemetry", "value": boolean } | { "key": "strip_link_tracking", "value": boolean } | { "key": "send_with_accelerator", "value": boolean } | { "key": "download_behavior", "value": string } | { "key": "hold_failures", "value": boolean } | { "key": "language", "value": string } | { "key": "app_icon_dark_mode", "value": boolean };
+export type SettingsChange = { "key": "always_on_top", "value": boolean } | { "key": "show_tray", "value": boolean } | { "key": "tray_icon_style", "value": TrayIconStyle } | { "key": "start_to_tray", "value": boolean } | { "key": "autostart", "value": boolean } | { "key": "hide_on_close", "value": boolean } | { "key": "multi_instance", "value": boolean } | { "key": "spellcheck", "value": boolean } | { "key": "unread_badge", "value": boolean } | { "key": "badge_mode", "value": BadgeMode } | { "key": "muted_conversations", "value": string | null } | { "key": "theme", "value": ThemeChoice } | { "key": "color_theme", "value": string } | { "key": "accent_color", "value": string } | { "key": "message_font", "value": string } | { "key": "app_icon", "value": string } | { "key": "app_icon_dark", "value": string } | { "key": "menu_bar_only", "value": boolean } | { "key": "hide_menu_bar", "value": boolean } | { "key": "hide_on_minimize", "value": boolean } | { "key": "hide_on_focus_loss", "value": boolean } | { "key": "hide_taskbar_icon", "value": boolean } | { "key": "mute_notifications", "value": boolean } | { "key": "automatic_update_checks", "value": boolean } | { "key": "update_check_hours", "value": number } | { "key": "notification_sound_choice", "value": NotificationSound | null } | { "key": "hide_notification_preview", "value": boolean } | { "key": "notify_group_chats", "value": boolean } | { "key": "notify_reactions", "value": boolean } | { "key": "notification_reaction", "value": string } | { "key": "group_notifications_by_conversation", "value": boolean } | { "key": "clear_notifications_on_view", "value": boolean } | { "key": "attention_on_message", "value": boolean } | { "key": "hide_names", "value": boolean | null } | { "key": "hide_avatars", "value": boolean | null } | { "key": "nickname_scope", "value": NicknameScope | null } | { "key": "system_emoji", "value": boolean } | { "key": "stop_media_autoplay", "value": boolean } | { "key": "focus_composer_on_return", "value": boolean } | { "key": "block_typing_indicator", "value": boolean } | { "key": "zoom", "value": number } | { "key": "global_hotkey", "value": boolean } | { "key": "block_telemetry", "value": boolean } | { "key": "strip_link_tracking", "value": boolean } | { "key": "send_with_accelerator", "value": boolean } | { "key": "download_behavior", "value": DownloadBehavior } | { "key": "hold_failures", "value": boolean } | { "key": "language", "value": string } | { "key": "app_icon_dark_mode", "value": boolean };
 
 export type RuntimeCapabilities = { snap: boolean, autostart: boolean, automaticUpdateChecks: boolean, multiInstance: boolean, debug: boolean, };
 

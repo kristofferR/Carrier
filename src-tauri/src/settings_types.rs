@@ -6,6 +6,10 @@ use ts_rs::TS;
 fn settings_types_match_native() {
     let config = ts_rs::Config::new().with_large_int("number");
     let declarations = [
+        crate::settings::ThemeChoice::decl(&config),
+        crate::settings::BadgeMode::decl(&config),
+        crate::settings::TrayIconStyle::decl(&config),
+        crate::settings::DownloadBehavior::decl(&config),
         crate::settings::NicknameScope::decl(&config),
         crate::pane_widths::PaneWidths::decl(&config),
         crate::growth::Usage::decl(&config),

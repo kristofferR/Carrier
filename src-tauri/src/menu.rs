@@ -24,7 +24,8 @@ use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
 #[cfg(target_os = "macos")]
 use crate::settings::ContextMenuActivation;
 use crate::settings::{
-    AppState, SaveOutcome, Settings, apply_settings, save_settings, schedule_webview_data_clear,
+    AppState, SaveOutcome, Settings, ThemeChoice, apply_settings, save_settings,
+    schedule_webview_data_clear,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::tray::build_tray_menu;
@@ -420,19 +421,19 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     let theme_system = check_item(
         "theme_system",
         t("menu.view.theme.system"),
-        settings.theme == "system",
+        settings.theme == ThemeChoice::System,
         None,
     )?;
     let theme_light = check_item(
         "theme_light",
         t("menu.view.theme.light"),
-        settings.theme == "light",
+        settings.theme == ThemeChoice::Light,
         None,
     )?;
     let theme_dark = check_item(
         "theme_dark",
         t("menu.view.theme.dark"),
-        settings.theme == "dark",
+        settings.theme == ThemeChoice::Dark,
         None,
     )?;
     let theme = SubmenuBuilder::new(app, menu_label(t("menu.view.theme.title")))
@@ -523,9 +524,13 @@ pub(crate) fn sync_setting_checks(app: &tauri::AppHandle, settings: &Settings) {
     let Some(MenuItemKind::Submenu(theme)) = view.get("theme") else {
         return;
     };
-    set_check_item(&theme, "theme_system", settings.theme == "system");
-    set_check_item(&theme, "theme_light", settings.theme == "light");
-    set_check_item(&theme, "theme_dark", settings.theme == "dark");
+    set_check_item(
+        &theme,
+        "theme_system",
+        settings.theme == ThemeChoice::System,
+    );
+    set_check_item(&theme, "theme_light", settings.theme == ThemeChoice::Light);
+    set_check_item(&theme, "theme_dark", settings.theme == ThemeChoice::Dark);
 }
 
 #[cfg(target_os = "macos")]
@@ -796,9 +801,9 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         "zoom_reset" => eval("window.__chatpaneZoomReset && window.__chatpaneZoomReset()"),
         #[cfg(not(target_os = "linux"))]
         "paste_match_style" => paste_plain_text(app),
-        "theme_system" => mutate_settings(app, |s| s.theme = "system".into()),
-        "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
-        "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
+        "theme_system" => mutate_settings(app, |s| s.theme = ThemeChoice::System),
+        "theme_light" => mutate_settings(app, |s| s.theme = ThemeChoice::Light),
+        "theme_dark" => mutate_settings(app, |s| s.theme = ThemeChoice::Dark),
         "new_conversation" => eval(NEW_CONVERSATION_JS),
         "export_html" => eval(&ExportFormat::Html.page_script()),
         "export_json" => eval(&ExportFormat::Json.page_script()),

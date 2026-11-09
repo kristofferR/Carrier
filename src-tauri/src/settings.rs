@@ -28,6 +28,65 @@ use crate::window::is_dark;
 use crate::window::splash_background;
 use crate::window::theme_for;
 
+/// Force the Messenger theme, or follow the system.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ThemeChoice {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// What the unread badge counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum BadgeMode {
+    /// Facebook's total unread message count, from the page title.
+    #[default]
+    Messages,
+    /// Unread chats in the list.
+    Conversations,
+    /// That something is unread, without a number.
+    Dot,
+}
+
+/// macOS/Linux tray artwork.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum TrayIconStyle {
+    /// The full-color app icon.
+    #[default]
+    Color,
+    /// A monochrome mark that follows the panel.
+    Symbolic,
+}
+
+/// Where downloads go.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum DownloadBehavior {
+    /// Save automatically to the system Downloads folder.
+    #[default]
+    Downloads,
+    /// Open a native save dialog first.
+    Ask,
+}
+
+/// settings.json is user-editable: an unknown value falls back to the default
+/// rather than failing the whole file.
+fn or_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    Ok(T::deserialize(serde_json::Value::deserialize(deserializer)?).unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
@@ -70,8 +129,8 @@ where
 pub(crate) struct Settings {
     pub(crate) always_on_top: bool,
     pub(crate) show_tray: bool,
-    /// macOS/Linux tray artwork: full-color app icon or a monochrome mark.
-    pub(crate) tray_icon_style: String,
+    #[serde(deserialize_with = "or_default")]
+    pub(crate) tray_icon_style: TrayIconStyle,
     pub(crate) start_to_tray: bool,
     pub(crate) autostart: bool,
     pub(crate) hide_on_close: bool,
@@ -84,10 +143,8 @@ pub(crate) struct Settings {
     pub(crate) spellcheck: bool,
     /// Show the unread count on the Dock/taskbar icon.
     pub(crate) unread_badge: bool,
-    /// What the unread badge counts: "messages" (Facebook's total unread message
-    /// count, from the page title), "conversations" (unread chats in the list),
-    /// or "dot" (that something is unread, without a number).
-    pub(crate) badge_mode: String,
+    #[serde(deserialize_with = "or_default")]
+    pub(crate) badge_mode: BadgeMode,
     /// Skip Dock/taskbar badges and native notifications for conversations the
     /// user has muted in Messenger. Legacy; `muted_conversations` wins when set.
     pub(crate) ignore_muted_conversations: bool,
@@ -95,8 +152,8 @@ pub(crate) struct Settings {
     /// (badge only) or "include". None keeps `ignore_muted_conversations`.
     #[serde(deserialize_with = "deserialize_muted_conversations")]
     pub(crate) muted_conversations: Option<String>,
-    /// Force the Messenger theme: "system" (follow FB), "light", or "dark".
-    pub(crate) theme: String,
+    #[serde(deserialize_with = "or_default")]
+    pub(crate) theme: ThemeChoice,
     /// The color theme on top of light/dark: a built-in id or an imported
     /// theme's id (see themes.rs). "default" is Messenger's own look.
     pub(crate) color_theme: String,
@@ -212,9 +269,8 @@ pub(crate) struct Settings {
     /// Require Cmd+Enter on macOS or Ctrl+Enter elsewhere to send a message.
     /// Plain Enter inserts a line break. Off by default.
     pub(crate) send_with_accelerator: bool,
-    /// Where downloads go: "downloads" saves automatically to the system
-    /// Downloads folder, while "ask" opens a native save dialog first.
-    pub(crate) download_behavior: String,
+    #[serde(deserialize_with = "or_default")]
+    pub(crate) download_behavior: DownloadBehavior,
     /// Keep broken webviews intact for live inspection. Manual reload still works.
     pub(crate) hold_failures: bool,
     /// Chatpane's own UI language: "system" follows the OS, or a code from
@@ -255,12 +311,6 @@ impl Settings {
 
     fn sanitized_for_runtime(mut self, snap: bool) -> Self {
         self.zoom = clamp_zoom(self.zoom);
-        if self.tray_icon_style != "color" && self.tray_icon_style != "symbolic" {
-            self.tray_icon_style = "color".into();
-        }
-        if self.download_behavior != "downloads" && self.download_behavior != "ask" {
-            self.download_behavior = "downloads".into();
-        }
         if !crate::i18n::is_valid_setting(&self.language) {
             self.language = crate::i18n::SYSTEM.into();
         }
@@ -323,7 +373,7 @@ impl Default for Settings {
         Self {
             always_on_top: false,
             show_tray: true,
-            tray_icon_style: "color".into(),
+            tray_icon_style: TrayIconStyle::default(),
             start_to_tray: false,
             autostart: false,
             hide_on_close: true,
@@ -331,10 +381,10 @@ impl Default for Settings {
             multi_instance: false,
             spellcheck: false,
             unread_badge: true,
-            badge_mode: "messages".into(),
+            badge_mode: BadgeMode::default(),
             ignore_muted_conversations: true,
             muted_conversations: None,
-            theme: "system".into(),
+            theme: ThemeChoice::default(),
             color_theme: crate::themes::DEFAULT_THEME.into(),
             accent_color: String::new(),
             message_font: String::new(),
@@ -377,7 +427,7 @@ impl Default for Settings {
             block_telemetry: true,
             strip_link_tracking: true,
             send_with_accelerator: false,
-            download_behavior: "downloads".into(),
+            download_behavior: DownloadBehavior::default(),
             hold_failures: false,
             language: crate::i18n::SYSTEM.into(),
         }
@@ -926,7 +976,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     let built_tray = if want_tray && !has_tray {
         build_tray_menu(app)
             .ok()
-            .and_then(|menu| build_tray_with_menu(app, menu, &s.tray_icon_style).ok())
+            .and_then(|menu| build_tray_with_menu(app, menu, s.tray_icon_style).ok())
     } else {
         None
     };
@@ -960,7 +1010,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         let tray = state.tray.lock().unwrap();
         if let Some(tray) = tray.as_ref() {
             let dark_panel = state.linux_panel_dark.load(Ordering::Acquire);
-            let _ = tray.set_icon_style(&s.tray_icon_style, dark_panel);
+            let _ = tray.set_icon_style(s.tray_icon_style, dark_panel);
         }
     }
     #[cfg(target_os = "macos")]
@@ -969,7 +1019,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         // to the main thread.
         let tray = state.tray.lock().unwrap().clone();
         if let Some(tray) = tray {
-            let _ = set_macos_tray_icon_style(app, &tray, &s.tray_icon_style);
+            let _ = set_macos_tray_icon_style(app, &tray, s.tray_icon_style);
         }
     }
     // Whether a tray icon is actually present after the reconcile above (e.g.
@@ -1045,11 +1095,11 @@ mod tests {
             s.ignore_muted_conversations,
             "ignore_muted_conversations should default to true"
         );
-        assert_eq!(s.tray_icon_style, "color");
+        assert_eq!(s.tray_icon_style, TrayIconStyle::Color);
         assert!(s.group_notifications_by_conversation);
         assert!(s.clear_notifications_on_view);
         assert!(!s.attention_on_message);
-        assert_eq!(s.theme, "system", "theme should default to 'system'");
+        assert_eq!(s.theme, ThemeChoice::System);
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
         assert!(
@@ -1087,7 +1137,8 @@ mod tests {
             "Facebook link tracking removal should default to true"
         );
         assert_eq!(
-            s.download_behavior, "downloads",
+            s.download_behavior,
+            DownloadBehavior::Downloads,
             "downloads should save automatically by default"
         );
         assert_eq!(s.zoom, 100, "zoom should default to 100%");
@@ -1122,31 +1173,27 @@ mod tests {
     }
 
     #[test]
-    fn settings_sanitized_rejects_unknown_tray_icon_styles() {
-        let settings = Settings {
-            tray_icon_style: "theme-name".into(),
-            ..Default::default()
-        };
-        assert_eq!(settings.sanitized().tray_icon_style, "color");
-        let settings = Settings {
-            tray_icon_style: "symbolic".into(),
-            ..Default::default()
-        };
-        assert_eq!(settings.sanitized().tray_icon_style, "symbolic");
-    }
-
-    #[test]
-    fn settings_sanitized_rejects_unknown_download_behaviors() {
-        let settings = Settings {
-            download_behavior: "desktop".into(),
-            ..Default::default()
-        };
-        assert_eq!(settings.sanitized().download_behavior, "downloads");
-        let settings = Settings {
-            download_behavior: "ask".into(),
-            ..Default::default()
-        };
-        assert_eq!(settings.sanitized().download_behavior, "ask");
+    fn settings_json_unknown_choices_fall_back_to_defaults() {
+        let s: Settings = serde_json::from_str(
+            r#"{"theme": "sepia", "badge_mode": 3, "tray_icon_style": "theme-name",
+                "download_behavior": "desktop", "spellcheck": true}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                s.theme,
+                s.badge_mode,
+                s.tray_icon_style,
+                s.download_behavior
+            ),
+            (
+                ThemeChoice::System,
+                BadgeMode::Messages,
+                TrayIconStyle::Color,
+                DownloadBehavior::Downloads
+            )
+        );
+        assert!(s.spellcheck, "the rest of the file still loads");
     }
 
     #[test]
@@ -1208,7 +1255,7 @@ mod tests {
     #[test]
     fn settings_json_missing_tray_icon_style_defaults_to_color() {
         let settings: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(settings.tray_icon_style, "color");
+        assert_eq!(settings.tray_icon_style, TrayIconStyle::Color);
     }
 
     #[test]
@@ -1421,7 +1468,7 @@ mod tests {
     #[test]
     fn settings_json_missing_download_behavior_defaults_to_downloads() {
         let settings: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(settings.download_behavior, "downloads");
+        assert_eq!(settings.download_behavior, DownloadBehavior::Downloads);
     }
 
     /// A settings.json as v2.1.0 wrote it, with non-default values, plus keys
@@ -1447,14 +1494,14 @@ mod tests {
 
     fn assert_v2_1_0_values_kept(s: &Settings) {
         assert_eq!(
+            (s.tray_icon_style, s.badge_mode, s.theme),
             (
-                s.tray_icon_style.as_str(),
-                s.badge_mode.as_str(),
-                s.theme.as_str()
-            ),
-            ("symbolic", "conversations", "light")
+                TrayIconStyle::Symbolic,
+                BadgeMode::Conversations,
+                ThemeChoice::Light
+            )
         );
-        assert_eq!((s.download_behavior.as_str(), s.zoom), ("ask", 125));
+        assert_eq!((s.download_behavior, s.zoom), (DownloadBehavior::Ask, 125));
         assert_eq!(s.nickname_scope, Some(NicknameScope::Groups));
         assert!(s.tray_notice_shown && s.spellcheck && s.hide_menu_bar && s.mute_notifications);
         assert!(s.hide_notification_preview && s.attention_on_message && s.system_emoji);

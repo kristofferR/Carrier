@@ -20,8 +20,8 @@ use crate::download::{
 use crate::macos::theme::make_webview_transparent;
 use crate::render_recovery::RenderRecoveryBudget;
 use crate::settings::{
-    AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN, apply_page_zoom, load_settings,
-    save_settings,
+    AppState, DownloadBehavior, SaveOutcome, Settings, ThemeChoice, ZOOM_MAX, ZOOM_MIN,
+    apply_page_zoom, load_settings, save_settings,
 };
 use crate::url_rules::{Route, is_messenger_web_url, popup_route, route};
 use crate::webview_watchdog::WebviewWatchdog;
@@ -65,19 +65,19 @@ fn notify_download_finished(
 /// The window/chrome theme to apply for a given preference: an explicit
 /// light/dark, or `None` to follow the system.
 pub(crate) fn theme_for(s: &Settings) -> Option<tauri::Theme> {
-    match s.theme.as_str() {
-        "dark" => Some(tauri::Theme::Dark),
-        "light" => Some(tauri::Theme::Light),
-        _ => None,
+    match s.theme {
+        ThemeChoice::Dark => Some(tauri::Theme::Dark),
+        ThemeChoice::Light => Some(tauri::Theme::Light),
+        ThemeChoice::System => None,
     }
 }
 
 /// True when the window should render dark (forced dark, or system-dark).
 pub(crate) fn is_dark(s: &Settings) -> bool {
-    match s.theme.as_str() {
-        "dark" => true,
-        "light" => false,
-        _ => system_prefers_dark(),
+    match s.theme {
+        ThemeChoice::Dark => true,
+        ThemeChoice::Light => false,
+        ThemeChoice::System => system_prefers_dark(),
     }
 }
 
@@ -682,7 +682,7 @@ fn build_app_window_with_render_budget(
                         .lock()
                         .unwrap()
                         .download_behavior
-                        == "ask";
+                        == DownloadBehavior::Ask;
                     if asks {
                         // Ask mode accepts only downloads pre-authorized by the
                         // native picker. This also prevents a page-initiated
@@ -1847,51 +1847,51 @@ mod tests {
     // theme_for / is_dark / splash_background  (new in this PR)
     // -----------------------------------------------------------------------
 
-    fn with_theme(theme: &str) -> Settings {
+    fn with_theme(theme: ThemeChoice) -> Settings {
         Settings {
-            theme: theme.into(),
+            theme,
             ..Default::default()
         }
     }
 
     #[test]
     fn theme_for_dark_returns_dark() {
-        assert_eq!(theme_for(&with_theme("dark")), Some(tauri::Theme::Dark));
+        assert_eq!(
+            theme_for(&with_theme(ThemeChoice::Dark)),
+            Some(tauri::Theme::Dark)
+        );
     }
 
     #[test]
     fn theme_for_light_returns_light() {
-        assert_eq!(theme_for(&with_theme("light")), Some(tauri::Theme::Light));
+        assert_eq!(
+            theme_for(&with_theme(ThemeChoice::Light)),
+            Some(tauri::Theme::Light)
+        );
     }
 
     #[test]
     fn theme_for_system_returns_none() {
-        assert_eq!(theme_for(&with_theme("system")), None);
-    }
-
-    #[test]
-    fn theme_for_unknown_string_returns_none() {
-        assert_eq!(theme_for(&with_theme("auto")), None);
-        assert_eq!(theme_for(&with_theme("")), None);
+        assert_eq!(theme_for(&with_theme(ThemeChoice::System)), None);
     }
 
     // "system" calls system_prefers_dark() (OS-dependent), so only the
     // explicitly-forced cases are asserted here.
     #[test]
     fn is_dark_forced_dark() {
-        assert!(is_dark(&with_theme("dark")));
+        assert!(is_dark(&with_theme(ThemeChoice::Dark)));
     }
 
     #[test]
     fn is_dark_forced_light() {
-        assert!(!is_dark(&with_theme("light")));
+        assert!(!is_dark(&with_theme(ThemeChoice::Light)));
     }
 
     #[test]
     fn splash_background_dark_is_facebook_dark_color() {
         // Facebook's dark background colour, as hard-coded in the function.
         assert_eq!(
-            splash_background(&with_theme("dark")),
+            splash_background(&with_theme(ThemeChoice::Dark)),
             Color(24, 25, 26, 255)
         );
     }
@@ -1899,7 +1899,7 @@ mod tests {
     #[test]
     fn splash_background_light_is_white() {
         assert_eq!(
-            splash_background(&with_theme("light")),
+            splash_background(&with_theme(ThemeChoice::Light)),
             Color(255, 255, 255, 255)
         );
     }

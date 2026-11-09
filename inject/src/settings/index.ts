@@ -538,11 +538,11 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text 
   return node;
 }
 
-function segmented(
+function segmented<Value extends string>(
   label: string,
-  options: readonly (readonly [string, string])[],
-  current: string,
-  onPick: (value: string) => unknown,
+  options: readonly (readonly [Value, string])[],
+  current: Value,
+  onPick: (value: Value) => unknown,
 ) {
   const seg = el("div", "seg");
   seg.setAttribute("role", "radiogroup");
@@ -706,8 +706,8 @@ function themeSection() {
         ["light", t("settings.appearance.theme.mode.light")],
         ["dark", t("settings.appearance.theme.mode.dark")],
       ],
-      settings.theme || "system",
-      (value) => persist({ key: "theme", value: value }),
+      settings.theme,
+      (value) => persist({ key: "theme", value }),
     ),
   );
   if (!themes) {
