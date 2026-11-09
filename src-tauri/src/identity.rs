@@ -29,29 +29,31 @@ pub(crate) fn migrate() {
     let folders = folders();
     // Only when something will move: a Carrier still used beside an already
     // moved Chatpane keeps running.
-    if !folders
+    if folders
         .iter()
         .any(|(old, new)| old.symlink_metadata().is_ok() && new.symlink_metadata().is_err())
     {
-        return;
-    }
-    stop_previous_app();
-    let mut report = REPORT.lock().unwrap();
-    match move_all(&folders) {
-        Ok(moved) => {
-            MOVED.store(!moved.is_empty(), Ordering::Relaxed);
-            report.extend(moved.into_iter().map(Ok));
-            for (_, new) in &folders {
-                rename_logs(new);
+        stop_previous_app();
+        let mut report = REPORT.lock().unwrap();
+        match move_all(&folders) {
+            Ok(moved) => {
+                MOVED.store(!moved.is_empty(), Ordering::Relaxed);
+                report.extend(moved.into_iter().map(Ok));
             }
-            #[cfg(target_os = "macos")]
-            move_preferences();
-        }
-        Err(failure) => {
-            ON_PREVIOUS.store(true, Ordering::Relaxed);
-            report.push(Err(format!("{failure}; using Carrier's folders this time")));
+            Err(failure) => {
+                ON_PREVIOUS.store(true, Ordering::Relaxed);
+                report.push(Err(format!("{failure}; using Carrier's folders this time")));
+                return;
+            }
         }
     }
+    // Also when an earlier launch moved the folders: 3.1.0 moved them without
+    // these.
+    for (_, new) in &folders {
+        rename_logs(new);
+    }
+    #[cfg(target_os = "macos")]
+    move_preferences();
 }
 
 /// Carrier's log files are named after it, so log rotation, which only
