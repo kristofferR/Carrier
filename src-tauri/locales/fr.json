@@ -742,7 +742,9 @@
   "page.schedule.button_saved#many": "Programmer l'envoi · {count} enregistrés",
   "page.schedule.button_saved#other": "Programmer l'envoi · {count} enregistrés",
   "page.schedule.close": "Fermer la programmation",
+  "page.schedule.back": "Retour",
   "page.schedule.schedule_message": "Programmer le message",
+  "page.schedule.schedule_for": "Programmer pour {time}",
   "page.schedule.reschedule_message": "Reprogrammer le message",
   "page.schedule.uncertain_note": "Vérifie la conversation avant de reprogrammer. Messenger a peut-être déjà accepté ce message.",
   "page.schedule.preset.in_15_minutes": "Dans 15 minutes",
@@ -753,7 +755,6 @@
   "page.schedule.date": "Date",
   "page.schedule.time_24h": "Heure (24 h)",
   "page.schedule.write_text": "Écris un message texte pour le programmer.",
-  "page.schedule.time_zone": "{zone} · format 24 heures",
   "page.schedule.sends_while_running": "Envoi automatique tant que {app} est ouvert et en ligne.",
   "page.schedule.scheduled_messages": "Messages programmés",
   "page.schedule.status.not_sent": "Non envoyé · {time}",
@@ -783,6 +784,6 @@
   "page.schedule.not_saved": "Le message n'a pas été enregistré.",
   "page.schedule.draft_changed": "Ton brouillon a changé. Le message n'a pas été programmé.",
   "page.schedule.clear_unconfirmed": "L'effacement du brouillon n'a pas pu être confirmé. Ton message est enregistré, mais pas programmé.",
-  "page.schedule.scheduled": "Message programmé pour le {time}. Il sera envoyé automatiquement.",
+  "page.schedule.scheduled": "Message programmé pour {time}. Il sera envoyé automatiquement.",
   "page.schedule.invalid_time": "Choisis une heure locale valide au format HH:mm."
 }

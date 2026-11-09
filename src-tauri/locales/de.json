@@ -737,7 +737,9 @@
   "page.schedule.button_saved#one": "Senden planen · {count} gespeichert",
   "page.schedule.button_saved#other": "Senden planen · {count} gespeichert",
   "page.schedule.close": "Planung schließen",
+  "page.schedule.back": "Zurück",
   "page.schedule.schedule_message": "Nachricht planen",
+  "page.schedule.schedule_for": "Planen für {time}",
   "page.schedule.reschedule_message": "Nachricht neu planen",
   "page.schedule.uncertain_note": "Prüfe die Unterhaltung, bevor du neu planst. Messenger hat diese Nachricht möglicherweise schon angenommen.",
   "page.schedule.preset.in_15_minutes": "In 15 Minuten",
@@ -748,7 +750,6 @@
   "page.schedule.date": "Datum",
   "page.schedule.time_24h": "Uhrzeit (24 Std.)",
   "page.schedule.write_text": "Schreibe eine Textnachricht, um sie zu planen.",
-  "page.schedule.time_zone": "{zone} · 24-Stunden-Format",
   "page.schedule.sends_while_running": "Wird automatisch gesendet, solange {app} läuft und online ist.",
   "page.schedule.scheduled_messages": "Geplante Nachrichten",
   "page.schedule.status.not_sent": "Nicht gesendet · {time}",
@@ -778,6 +779,6 @@
   "page.schedule.not_saved": "Die Nachricht wurde nicht gespeichert.",
   "page.schedule.draft_changed": "Dein Entwurf hat sich geändert. Die Nachricht wurde nicht geplant.",
   "page.schedule.clear_unconfirmed": "Das Leeren des Entwurfs konnte nicht bestätigt werden. Deine Nachricht ist gespeichert, aber nicht geplant.",
-  "page.schedule.scheduled": "Nachricht für den {time} geplant. Sie wird automatisch gesendet.",
+  "page.schedule.scheduled": "Nachricht geplant für {time}. Sie wird automatisch gesendet.",
   "page.schedule.invalid_time": "Wähle eine gültige Ortszeit im Format HH:mm."
 }

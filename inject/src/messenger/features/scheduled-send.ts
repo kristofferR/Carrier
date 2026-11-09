@@ -1,4 +1,4 @@
-import { language, t, tn } from "../../i18n";
+import { formatLocale, language, t, tn } from "../../i18n";
 import { diag, toast } from "../bridge";
 import {
   composerControls,
@@ -21,6 +21,7 @@ import {
   SEND_GRACE_MS,
   schedulePresets,
   sendWindow,
+  timeZoneLabel,
   withComposerDelivery,
 } from "../lib/scheduled-send";
 import { accountScopedStorageKey, threadIdFromHref } from "../lib/threads";
@@ -194,6 +195,44 @@ const action = (label: string, run: () => void, className = "chatpane-schedule-a
   return button;
 };
 
+/** Stroke icons on a 24px grid; CSS draws them in the text color. */
+const ICONS = {
+  soon: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2.5 2M10 3h4M12 3v3"/>',
+  hour: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  evening: '<path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z"/>',
+  morning: '<path d="M3 18h18M7 18a5 5 0 0 1 10 0M12 6v3M5.6 11.6l1.8 1.8M18.4 11.6l-1.8 1.8"/>',
+  calendar:
+    '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+  list: '<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>',
+  next: '<path d="m9 6 6 6-6 6"/>',
+  back: '<path d="m15 6-6 6 6 6"/>',
+  close: '<path d="M7 7l10 10M17 7 7 17"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  zone: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  warning: '<path d="M12 4 2.5 20h19Z"/><path d="M12 10v4M12 17h.01"/>',
+};
+type IconName = keyof typeof ICONS;
+const icon = (name: IconName, className = "") => {
+  const wrapper = element("span", `chatpane-schedule-icon ${className}`.trim());
+  wrapper.setAttribute("aria-hidden", "true");
+  wrapper.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[name]}</svg>`;
+  return wrapper;
+};
+const note = (name: IconName, text: string) => {
+  const paragraph = element("p", "chatpane-schedule-note");
+  paragraph.append(icon(name), element("span", "", text));
+  return paragraph;
+};
+/** A full-width menu row: icon, label, then any trailing parts. */
+const menuRow = (name: IconName, label: string, run: () => void, ...trailing: Node[]) => {
+  const row = action("", run, "chatpane-schedule-row");
+  row.append(icon(name), element("span", "chatpane-schedule-label", label), ...trailing);
+  return row;
+};
+
+/** The main menu, the custom date and time form, and the scheduled-message list. */
+type Page = "main" | "custom" | "list";
+
 export function initScheduledSend() {
   let rows: ScheduledMessage[] = [];
   let owner: string | null = null;
@@ -201,6 +240,8 @@ export function initScheduledSend() {
   let busy = false;
   let panel: HTMLDivElement | null = null;
   let panelThread: string | null = null;
+  let page: Page = "main";
+  /** The scheduled message the custom page reschedules, if any. */
   let editing: ScheduledMessage | null = null;
   let sourceBox: HTMLElement | null = null;
   let sourceText = "";
@@ -261,9 +302,10 @@ export function initScheduledSend() {
   };
   const syncColors = () => {
     if (!button || !emoji) return;
-    const icon = emoji.querySelector("svg path") || emoji.querySelector("svg");
-    const fill = icon ? getComputedStyle(icon).fill : "";
-    const accent = fill && fill !== "none" ? fill : getComputedStyle(emoji).color;
+    const glyph = emoji.querySelector("svg path") || emoji.querySelector("svg");
+    const fill = glyph ? getComputedStyle(glyph).fill : "";
+    // A gradient fill is a url(), which can't color text or a button.
+    const accent = fill && CSS.supports("color", fill) ? fill : getComputedStyle(emoji).color;
     button.style.color = accent;
     if (!panel) return;
     panel.style.setProperty("--schedule-accent", accent);
@@ -401,14 +443,107 @@ export function initScheduledSend() {
         }
       }
       close();
-      toast(t("page.schedule.scheduled", { time: formatScheduleTime(due, true) }));
+      toast(t("page.schedule.scheduled", { time: formatScheduleTime(due) }));
     } catch (error) {
       failed(error);
     } finally {
       busy = false;
     }
   };
-  const customPicker = (container: HTMLElement, due = Date.now() + 10 * 60_000) => {
+  const hasDraft = () => sourceText.trim() !== "";
+  /** Switch pages, then focus `returnTo`'s row (going back) or the page's first control. */
+  const show = (next: Page, item: ScheduledMessage | null = null, returnTo?: Page) => {
+    page = next;
+    editing = item;
+    render();
+    if (!panel) return;
+    const target =
+      (returnTo &&
+        panel.querySelector<HTMLElement>(`[data-chatpane-schedule-page="${returnTo}"]`)) ||
+      panel.querySelector<HTMLElement>("[data-autofocus]") ||
+      panel.querySelector<HTMLElement>("button");
+    target?.focus();
+  };
+  /** One level up: rescheduling returns to the list, other pages to the main menu. */
+  const back = () => {
+    if (editing) show("list");
+    else if (page !== "main" && hasDraft()) show("main", null, page);
+    else return false;
+    return true;
+  };
+  const heading = (title: string, canGoBack: boolean) => {
+    const row = element("div", "chatpane-schedule-heading");
+    if (canGoBack) {
+      const backButton = action("", back, "chatpane-schedule-icon-button chatpane-schedule-back");
+      backButton.setAttribute("aria-label", t("page.schedule.back"));
+      backButton.append(icon("back"));
+      row.append(backButton);
+    }
+    const closeButton = action(
+      "",
+      () => close(true),
+      "chatpane-schedule-icon-button chatpane-schedule-close",
+    );
+    closeButton.setAttribute("aria-label", t("page.schedule.close"));
+    closeButton.append(icon("close"));
+    row.append(element("h2", "", title), closeButton);
+    return row;
+  };
+  const pageRow = (name: IconName, label: string, target: Page, count = 0) => {
+    const row = menuRow(
+      name,
+      label,
+      () => show(target),
+      ...(count
+        ? [element("span", "chatpane-schedule-count", count.toLocaleString(formatLocale()))]
+        : []),
+      icon("next", "chatpane-schedule-chevron"),
+    );
+    row.dataset.chatpaneSchedulePage = target;
+    return row;
+  };
+  const mainPage = (container: HTMLElement) => {
+    container.append(heading(t("page.schedule.schedule_send"), false));
+    const now = Date.now();
+    for (const preset of schedulePresets(now)) {
+      const choice = menuRow(
+        preset.id,
+        preset.label,
+        () => {
+          // The menu may have stayed open; count from the click, not from rendering.
+          const current = schedulePresets(Date.now()).find((p) => p.id === preset.id);
+          if (current) void save(current.due);
+        },
+        element("span", "chatpane-schedule-time", formatScheduleTime(preset.due, now)),
+      );
+      choice.classList.add("chatpane-schedule-preset");
+      container.append(choice);
+    }
+    container.querySelector(".chatpane-schedule-preset")?.setAttribute("data-autofocus", "");
+    container.append(
+      element("div", "chatpane-schedule-separator"),
+      pageRow("calendar", t("page.schedule.choose_date_time"), "custom"),
+    );
+    if (rows.length)
+      container.append(pageRow("list", t("page.schedule.scheduled_messages"), "list", rows.length));
+    container.append(note("info", t("page.schedule.sends_while_running")));
+  };
+  const customPage = (container: HTMLElement) => {
+    const item = editing;
+    container.append(
+      heading(
+        item ? t("page.schedule.reschedule_message") : t("page.schedule.choose_date_time"),
+        true,
+      ),
+    );
+    if (item) {
+      container.append(element("p", "chatpane-schedule-preview", item.text));
+      if (item.status === "uncertain")
+        container.append(
+          element("p", "chatpane-schedule-warning", t("page.schedule.uncertain_note")),
+        );
+    }
+    const due = item ? Math.max(item.due, Date.now() + 15 * 60_000) : Date.now() + 10 * 60_000;
     const fields = element("div", "chatpane-schedule-fields");
     const dateLabel = element("label", "", t("page.schedule.date"));
     const date = element("input", "");
@@ -416,6 +551,7 @@ export function initScheduledSend() {
     date.value = localDateValue(due);
     date.min = localDateValue(Date.now());
     date.required = true;
+    date.dataset.autofocus = "";
     const timeLabel = element("label", "", t("page.schedule.time_24h"));
     const time = element("input", "");
     time.type = "text";
@@ -429,7 +565,7 @@ export function initScheduledSend() {
     timeLabel.append(time);
     fields.append(dateLabel, timeLabel);
     const confirm = action(
-      editing ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_message"),
+      "",
       () => {
         if (!date.reportValidity() || !time.reportValidity()) return;
         const value = localScheduleTime(date.value, time.value);
@@ -441,127 +577,99 @@ export function initScheduledSend() {
       },
       "chatpane-schedule-primary",
     );
-    container.append(fields, confirm);
+    // Name the exact send time once the fields hold a future one.
+    const label = () => {
+      const value = localScheduleTime(date.value, time.value);
+      confirm.textContent =
+        value !== null && value > Date.now()
+          ? t("page.schedule.schedule_for", { time: formatScheduleTime(value) })
+          : item
+            ? t("page.schedule.reschedule_message")
+            : t("page.schedule.schedule_message");
+    };
+    // Some WebKit date pickers report a pick only as "change".
+    for (const field of [date, time])
+      for (const type of ["input", "change"]) field.addEventListener(type, label);
+    label();
+    container.append(fields, note("zone", timeZoneLabel()), confirm);
+  };
+  const listPage = (container: HTMLElement) => {
+    container.append(heading(t("page.schedule.scheduled_messages"), hasDraft()));
+    for (const row of [...rows].sort((a, b) => a.due - b.due)) {
+      const item = element("div", "chatpane-schedule-item");
+      const time = formatScheduleTime(row.due);
+      const problem =
+        row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain";
+      const status = problem
+        ? row.status === "uncertain"
+          ? t("page.schedule.status.unconfirmed", { time })
+          : t("page.schedule.status.not_sent", { time })
+        : row.status === "sending"
+          ? t("page.schedule.status.submitting", { time })
+          : row.status === "draft"
+            ? t("page.schedule.status.not_scheduled", { time })
+            : t("page.schedule.status.scheduled", { time });
+      const meta = element("div", "chatpane-schedule-meta");
+      if (problem) meta.append(icon("warning", "chatpane-schedule-warning"));
+      meta.append(element("strong", problem ? "chatpane-schedule-warning" : "", status));
+      item.append(
+        meta,
+        element(
+          "span",
+          "chatpane-schedule-conversation",
+          row.thread === thread()
+            ? t("page.schedule.this_conversation")
+            : t("page.schedule.another_conversation"),
+        ),
+        element("p", "chatpane-schedule-preview", row.text),
+      );
+      const actions = element("div", "chatpane-schedule-item-actions");
+      if (row.status !== "sending")
+        actions.append(
+          action(
+            row.status === "scheduled"
+              ? t("page.schedule.edit_time")
+              : t("page.schedule.reschedule"),
+            () => show("custom", row),
+          ),
+        );
+      actions.append(
+        action(t("page.schedule.copy_text"), () => {
+          void navigator.clipboard
+            .writeText(row.text)
+            .then(() => toast(t("page.schedule.copied")))
+            .catch(() => toast(t("page.schedule.copy_failed")));
+        }),
+      );
+      if (row.status !== "sending")
+        actions.append(
+          action(t("page.schedule.cancel"), () => {
+            void request({ op: "cancel", id: row.id })
+              .then(() => {
+                if (page === "list") show("list");
+              })
+              .catch(failed);
+          }),
+        );
+      item.append(actions);
+      container.append(item);
+    }
+    if (!hasDraft()) container.append(note("info", t("page.schedule.write_text")));
   };
   const render = () => {
     if (!panel) return;
-    panel.replaceChildren();
-    const heading = element("div", "chatpane-schedule-heading");
-    const closeButton = action("", () => close(true), "chatpane-schedule-close");
-    closeButton.setAttribute("aria-label", t("page.schedule.close"));
-    closeButton.innerHTML =
-      '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
-    heading.append(
-      element(
-        "h2",
-        "",
-        editing ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_send"),
-      ),
-      closeButton,
-    );
-    panel.append(heading);
-    if (editing) {
-      panel.append(element("p", "chatpane-schedule-preview", editing.text));
-      if (editing.status === "uncertain")
-        panel.append(element("p", "chatpane-schedule-warning", t("page.schedule.uncertain_note")));
-      customPicker(panel, Math.max(editing.due, Date.now() + 15 * 60_000));
-    } else if (sourceText.trim()) {
-      for (const preset of schedulePresets(Date.now())) {
-        const choice = action(
-          "",
-          () => {
-            const updated = schedulePresets(Date.now()).find((p) => p.label === preset.label);
-            if (updated) void save(updated.due);
-          },
-          "chatpane-schedule-preset",
-        );
-        choice.append(
-          element("span", "", preset.label),
-          element("span", "chatpane-schedule-time", formatScheduleTime(preset.due)),
-        );
-        panel.append(choice);
+    // An emptied list falls back to the menu, or closes when there is no draft to schedule.
+    if (page === "list" && !rows.length) {
+      if (!hasDraft()) {
+        close(true);
+        return;
       }
-      const details = element("details", "chatpane-schedule-custom");
-      details.append(element("summary", "", t("page.schedule.choose_date_time")));
-      customPicker(details);
-      details.addEventListener("toggle", positionPanel);
-      panel.append(details);
-    } else panel.append(element("p", "chatpane-schedule-note", t("page.schedule.write_text")));
-    panel.append(
-      element(
-        "p",
-        "chatpane-schedule-note",
-        t("page.schedule.time_zone", { zone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-      ),
-      element(
-        "p",
-        "chatpane-schedule-note chatpane-schedule-divider",
-        t("page.schedule.sends_while_running"),
-      ),
-    );
-    if (rows.length && !editing) {
-      panel.append(
-        element("h3", "chatpane-schedule-divider", t("page.schedule.scheduled_messages")),
-      );
-      for (const row of [...rows].sort((a, b) => a.due - b.due)) {
-        const item = element("div", "chatpane-schedule-item");
-        const time = formatScheduleTime(row.due, true);
-        const status =
-          row.status === "missed" || row.status === "missed_draft"
-            ? t("page.schedule.status.not_sent", { time })
-            : row.status === "uncertain"
-              ? t("page.schedule.status.unconfirmed", { time })
-              : row.status === "sending"
-                ? t("page.schedule.status.submitting", { time })
-                : row.status === "draft"
-                  ? t("page.schedule.status.not_scheduled", { time })
-                  : t("page.schedule.status.scheduled", { time });
-        item.append(
-          element(
-            "strong",
-            row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain"
-              ? "chatpane-schedule-warning"
-              : "",
-            status,
-          ),
-          element(
-            "small",
-            "chatpane-schedule-note",
-            row.thread === thread()
-              ? t("page.schedule.this_conversation")
-              : t("page.schedule.another_conversation"),
-          ),
-          element("p", "chatpane-schedule-preview", row.text),
-        );
-        const actions = element("div", "chatpane-schedule-item-actions");
-        if (row.status !== "sending") {
-          actions.append(
-            action(
-              row.status === "scheduled"
-                ? t("page.schedule.edit_time")
-                : t("page.schedule.reschedule"),
-              () => {
-                editing = row;
-                render();
-              },
-            ),
-            action(t("page.schedule.cancel"), () => {
-              void request({ op: "cancel", id: row.id }).then(render).catch(failed);
-            }),
-          );
-        }
-        actions.append(
-          action(t("page.schedule.copy_text"), () => {
-            void navigator.clipboard
-              .writeText(row.text)
-              .then(() => toast(t("page.schedule.copied")))
-              .catch(() => toast(t("page.schedule.copy_failed")));
-          }),
-        );
-        item.append(actions);
-        panel.append(item);
-      }
+      page = "main";
     }
+    panel.replaceChildren();
+    if (page === "custom") customPage(panel);
+    else if (page === "list") listPage(panel);
+    else mainPage(panel);
     syncColors();
     positionPanel();
   };
@@ -593,8 +701,8 @@ export function initScheduledSend() {
     Object.assign(panel, language());
     document.body.append(panel);
     button?.setAttribute("aria-expanded", "true");
-    render();
-    panel.querySelector<HTMLButtonElement>("button")?.focus();
+    // With nothing to schedule, the clock only leads to the saved messages.
+    show(hasDraft() ? "main" : "list");
   };
   function ensureButton() {
     const box = cachedBox?.isConnected && isShown(cachedBox) ? cachedBox : findComposer();
@@ -751,7 +859,7 @@ export function initScheduledSend() {
       (event) => {
         if (event.key === "Escape" && panel) {
           event.stopPropagation();
-          close(true);
+          if (!back()) close(true);
         }
       },
       true,

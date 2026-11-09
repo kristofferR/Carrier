@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { formatLocale } from "../../i18n";
 import {
   formatScheduleTime,
   isComposerDeliveryActive,
@@ -40,6 +41,21 @@ describe("scheduled sending", () => {
       expect(localScheduleTime("2026-09-24", invalid)).toBeNull();
     expect(localScheduleTime("2026-02-30", "09:00")).toBeNull();
     expect(formatScheduleTime(time!)).toContain("23:45");
+  });
+  test("shows only as much date as a send time needs", () => {
+    const at = (day: number, hour = 9) => new Date(2026, 8, day, hour, 0).getTime();
+    const now = at(23, 18);
+    const name = (time: number, options: Intl.DateTimeFormatOptions) =>
+      new Intl.DateTimeFormat(formatLocale(), options).format(time);
+    expect(formatScheduleTime(at(23, 23), now)).toBe("23:00");
+    // Tomorrow through six days out name the weekday; a week out names the date.
+    for (const day of [24, 29])
+      expect(formatScheduleTime(at(day), now)).toContain(name(at(day), { weekday: "short" }));
+    for (const day of [30, 22]) {
+      const text = formatScheduleTime(at(day), now);
+      expect(text).toContain(name(at(day), { month: "short" }));
+      expect(text).not.toContain(name(at(day), { weekday: "short" }));
+    }
   });
   test("presets are future times and omit an evening that already passed", () => {
     const now = new Date(2026, 8, 23, 19, 0).getTime();
