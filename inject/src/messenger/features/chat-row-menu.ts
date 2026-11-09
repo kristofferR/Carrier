@@ -16,9 +16,11 @@ const ROW_MENU_BUTTON = '[aria-haspopup="menu"][aria-label^="More options for "]
 const rowMenuButton = (link: Element) =>
   link.closest('[role="row"]')?.querySelector<HTMLElement>(ROW_MENU_BUTTON) ?? null;
 
-/** The conversation link of a chat-list row with a menu, or null. */
+/** The conversation link of a chat-list row with a menu, or of a pinned chat
+ * Messenger hasn't loaded yet (it has only Chatpane's rows), or null. */
 export function chatRowFor(anchor: HTMLAnchorElement): HTMLAnchorElement | null {
-  return anchor.getAttribute("href")?.includes("/t/") && rowMenuButton(anchor) ? anchor : null;
+  if (!anchor.getAttribute("href")?.includes("/t/")) return null;
+  return rowMenuButton(anchor) || anchor.hasAttribute("data-chatpane-pinned-chat") ? anchor : null;
 }
 
 const menuRows = (menu: Element) => [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];

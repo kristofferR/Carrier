@@ -920,3 +920,36 @@ html[data-chatpane-message-menu-probe] [role="menu"] {
   opacity: 0 !important;
   pointer-events: none !important;
 }
+
+/* ----------------------------- Pinned chats ----------------------------- */
+/* pinned-chats-section.ts draws the Pinned section above the chat list (#457):
+   Messenger's own rows, or a plain row for a pinned chat Messenger hasn't
+   loaded yet. It disappears when none of its chats can be shown. */
+.chatpane-pinned-chats {
+  container-type: inline-size;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--divider, rgba(127, 127, 127, 0.3));
+}
+.chatpane-pinned-chats:not(:has([data-chatpane-pinned-row])) { display: none; }
+.chatpane-pinned-chats-title {
+  padding: 8px 16px 4px;
+  color: var(--secondary-text, #65676b);
+  font-size: 13px; line-height: 16px; font-weight: 600;
+}
+.chatpane-pinned-fallback a {
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 8px; padding: 8px; border-radius: 8px;
+  color: var(--primary-text, #050505); text-decoration: none;
+  font-size: 15px; line-height: 20px; font-weight: 500;
+}
+.chatpane-pinned-fallback a:hover { background: var(--hover-overlay, rgba(0, 0, 0, 0.05)); }
+.chatpane-pinned-fallback svg { flex: none; width: 56px; height: 56px; }
+.chatpane-pinned-fallback circle { fill: var(--secondary-button-background, rgba(127, 127, 127, 0.2)); }
+.chatpane-pinned-fallback text { fill: var(--primary-text, #050505); font-size: 16px; font-weight: 600; }
+.chatpane-pinned-fallback span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A narrow chat list shows only pictures. */
+@container (max-width: 120px) {
+  .chatpane-pinned-chats-title,
+  .chatpane-pinned-fallback span { display: none; }
+}

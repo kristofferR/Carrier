@@ -248,7 +248,7 @@ export async function readOldNews(
 type Factory = (...args: unknown[]) => unknown;
 
 /** Keep Haste's arity-based invocation ABI intact for a wrapped factory. */
-function sameArity(wrapped: Factory, original: Factory): Factory {
+export function sameArity(wrapped: Factory, original: Factory): Factory {
   try {
     Object.defineProperty(wrapped, "length", { value: original.length });
   } catch {}

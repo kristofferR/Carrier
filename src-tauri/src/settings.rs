@@ -850,6 +850,7 @@ fn account_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
     }
     if let Ok(config) = app.path().app_config_dir() {
         paths.extend(crate::scheduled_send::account_files(&config));
+        paths.extend(crate::pinned_chats::account_files(&config));
     }
     paths
 }

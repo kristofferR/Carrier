@@ -5,6 +5,7 @@
 // roles and aria-labels. Every lookup bails quietly when the control is
 // missing — Facebook reshuffles its markup often, and none of these exist on
 // the login page.
+import { SEPARATOR_RE } from "../lib/threads";
 
 export function isShown(el: Element): boolean {
   const r = el.getBoundingClientRect();
@@ -29,6 +30,18 @@ export function buttonByLabel(needles: string[], root?: ParentNode): HTMLElement
     if (needles.some((n) => label.includes(n))) return el;
   }
   return null;
+}
+
+/** A chat-list row's display name, from its link or anything around it.
+ * Facebook's class names are hashed and unstable, so take the row's first
+ * span with real text: the name renders before the preview and timestamp. */
+export function chatRowName(el: Element): string {
+  const row = el.closest('[role="row"]') || el;
+  for (const span of row.querySelectorAll("span")) {
+    const text = (span.textContent || "").replace(/\s+/g, " ").trim();
+    if (text && !SEPARATOR_RE.test(text)) return text.slice(0, 60);
+  }
+  return "";
 }
 
 // Visible conversation links in the left chat list, in list order.

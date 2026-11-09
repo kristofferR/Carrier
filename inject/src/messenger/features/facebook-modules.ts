@@ -8,6 +8,7 @@ import { nicknameMode } from "../lib/nicknames";
 import { isFacebookRateLimitError } from "../lib/rate-limit";
 import { installMessengerSoundPlayback, interceptSoundModules } from "./messenger-sounds";
 import { interceptNotificationModules } from "./page-notifications";
+import { interceptPinnedChatModules } from "./pinned-chats";
 import { reportRateLimit } from "./rate-limit";
 import { syncProcessing } from "./sync-processing";
 import { workerRecovery, workerReplacement } from "./worker-recovery";
@@ -69,8 +70,8 @@ export function initFacebookModuleInterception() {
   const wrap = (value: unknown): unknown => {
     if (typeof value !== "function" || wrappedDefines.has(value)) return value;
     const wrapped = createFacebookModuleDefineInterceptor(
-      interceptNotificationModules(
-        interceptSoundModules(value as FacebookModuleDefine),
+      interceptPinnedChatModules(
+        interceptNotificationModules(interceptSoundModules(value as FacebookModuleDefine)),
       ) as FacebookModuleDefine,
       shouldBlockTelemetry,
       (restore) => searchIndex.register(restore),
