@@ -84,10 +84,7 @@ pub(crate) fn explain_missing_runtime() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         IDOK, MB_ICONWARNING, MB_OKCANCEL, MessageBoxW,
     };
-    let text = wide(
-        "Chatpane needs the Microsoft Edge WebView2 Runtime, which is not installed on this computer.\n\n\
-         Choose OK to open Microsoft's download page. Install the Evergreen runtime, then start Chatpane again.",
-    );
+    let text = wide(crate::i18n::t("dialog.webview2_missing.message"));
     let title = wide("Chatpane");
     // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call; a
     // null owner window is allowed.

@@ -12,6 +12,42 @@
        message shown in the permission prompt macOS raises on the first save. -->
   <key>NSDownloadsFolderUsageDescription</key>
   <string>Chatpane saves photos, videos, and files you download from Messenger to your Downloads folder.</string>
+  <!-- Chatpane's text is localized in src-tauri/locales (zh-Hans is zh-CN).
+       Listing the languages lets macOS's own UI, such as file panels and
+       the context menus WebKit adds, follow the user's language too. -->
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>ar</string>
+    <string>bn</string>
+    <string>cs</string>
+    <string>da</string>
+    <string>de</string>
+    <string>el</string>
+    <string>es</string>
+    <string>fil</string>
+    <string>fr</string>
+    <string>hi</string>
+    <string>hu</string>
+    <string>id</string>
+    <string>it</string>
+    <string>km</string>
+    <string>lo</string>
+    <string>my</string>
+    <string>nb</string>
+    <string>ne</string>
+    <string>pl</string>
+    <string>pt-BR</string>
+    <string>ro</string>
+    <string>si</string>
+    <string>sv</string>
+    <string>th</string>
+    <string>tr</string>
+    <string>uk</string>
+    <string>ur</string>
+    <string>vi</string>
+    <string>zh-Hans</string>
+  </array>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsArbitraryLoads</key>

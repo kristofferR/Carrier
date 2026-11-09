@@ -5,6 +5,7 @@
 // the file, and asks where to save it. The page never renders the file: Facebook's scripts share this
 // page and must not be able to put markup or script into it. Nothing is
 // uploaded anywhere.
+import { t, tn } from "../../i18n";
 import { diag, toast } from "../bridge";
 import { type ExportFormat, readConversationExport } from "../lib/conversation-export";
 import { downloadRevealLabel } from "../lib/downloads";
@@ -19,7 +20,7 @@ function randomHex() {
 }
 
 async function exportConversation(threadId: string, format: ExportFormat) {
-  toast("Preparing export…");
+  toast(t("page.export.preparing"));
   const conversation = await readConversationExport(
     threadId,
     (window as unknown as { require?: unknown }).require,
@@ -30,11 +31,11 @@ async function exportConversation(threadId: string, format: ExportFormat) {
   );
   if (!conversation) {
     diag("export.read", "conversation database unavailable");
-    toast("Couldn't read this conversation", undefined, { warning: true });
+    toast(t("page.export.read_failed"), undefined, { warning: true });
     return;
   }
   if (new TextEncoder().encode(JSON.stringify(conversation)).length > EXPORT_MAX_BYTES) {
-    toast("This conversation is too large to export", undefined, { warning: true });
+    toast(t("page.export.too_large"), undefined, { warning: true });
     return;
   }
   const reveal = `chatpane-export:${randomHex()}`;
@@ -42,15 +43,14 @@ async function exportConversation(threadId: string, format: ExportFormat) {
     await chatpaneExportConversation({ format, conversation, reveal });
   } catch (error) {
     if (error instanceof Error && error.message === "export cancelled") {
-      toast("Export cancelled");
+      toast(t("page.export.cancelled"));
       return;
     }
     diag("export.save", error instanceof Error ? error.message : "save failed");
-    toast("Couldn't save the export", undefined, { warning: true });
+    toast(t("page.export.save_failed"), undefined, { warning: true });
     return;
   }
-  const count = conversation.messages.length;
-  toast(`Exported ${count.toLocaleString()} ${count === 1 ? "message" : "messages"}`, {
+  toast(tn("page.export.done", conversation.messages.length), {
     label: downloadRevealLabel(navigator.userAgent),
     kind: "reveal-download",
     url: reveal,
@@ -65,18 +65,18 @@ export function startConversationExport(
   threadId = threadIdFromHref(location.pathname),
 ) {
   if (!threadId) {
-    toast("Open a conversation to export it");
+    toast(t("page.export.no_conversation"));
     return;
   }
   if (busy) {
-    toast("An export is already in progress");
+    toast(t("page.export.in_progress"));
     return;
   }
   busy = true;
   exportConversation(threadId, format)
     .catch(() => {
       diag("export.run", "export failed");
-      toast("Couldn't export this conversation", undefined, { warning: true });
+      toast(t("page.export.failed"), undefined, { warning: true });
     })
     .finally(() => {
       busy = false;

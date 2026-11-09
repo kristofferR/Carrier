@@ -3,18 +3,25 @@ import {
   canActivateMediaPrivacy,
   captureFailure,
   captureFailureMessage,
-  mediaDeviceLabel,
   requestedMediaDevices,
 } from "./media-permissions";
 
 test.each([
-  [undefined, "media device"],
-  [{ audio: true }, "microphone"],
-  [{ video: {} }, "camera"],
-  [{ audio: {}, video: true }, "camera and microphone"],
-  [{ audio: false, video: false }, "media device"],
-] as const)("requested devices %j are labelled %s", (constraints, label) => {
-  expect(mediaDeviceLabel(requestedMediaDevices(constraints))).toBe(label);
+  [undefined, []],
+  [{ audio: true }, ["microphone"]],
+  [{ video: {} }, ["camera"]],
+  [{ audio: {}, video: true }, ["camera", "microphone"]],
+  [{ audio: false, video: false }, []],
+] as const)("constraints %j request %j", (constraints, devices) => {
+  expect(requestedMediaDevices(constraints)).toEqual([...devices]);
+});
+
+test.each([
+  [["microphone"], "Access was denied for the requested microphone."],
+  [["camera"], "Access was denied for the requested camera."],
+  [["camera", "microphone"], "Access was denied for the requested camera and microphone."],
+] as const)("%j is named in a whole sentence", (devices, message) => {
+  expect(captureFailureMessage("denied", devices)).toBe(message);
 });
 
 test.each([

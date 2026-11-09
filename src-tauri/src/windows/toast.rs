@@ -17,6 +17,7 @@
 //! derivation, keep-alive eviction) are unit-tested on any OS; the WinRT glue is
 //! `cfg(target_os = "windows")`.
 
+use crate::i18n::t;
 use crate::notifications::NotificationAction;
 #[cfg(target_os = "windows")]
 use std::collections::VecDeque;
@@ -118,23 +119,26 @@ pub(crate) fn build_toast_xml(spec: &ToastSpec) -> String {
     xml.push_str("</binding></visual>");
 
     if spec.reply_eligible && !spec.is_sync_alert {
-        xml.push_str(
-            "<actions><input id=\"reply\" type=\"text\" placeHolderContent=\"Message…\"/>",
-        );
         xml.push_str(&format!(
-            "<action content=\"Reply\" arguments=\"action=reply&amp;id={id}\" hint-inputId=\"reply\" activationType=\"background\"/>",
+            "<actions><input id=\"reply\" type=\"text\" placeHolderContent=\"{}\"/>",
+            escape_xml(t("notification.message_placeholder")),
+        ));
+        xml.push_str(&format!(
+            "<action content=\"{reply}\" arguments=\"action=reply&amp;id={id}\" hint-inputId=\"reply\" activationType=\"background\"/>",
+            reply = escape_xml(t("notification.action.reply")),
             id = spec.hex_id,
         ));
         for action in spec.quick_actions {
             xml.push_str(&format!(
                 "<action content=\"{}\" arguments=\"action={}&amp;id={}\" activationType=\"background\"/>",
-                action.title(),
+                escape_xml(action.title()),
                 action.id(),
                 spec.hex_id,
             ));
         }
         xml.push_str(&format!(
-            "<action content=\"Open\" arguments=\"action=open&amp;id={}\" activationType=\"foreground\"/>",
+            "<action content=\"{}\" arguments=\"action=open&amp;id={}\" activationType=\"foreground\"/>",
+            escape_xml(t("notification.action.open")),
             spec.hex_id,
         ));
         xml.push_str("</actions>");
@@ -311,7 +315,9 @@ pub(crate) fn try_deliver_notification_windows(
     app: &tauri::AppHandle,
     opts: WindowsToastOptions,
 ) -> Result<(), String> {
-    show_toast(app, &opts).map_err(|error| format!("Windows refused the notification: {error}"))
+    show_toast(app, &opts).map_err(|error| {
+        crate::i18n::tf("notification.blocked.windows_refused", &[("error", &error)])
+    })
 }
 
 /// Why Windows would not show Chatpane's toasts, from its notification
@@ -331,19 +337,11 @@ pub(crate) fn notification_blocker(app: &tauri::AppHandle) -> Option<String> {
 fn windows_blocker_message(setting: NotificationSetting) -> Option<String> {
     let message = match setting {
         NotificationSetting::Enabled => return None,
-        NotificationSetting::DisabledForApplication => {
-            "Notifications are turned off for Chatpane. Turn them on in Windows Settings → System → Notifications."
-        }
-        NotificationSetting::DisabledForUser => {
-            "Notifications are turned off for this Windows account. Turn them on in Windows Settings → System → Notifications."
-        }
-        NotificationSetting::DisabledByGroupPolicy => {
-            "Notifications are turned off by your organization's policy."
-        }
-        NotificationSetting::DisabledByManifest => {
-            "This Chatpane installation cannot show notifications. Reinstalling Chatpane should fix it."
-        }
-        _ => "Windows reports that notifications are turned off for Chatpane.",
+        NotificationSetting::DisabledForApplication => t("notification.blocked.windows_app"),
+        NotificationSetting::DisabledForUser => t("notification.blocked.windows_user"),
+        NotificationSetting::DisabledByGroupPolicy => t("notification.blocked.windows_policy"),
+        NotificationSetting::DisabledByManifest => t("notification.blocked.windows_manifest"),
+        _ => t("notification.blocked.windows_other"),
     };
     Some(message.into())
 }

@@ -7,6 +7,7 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 use serde::Serialize;
 
+use crate::i18n::t;
 use crate::{HOME_HOST, HOME_PORT};
 
 #[derive(Debug, Serialize)]
@@ -30,8 +31,8 @@ impl MessengerLoadStatus {
     pub(crate) fn loading() -> Self {
         Self::new(
             "loading",
-            "Loading Messenger",
-            "Messenger is reachable. Chatpane is opening it now.",
+            t("preflight.loading.title"),
+            t("preflight.loading.message"),
             None,
         )
     }
@@ -40,7 +41,7 @@ impl MessengerLoadStatus {
         Self::new(
             "error",
             title,
-            "Chatpane could not finish the Messenger reachability check.",
+            t("preflight.unexpected.message"),
             Some(detail),
         )
     }
@@ -78,8 +79,8 @@ impl From<MessengerPreflightError> for MessengerLoadStatus {
         match error {
             MessengerPreflightError::Blocked { host, ips } => Self::new(
                 "blocked",
-                "Messenger appears blocked",
-                "Chatpane cannot load Messenger because Facebook is resolving to a local blocking address. This commonly happens when a productivity blocker, DNS filter, or hosts-file rule is active.",
+                t("preflight.blocked.title"),
+                t("preflight.blocked.message"),
                 Some(format!("{host} -> {}", format_ips(&ips))),
             ),
             MessengerPreflightError::DnsFailed {
@@ -90,8 +91,8 @@ impl From<MessengerPreflightError> for MessengerLoadStatus {
                 error,
             } => Self::new(
                 "unreachable",
-                "Cannot resolve Messenger",
-                "Chatpane could not resolve Facebook's Messenger host. Check your internet connection, DNS settings, VPN, or firewall.",
+                t("preflight.unresolved.title"),
+                t("preflight.unresolved.message"),
                 Some(match resolver_status {
                     Some(status) => {
                         format!("{host}: {error} ({kind:?}, resolver status {status})")

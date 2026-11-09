@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 use crate::actions::{AppAction, run_app_action_with_activation_token, validated_thread_path};
+use crate::i18n::t;
 #[cfg(target_os = "macos")]
 use crate::macos::notifications::{
     MacNotificationOptions, clear_delivered_for_thread, deliver_notification_macos,
@@ -312,7 +313,11 @@ impl NotifyMsg {
 
     fn content(&self, hide_preview: bool) -> (String, String, String) {
         if hide_preview {
-            return ("Messenger".into(), String::new(), "New message".into());
+            return (
+                "Messenger".into(),
+                String::new(),
+                t("notification.hidden_preview").into(),
+            );
         }
         let title = if self.title.trim().is_empty() {
             "Messenger".into()
@@ -1436,7 +1441,7 @@ fn linux_notification_hints(
     if allow_inline_reply {
         hints.insert(
             "x-kde-reply-placeholder-text",
-            zbus::zvariant::Value::from("Reply…"),
+            zbus::zvariant::Value::from(t("notification.reply_placeholder")),
         );
     }
     hints
@@ -1517,9 +1522,9 @@ fn show_linux_notification<F>(
         notification.body(body);
     }
     notification.icon("carrier");
-    notification.action("default", "Open");
+    notification.action("default", t("notification.action.open"));
     if allow_inline_reply {
-        notification.action("inline-reply", "Reply");
+        notification.action("inline-reply", t("notification.action.reply"));
     }
     for action in quick_actions {
         notification.action(action.id(), action.title());
@@ -1971,15 +1976,6 @@ fn eval_hidden_page_action(
         .map_err(|error| format!("quick-reply eval dispatch failed: {error}"))?
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-const REPLY_FAILED: &str = "Reply not sent — opening the conversation";
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-const MUTE_FAILED: &str = "Couldn't mute. Opening the conversation.";
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-const REACT_FAILED: &str = "Couldn't react. Opening the conversation.";
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-const MARK_READ_FAILED: &str = "Couldn't mark as read. Opening the conversation.";
-
 #[cfg(target_os = "linux")]
 fn show_action_failure_notification(_app: &tauri::AppHandle, body: &str) {
     let mut notification = notify_rust::Notification::new();
@@ -2061,7 +2057,7 @@ fn open_reply_fallback(
     }) {
         log::warn!("failed to open quick-reply fallback: {error}");
     }
-    show_action_failure_notification(&app, REPLY_FAILED);
+    show_action_failure_notification(&app, t("notification.failed.reply"));
 }
 
 #[cfg(target_os = "linux")]
@@ -2116,7 +2112,7 @@ fn deliver_quick_reply(
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     let Some(thread_path) = thread_path else {
         log::warn!("quick reply had no validated notification route (id {id})");
-        show_action_failure_notification(&app, REPLY_FAILED);
+        show_action_failure_notification(&app, t("notification.failed.reply"));
         activate_notification(app, id, page_id, None, activation_token);
         return;
     };
@@ -2270,8 +2266,8 @@ impl NotificationAction {
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::React => notification_reaction().1,
-            Self::MarkRead => "Mark as Read",
-            Self::Mute => "Mute",
+            Self::MarkRead => t("notification.action.mark_read"),
+            Self::Mute => t("notification.action.mute"),
         }
     }
 
@@ -2298,9 +2294,12 @@ pub(crate) fn on_notification_action(
 ) {
     let deadline = Instant::now() + QUICK_REPLY_ACK_TIMEOUT;
     let (mode, failure) = match action {
-        NotificationAction::React => (PendingReplyMode::React, REACT_FAILED),
-        NotificationAction::MarkRead => (PendingReplyMode::MarkRead, MARK_READ_FAILED),
-        NotificationAction::Mute => (PendingReplyMode::Mute, MUTE_FAILED),
+        NotificationAction::React => (PendingReplyMode::React, t("notification.failed.react")),
+        NotificationAction::MarkRead => (
+            PendingReplyMode::MarkRead,
+            t("notification.failed.mark_read"),
+        ),
+        NotificationAction::Mute => (PendingReplyMode::Mute, t("notification.failed.mute")),
     };
     // What this notification announced: every action acts only under the
     // account it arrived for, and React only on the message it named.
@@ -2427,7 +2426,7 @@ fn open_rejected_reply_fallback(
         (Some(path), false) => open_reply_fallback(app, id, path, text, activation_token),
         (Some(path), true) => activate_notification(app, id, page_id, Some(path), activation_token),
         (None, _) => {
-            show_action_failure_notification(&app, REPLY_FAILED);
+            show_action_failure_notification(&app, t("notification.failed.reply"));
             activate_notification(app, id, page_id, None, activation_token);
         }
     }
@@ -2889,17 +2888,15 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
     let (show, body) = match kind {
         SyncAlertKind::Degraded => (
             gate.lock().unwrap().on_degraded(source, Instant::now()),
-            "Messenger is struggling to sync — chats may be out of date. \
-             This is usually a Facebook-side problem that recovers on its own.",
+            t("notification.sync.degraded"),
         ),
         SyncAlertKind::RateLimited => (
             gate.lock().unwrap().on_degraded(source, Instant::now()),
-            "Messenger is rate limiting this session. Chats may be out of date. \
-             Chatpane will retry automatically after the cooldown.",
+            t("notification.sync.rate_limited"),
         ),
         SyncAlertKind::Recovered => (
             gate.lock().unwrap().on_recovered(source),
-            "Messenger sync recovered.",
+            t("notification.sync.recovered"),
         ),
     };
     if !show {
@@ -3016,8 +3013,8 @@ pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
     deliver_app_notice(
         app,
         0,
-        "Scheduled message needs attention".into(),
-        "A scheduled message was missed or its send could not be confirmed. Chatpane will not retry it. Open Schedule send to review.".into(),
+        t("notification.scheduled.title").into(),
+        t("notification.scheduled.body").into(),
     );
 }
 
@@ -3043,15 +3040,9 @@ pub(crate) fn macos_blocker_message(status: isize, alert: isize) -> Option<Strin
     const NOT_DETERMINED: isize = 0;
     const ALERT_DISABLED: isize = 1;
     let message = match (status, alert) {
-        (DENIED, _) => {
-            "Notifications are turned off for Chatpane. Turn them on in System Settings → Notifications → Chatpane."
-        }
-        (NOT_DETERMINED, _) => {
-            "Chatpane has not been allowed to notify yet. Restart Chatpane and allow notifications when macOS asks."
-        }
-        (_, ALERT_DISABLED) => {
-            "Chatpane may notify, but its alerts are off. Choose Banners or Alerts in System Settings → Notifications → Chatpane."
-        }
+        (DENIED, _) => t("notification.blocked.macos_denied"),
+        (NOT_DETERMINED, _) => t("notification.blocked.macos_undecided"),
+        (_, ALERT_DISABLED) => t("notification.blocked.macos_alerts_off"),
         _ => return None,
     };
     Some(message.into())
@@ -3079,11 +3070,11 @@ pub(crate) fn send_test_notification(app: &tauri::AppHandle) -> Result<String, S
     deliver_plain_notice(
         app,
         next_native_notification_id(),
-        "Test notification".into(),
-        "Notifications from Chatpane are working.".into(),
+        t("notification.test.title").into(),
+        t("notification.test.body").into(),
         sound,
     )?;
-    Ok("Sent. If nothing appeared, check Focus or Do Not Disturb and your system's notification settings.".into())
+    Ok(t("notification.test.sent").into())
 }
 
 /// A plain notice through the native path for this platform. Errors are

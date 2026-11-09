@@ -5,6 +5,7 @@
 // hidden (see hidden-menu.ts) to read which rows it offers, and presses the
 // same row when one is chosen. Rows are matched by their English text.
 
+import { t } from "../../i18n";
 import { diag, toast } from "../bridge";
 import { type ChatRowAction, chatRowAction, chatRowActions } from "../lib/chat-row-menu";
 import { withHiddenMenu } from "./hidden-menu";
@@ -45,7 +46,7 @@ function currentMenuButton(href: string): HTMLElement | null {
 export async function runChatRowAction(href: string, action: ChatRowAction) {
   const button = currentMenuButton(href);
   if (!button) {
-    toast("That conversation is no longer in the list");
+    toast(t("page.context.conversation_gone"));
     return;
   }
   const picked = await withHiddenMenu(
@@ -59,5 +60,5 @@ export async function runChatRowAction(href: string, action: ChatRowAction) {
   );
   if (picked) return;
   diag("chat-row-menu.action", `${action} was not offered when chosen`);
-  toast("Messenger no longer offers that action");
+  toast(t("page.context.action_unavailable"));
 }

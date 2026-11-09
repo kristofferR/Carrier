@@ -4,6 +4,7 @@
  * Facebook's handler (CometLogoutHandler.react) posts a logout token from
  * CometLogoutHandlerQuery to /logout.php.
  */
+import { t } from "../../i18n";
 import { defaultExport, type Load, loadFacebookModules } from "./facebook-loader";
 import { accountId } from "./threads";
 
@@ -44,7 +45,7 @@ export async function logOutOfFacebook({ load, cookie, post }: LogOutDeps): Prom
     .fetchQuery(defaultExport(environment), query, {}, { fetchPolicy: "network-only" })
     .toPromise()) as LogoutQueryData | null;
   const hash = data?.viewer?.logout_hash;
-  if (typeof hash !== "string" || !hash) throw new Error("Facebook sent no logout token.");
+  if (typeof hash !== "string" || !hash) throw new Error(t("page.account.no_logout_token"));
 
   const body = new URLSearchParams({ h: hash, ref: "mb" });
   const token = (dtsg as { getToken?(): unknown }).getToken?.();
@@ -56,7 +57,7 @@ export async function logOutOfFacebook({ load, cookie, post }: LogOutDeps): Prom
   const url = typeof built === "string" && built.startsWith("/logout.php") ? built : "/logout.php";
   // The response redirects to the login page; the cookie check decides.
   await post(url, body).catch(() => {});
-  if (accountId(cookie())) throw new Error("Facebook didn't end the session.");
+  if (accountId(cookie())) throw new Error(t("page.account.session_not_ended"));
 
   // Facebook's own cleanup after logging out; best effort.
   try {

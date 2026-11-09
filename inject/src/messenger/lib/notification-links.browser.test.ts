@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
+// The English strings bun's test preload installed, for the page under test.
+const i18n = `<script>globalThis.__CHATPANE_I18N__ = ${JSON.stringify(globalThis.__CHATPANE_I18N__)}</script>`;
+
 const chromium =
   (Bun.env.CHROME_BIN && Bun.which(Bun.env.CHROME_BIN)) ||
   Bun.which("google-chrome") ||
@@ -50,7 +53,7 @@ test.skipIf(!chromium)(
       const file = join(directory, "index.html");
       await writeFile(
         file,
-        `<!doctype html><html><body>
+        `<!doctype html>${i18n}<html><body>
       <div role="article"><a href="https://youtu.be/_TP-ZzKbXJk">Outside the conversation</a></div>
       <div id="messages" role="log">
         <div role="article">

@@ -180,7 +180,7 @@ pub(super) fn show(
     notification.insert("icon", Value::from(("bytes", Value::from(icon))));
     if reply {
         let button = HashMap::<&str, Value<'_>>::from([
-            ("label", "Reply".into()),
+            ("label", crate::i18n::t("notification.action.reply").into()),
             ("action", "app.reply-notification".into()),
             ("target", identifier.as_str().into()),
         ]);

@@ -1,14 +1,14 @@
+import { language, t } from "../../i18n";
 import {
   canActivateMediaPrivacy,
   captureFailureMessage,
+  forDevices,
   type MediaDevice,
   type MediaPlatform,
-  mediaDeviceLabel,
   mediaPrivacyGuidance,
 } from "../lib/media-permissions";
 
 type Failure = Parameters<typeof captureFailureMessage>[0];
-const names = { camera: "Camera", microphone: "Microphone" };
 const icons = {
   camera: '<rect x="3" y="6" width="12" height="12" rx="3"/><path d="m15 10 6-3v10l-6-3"/>',
   microphone:
@@ -33,6 +33,7 @@ export function showMediaPermissionCard(
   const platform: MediaPlatform = chatpaneMediaPlatform;
   const host = document.createElement("div");
   host.id = "chatpane-media-permission-banner";
+  Object.assign(host, language());
   const root = host.attachShadow({ mode: "closed" });
   root.innerHTML = `<style>
     :host { all: initial; position: fixed; bottom: 68px; right: 20px; z-index: 2147483646;
@@ -66,14 +67,16 @@ export function showMediaPermissionCard(
     button:disabled { opacity: .6; cursor: wait; } [hidden] { display: none !important; }
     footer { display: flex; justify-content: space-between; gap: 10px; align-items: center;
       border-top: 1px solid var(--border); padding-top: 10px; font-size: 10px; color: var(--muted); }
-    footer button { color: var(--focus); background: transparent; padding: 5px 0 5px 8px; font-weight: 500; }
+    footer button { color: var(--focus); background: transparent; padding-block: 5px; padding-inline: 8px 0; font-weight: 500; }
     .guidance { margin: 0 0 12px; font-size: 11px; }
-  </style><section aria-label="Call device recovery">
+  </style><section>
     <header><span class="icon header-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${icons[devices.includes("camera") ? "camera" : "microphone"]}</svg></span>
       <div><h2 role="alert"></h2><p class="description"></p></div></header>
     <div class="devices"></div><p class="guidance"></p>
-    <footer><span></span><button type="button">Dismiss</button></footer>
+    <footer><span></span><button type="button"></button></footer>
   </section>`;
+  root.querySelector("section")!.setAttribute("aria-label", t("page.media.card_label"));
+  root.querySelector("footer button")!.textContent = t("page.media.dismiss");
   const title = root.querySelector("h2")!;
   const description = root.querySelector<HTMLParagraphElement>(".description")!;
   const guidance = root.querySelector<HTMLParagraphElement>(".guidance")!;
@@ -87,8 +90,10 @@ export function showMediaPermissionCard(
     const row = document.createElement("div");
     row.className = "device";
     row.innerHTML = `<span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24">${icons[device]}</svg></span>
-      <div class="info"><strong>${names[device]}</strong><span class="status"></span></div>
+      <div class="info"><strong></strong><span class="status"></span></div>
       <span class="check" aria-hidden="true" hidden>✓</span><button type="button" hidden></button>`;
+    row.querySelector("strong")!.textContent =
+      device === "camera" ? t("page.media.camera") : t("page.media.microphone");
     root.querySelector(".devices")!.append(row);
     const button = row.querySelector("button")!;
     button.addEventListener("click", async (event) => {
@@ -105,7 +110,7 @@ export function showMediaPermissionCard(
           await chatpaneOpenMediaPrivacy(device);
         }
       } catch {
-        actionError = `The action could not finish. ${mediaPrivacyGuidance(platform)}`;
+        actionError = t("page.media.action_failed", { guidance: mediaPrivacyGuidance(platform) });
       } finally {
         pending = false;
         if (!disposed) {
@@ -125,24 +130,30 @@ export function showMediaPermissionCard(
     const blocked = devices.filter((device) => snapshot[device] === "denied");
     const restricted = devices.some((device) => snapshot[device] === "restricted");
     title.textContent = confirmation
-      ? "Access updated"
+      ? t("page.media.access_updated")
       : failure === "denied"
         ? blocked.length === 1
-          ? `${names[blocked[0]!]} access is blocked`
-          : "Call access needs attention"
-        : "Your call could not start";
+          ? blocked[0] === "camera"
+            ? t("page.media.blocked.camera")
+            : t("page.media.blocked.microphone")
+          : t("page.media.needs_attention")
+        : t("page.media.call_failed");
     description.textContent = confirmation
-      ? "Try your call again in Messenger."
+      ? t("page.media.try_again")
       : permissionOnly && blocked.length
-        ? `Allow Chatpane to use your ${mediaDeviceLabel(blocked)} for calls.`
+        ? forDevices(blocked, {
+            camera: t("page.media.allow.camera"),
+            microphone: t("page.media.allow.microphone"),
+            both: t("page.media.allow.both"),
+          })
         : failureDescription;
     guidance.textContent =
       actionError ||
       (failure === "denied" && !confirmation
         ? restricted
-          ? "Access is restricted by system policy. Check with the person who manages this Mac."
+          ? t("page.media.restricted_guidance")
           : devices.every((device) => snapshot[device] === "allowed")
-            ? "macOS allows access. Check Messenger’s call settings and try again."
+            ? t("page.media.macos_allows")
             : mediaPrivacyGuidance(platform)
         : "");
     guidance.hidden = !guidance.textContent;
@@ -150,14 +161,14 @@ export function showMediaPermissionCard(
       const state = snapshot[device];
       status.textContent =
         state === "allowed"
-          ? "Allowed by macOS"
+          ? t("page.media.status.allowed")
           : state === "denied"
-            ? "Blocked in macOS Settings"
+            ? t("page.media.status.denied")
             : state === "restricted"
-              ? "Restricted by system policy"
+              ? t("page.media.status.restricted")
               : state === "not-determined"
-                ? "Not requested yet"
-                : "Status unavailable";
+                ? t("page.media.status.not_determined")
+                : t("page.media.status.unknown");
       status.dataset.tone =
         state === "allowed"
           ? "good"
@@ -177,18 +188,25 @@ export function showMediaPermissionCard(
           devices.includes(device) &&
           platform !== "linux");
       button.hidden = !allow && !settings;
-      button.textContent = allow ? "Allow access" : "Open Settings";
+      button.textContent = allow ? t("page.media.allow_access") : t("page.media.open_settings");
+      const camera = device === "camera";
       button.setAttribute(
         "aria-label",
-        `${allow ? "Allow access to" : "Open settings for"} ${device}`,
+        allow
+          ? camera
+            ? t("page.media.allow_access_to.camera")
+            : t("page.media.allow_access_to.microphone")
+          : camera
+            ? t("page.media.open_settings_for.camera")
+            : t("page.media.open_settings_for.microphone"),
       );
       button.disabled = pending;
     }
     footer.textContent = pending
-      ? "Checking access…"
+      ? t("page.media.checking")
       : platform === "macos"
-        ? "Rechecks when you return"
-        : "OS permission status unavailable";
+        ? t("page.media.rechecks")
+        : t("page.media.status_unavailable");
   };
   const accept = (next: ChatpaneMediaPermissionSnapshot) => {
     if (disposed) return;

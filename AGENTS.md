@@ -189,6 +189,37 @@ On `main` (committed `d8a25a6`).
 
 ---
 
+## Translations
+
+Chatpane's own text ships in the landing page's 30 languages; Messenger's UI
+follows the Facebook account's language. The language follows the OS unless
+Settings → General → Language picks one, and it changes on restart.
+
+- Strings live in `src-tauri/locales/<code>.json`, flat `"area.thing": "text"`.
+  `en.json` is the source. See `src-tauri/src/i18n.rs` for the rules: `{name}`
+  placeholders, `{app}` for the product name (never write "Chatpane" in a
+  string), plural forms as `key#one`/`key#other`, and key prefixes deciding
+  delivery (`page.` to Messenger windows, `settings.` to Settings, `shared.`
+  to both; Rust reads every key).
+- Look up text with `t("key")`/`tf(…)` in Rust, `t`/`tn` from
+  `inject/src/i18n.ts` (keys are typed from en.json), and `t("key")` in
+  `dist/settings.html` and `dist/index.html`. Always pass literal keys.
+- **Every new or changed user-facing string needs all 30 languages.** Add the
+  key to en.json and translate it into every other locale in the same change,
+  reusing the terms already in that file and in `docs/i18n/<code>.json`.
+  `bun scripts/i18n/check.ts` lists gaps; `cargo test --lib i18n` fails on
+  missing keys, mismatched placeholders, unused keys and unknown keys in code.
+- Native context-menu rows travel from the page to Rust as string keys, never
+  text, and Rust only shows allowlisted keys (`menu.rs`).
+- The macOS menu bar's standard items (About, Settings…, Hide, Quit, the
+  File/Edit/View/Window/Help titles, Undo through Select All, zoom, Minimize,
+  Bring All to Front) use `menu.mac.*` keys in Apple's own wording, as macOS
+  ships it in SwiftUI's `MainMenu.loctable`, AppKit's `MenuCommands.loctable`
+  and Safari's View menu. A German Mac says "Ablage", not "Datei". Other
+  `menu.*` keys follow Windows and Linux conventions.
+
+---
+
 ## macOS theme rendering — hard-won, do NOT re-litigate
 
 The forced light/dark theme (`Settings → Theme`) was a long rabbit hole on macOS.

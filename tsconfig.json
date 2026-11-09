@@ -13,6 +13,7 @@
     "noImplicitOverride": true,
     "forceConsistentCasingInFileNames": true,
     "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
     "types": [],
     "noEmit": true
   },

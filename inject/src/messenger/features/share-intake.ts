@@ -8,6 +8,7 @@
 // validated the one-time pasteboard handoff. A page calling the hook itself
 // gains nothing — it can already construct File objects and synthesize paste
 // events for its own composer.
+import { t } from "../../i18n";
 import { diag, toast } from "../bridge";
 import {
   decodeSharedFiles,
@@ -63,7 +64,7 @@ export function initShareIntake() {
     if (!shareIsDeliverable(pending.parkedAt, Date.now())) {
       clearTimeout(pending.timer);
       pending = null;
-      toast("Shared file expired");
+      toast(t("page.share.expired"));
       return true;
     }
     const composer = firstShown<HTMLElement>(COMPOSER_SELECTOR);
@@ -79,7 +80,7 @@ export function initShareIntake() {
       diag("share.attached", `${files.length}`);
     } else {
       diag("share.attach-failed", `${files.length}`);
-      toast("Could not attach the shared file");
+      toast(t("page.share.attach_failed"));
     }
     return true;
   };
@@ -110,7 +111,7 @@ export function initShareIntake() {
       if (pending) {
         if (pending.files.length + files.length > MAX_SHARED_FILES) {
           diag("share.busy", `${pending.files.length}`);
-          toast("Attach the current shared files before sharing more");
+          toast(t("page.share.busy"));
           return;
         }
         clearTimeout(pending.timer);
@@ -121,7 +122,7 @@ export function initShareIntake() {
       }
       if (!tryDeliver()) {
         diag("share.waiting-for-composer", `${pending.files.length}`);
-        toast("Open a conversation to attach the shared file");
+        toast(t("page.share.open_conversation"));
         pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
       }
     },

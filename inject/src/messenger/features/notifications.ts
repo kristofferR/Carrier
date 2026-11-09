@@ -2,6 +2,7 @@
 // Bridge the page's Web Notification API to native OS notifications so new
 // messages notify you even when Chatpane is in the background.
 
+import { t } from "../../i18n";
 import { diag, invoke } from "../bridge";
 import { noteExplicitAction } from "../lib/composer-focus";
 import {
@@ -733,7 +734,7 @@ export function initNotificationBridge() {
         emitNotification(
           id,
           hidePreview ? "Messenger" : text.title,
-          hidePreview ? "New message" : text.body,
+          hidePreview ? t("page.notification.hidden_body") : text.body,
           hidePreview ? "" : icon,
           pageMatch.dedupeKey ??
             pageMatch.signal?.dedupeKey ??
@@ -1254,7 +1255,7 @@ export function initNotificationBridge() {
       hidePreview
         ? "Messenger"
         : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
-      hidePreview ? "New message" : fallback.displayBody,
+      hidePreview ? t("page.notification.hidden_body") : fallback.displayBody,
       "",
       fallback.dedupeKey,
       () => window.__chatpaneOpenThread?.(fallback.threadPath),
@@ -1462,7 +1463,7 @@ export function initNotificationBridge() {
       emitNotification(
         ++notifySeq,
         hidePreview ? "Messenger" : text.title,
-        hidePreview ? "New message" : text.body,
+        hidePreview ? t("page.notification.hidden_body") : text.body,
         hidePreview ? "" : icon,
         dedupeKey,
         () => {

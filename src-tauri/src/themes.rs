@@ -34,6 +34,7 @@ use cssparser::{ParseError, Parser, ParserInput, Token};
 use serde::Serialize;
 use tauri::{Manager, WebviewWindow};
 
+use crate::i18n::{t, tf};
 use crate::settings::{AppState, Settings};
 use crate::url_rules::is_messenger_web_url;
 
@@ -157,19 +158,87 @@ fn is_hex_color(value: &str) -> bool {
     value.len() == 7 && value.starts_with('#') && value[1..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Why a theme file can't be used. Lines count from 1.
+#[derive(Debug)]
+pub(crate) enum ThemeError {
+    NoHeader,
+    BadMode(String),
+    BadPreview,
+    NoName,
+    TooLarge,
+    NotText,
+    TooDeep(u32),
+    Import(u32),
+    OutsideFile(u32),
+    Broken(u32),
+    Blocked(u32, String),
+    UnreadableUrl(u32),
+    NotCss(u32),
+    Io(String),
+}
+
+impl ThemeError {
+    /// "Couldn't add `file`: …" in the UI language.
+    fn message(&self, file: &str) -> String {
+        match self {
+            Self::NoHeader => tf(
+                "theme.error.no_header",
+                &[
+                    ("file", &file),
+                    ("keyword", &"theme"),
+                    ("example", &"Chatpane theme"),
+                    ("name_line", &"name: My theme"),
+                ],
+            ),
+            Self::BadMode(mode) => tf(
+                "theme.error.bad_mode",
+                &[
+                    ("file", &file),
+                    ("mode", mode),
+                    ("light", &"light"),
+                    ("dark", &"dark"),
+                ],
+            ),
+            Self::BadPreview => tf("theme.error.bad_preview", &[("file", &file)]),
+            Self::NoName => tf(
+                "theme.error.no_name",
+                &[("file", &file), ("name_line", &"name:")],
+            ),
+            Self::TooLarge => tf("theme.error.too_large", &[("file", &file)]),
+            Self::NotText => tf("theme.error.not_text", &[("file", &file)]),
+            Self::TooDeep(line) => tf("theme.error.too_deep", &[("file", &file), ("line", line)]),
+            Self::Import(line) => tf("theme.error.import", &[("file", &file), ("line", line)]),
+            Self::OutsideFile(line) => tf(
+                "theme.error.outside_file",
+                &[("file", &file), ("line", line)],
+            ),
+            Self::Broken(line) => tf("theme.error.broken", &[("file", &file), ("line", line)]),
+            Self::Blocked(line, function) => tf(
+                "theme.error.blocked_function",
+                &[("file", &file), ("line", line), ("function", function)],
+            ),
+            Self::UnreadableUrl(line) => tf(
+                "theme.error.unreadable_url",
+                &[("file", &file), ("line", line)],
+            ),
+            Self::NotCss(line) => tf("theme.error.not_css", &[("file", &file), ("line", line)]),
+            Self::Io(error) => tf("theme.error.io", &[("file", &file), ("error", error)]),
+        }
+    }
+}
+
 /// Read the header comment at the top of a theme file.
-pub(crate) fn parse_header(css: &str) -> Result<ThemeHeader, String> {
-    const MISSING: &str = "it doesn't start with a theme header. The file must begin with a comment whose first line ends in \"theme\" (such as \"Chatpane theme\"), followed by a line such as \"name: My theme\".";
+pub(crate) fn parse_header(css: &str) -> Result<ThemeHeader, ThemeError> {
     let body = css.trim_start_matches('\u{feff}').trim_start();
     let comment = body
         .strip_prefix("/*")
         .and_then(|rest| rest.split_once("*/"))
         .map(|(comment, _)| comment)
-        .ok_or_else(|| MISSING.to_string())?;
+        .ok_or(ThemeError::NoHeader)?;
     let mut lines = comment.lines();
     let first = lines.next().unwrap_or("").trim();
     if !first.to_ascii_lowercase().ends_with(" theme") {
-        return Err(MISSING.into());
+        return Err(ThemeError::NoHeader);
     }
     let (mut name, mut author, mut mode, mut preview) = (None, None, None, None);
     for line in lines {
@@ -184,7 +253,7 @@ pub(crate) fn parse_header(css: &str) -> Result<ThemeHeader, String> {
                 mode = match value.to_ascii_lowercase().as_str() {
                     "light" => Some(ThemeMode::Light),
                     "dark" => Some(ThemeMode::Dark),
-                    _ => return Err(format!("its mode is \"{value}\"; use light or dark.")),
+                    _ => return Err(ThemeError::BadMode(value.into())),
                 }
             }
             "preview" => {
@@ -193,14 +262,14 @@ pub(crate) fn parse_header(css: &str) -> Result<ThemeHeader, String> {
                     .map(|c| c.to_ascii_lowercase())
                     .collect();
                 if colors.len() != 5 || !colors.iter().all(|c| is_hex_color(c)) {
-                    return Err("its preview needs exactly five colors like #1a2b3c.".into());
+                    return Err(ThemeError::BadPreview);
                 }
                 preview = colors.try_into().ok();
             }
             _ => {}
         }
     }
-    let name = name.ok_or("its header has no name: line.")?;
+    let name = name.ok_or(ThemeError::NoName)?;
     Ok(ThemeHeader {
         name,
         author,
@@ -236,10 +305,10 @@ const MAX_CSS_DEPTH: usize = 64;
 fn scan_tokens<'i>(
     parser: &mut Parser<'i, '_>,
     depth: usize,
-) -> Result<(), ParseError<'i, String>> {
+) -> Result<(), ParseError<'i, ThemeError>> {
     if depth > MAX_CSS_DEPTH {
         let line = parser.current_source_location().line + 1;
-        return Err(parser.new_custom_error(format!("line {line} is nested too deeply.")));
+        return Err(parser.new_custom_error(ThemeError::TooDeep(line)));
     }
     loop {
         let line = parser.current_source_location().line + 1;
@@ -247,42 +316,30 @@ fn scan_tokens<'i>(
             Ok(token) => token.clone(),
             Err(_) => return Ok(()),
         };
-        let fail = |parser: &Parser<'i, '_>, why: String| {
-            Err(parser.new_custom_error(format!("line {line} {why}")))
-        };
+        let fail = |parser: &Parser<'i, '_>, why: ThemeError| Err(parser.new_custom_error(why));
         match &token {
             Token::AtKeyword(name) if name.eq_ignore_ascii_case("import") => {
-                return fail(
-                    parser,
-                    "uses @import. Themes can't load other files.".into(),
-                );
+                return fail(parser, ThemeError::Import(line));
             }
             Token::UnquotedUrl(url) if !is_data_url(url) => {
-                return fail(
-                    parser,
-                    "loads a file from outside the theme. Themes can only use data: URLs.".into(),
-                );
+                return fail(parser, ThemeError::OutsideFile(line));
             }
             Token::BadUrl(_) | Token::BadString(_) => {
-                return fail(parser, "has a broken URL or string.".into());
+                return fail(parser, ThemeError::Broken(line));
             }
             Token::Function(name) => {
                 let name = name.to_ascii_lowercase();
                 if BLOCKED_FUNCTIONS.contains(&name.as_str()) {
-                    return fail(parser, format!("uses {name}(), which themes can't use."));
+                    return fail(parser, ThemeError::Blocked(line, name));
                 }
                 let is_url = name == "url" || name == "src";
                 parser.parse_nested_block(|parser| {
                     if is_url {
                         let argument = parser.expect_string_cloned().map_err(|_| {
-                            parser.new_custom_error(format!(
-                                "line {line} has a URL Chatpane can't read."
-                            ))
+                            parser.new_custom_error(ThemeError::UnreadableUrl(line))
                         })?;
                         if !is_data_url(&argument) {
-                            return Err(parser.new_custom_error(format!(
-                                "line {line} loads a file from outside the theme. Themes can only use data: URLs."
-                            )));
+                            return Err(parser.new_custom_error(ThemeError::OutsideFile(line)));
                         }
                     }
                     scan_tokens(parser, depth + 1)
@@ -296,19 +353,16 @@ fn scan_tokens<'i>(
     }
 }
 
-/// Reject anything that could load or send data. The returned message
-/// completes "Couldn't add <file>: …".
-pub(crate) fn check_css(css: &str) -> Result<(), String> {
+/// Reject anything that could load or send data.
+pub(crate) fn check_css(css: &str) -> Result<(), ThemeError> {
     if css.len() as u64 > THEME_MAX_BYTES {
-        return Err("it is larger than 2 MB.".into());
+        return Err(ThemeError::TooLarge);
     }
     let mut input = ParserInput::new(css);
     let mut parser = Parser::new(&mut input);
     scan_tokens(&mut parser, 0).map_err(|error| match error.kind {
-        cssparser::ParseErrorKind::Custom(message) => message,
-        cssparser::ParseErrorKind::Basic(_) => {
-            format!("line {} could not be read as CSS.", error.location.line + 1)
-        }
+        cssparser::ParseErrorKind::Custom(why) => why,
+        cssparser::ParseErrorKind::Basic(_) => ThemeError::NotCss(error.location.line + 1),
     })
 }
 
@@ -345,7 +399,7 @@ pub(crate) fn themes_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|dir| dir.join(THEMES_DIR))
-        .map_err(|error| format!("could not locate Chatpane's config folder: {error}"))
+        .map_err(|error| tf("error.config_folder", &[("error", &error)]))
 }
 
 fn read_user_theme(path: &Path) -> Option<String> {
@@ -372,7 +426,7 @@ fn theme_css(app: &tauri::AppHandle, id: &str) -> Option<String> {
     match parse_header(&css).and_then(|_| check_css(&css)) {
         Ok(()) => Some(css),
         Err(error) => {
-            log::warn!("theme {id} was not applied: {error}");
+            log::warn!("theme {id} was not applied: {error:?}");
             None
         }
     }
@@ -556,10 +610,26 @@ pub(crate) fn apply_appearance_everywhere(app: &tauri::AppHandle) {
     }
 }
 
+/// A built-in theme's name in the UI language; its file holds the English one.
+fn built_in_name(id: &str) -> Option<&'static str> {
+    Some(match id {
+        DEFAULT_THEME => t("theme.name.default"),
+        "oled-black" => t("theme.name.oled_black"),
+        "terminal" => t("theme.name.terminal"),
+        "graphite" => t("theme.name.graphite"),
+        "warm" => t("theme.name.warm"),
+        "pink" => t("theme.name.pink"),
+        "lavender" => t("theme.name.lavender"),
+        "sage" => t("theme.name.sage"),
+        "slate" => t("theme.name.slate"),
+        _ => return None,
+    })
+}
+
 fn info_for(id: &str, css: &str, built_in: bool) -> Option<ThemeInfo> {
     let header = if id == DEFAULT_THEME {
         ThemeHeader {
-            name: "Default".into(),
+            name: String::new(),
             author: None,
             mode: None,
             preview: None,
@@ -567,9 +637,13 @@ fn info_for(id: &str, css: &str, built_in: bool) -> Option<ThemeInfo> {
     } else {
         parse_header(css).ok()?
     };
+    let name = built_in
+        .then(|| built_in_name(id))
+        .flatten()
+        .map_or(header.name, str::to_string);
     Some(ThemeInfo {
         id: id.to_string(),
-        name: header.name,
+        name,
         author: header.author,
         mode: header.mode,
         preview: header.preview,
@@ -613,15 +687,16 @@ pub(crate) fn list_themes(app: tauri::AppHandle) -> Vec<ThemeInfo> {
 fn import_theme(dir: &Path, source: &Path) -> Result<String, String> {
     let file_name = source
         .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "the file".into());
-    let fail = |why: String| format!("Couldn't add {file_name}: {why}");
-    let metadata = std::fs::metadata(source).map_err(|error| fail(error.to_string()))?;
+        .unwrap_or(source.as_os_str())
+        .to_string_lossy()
+        .into_owned();
+    let fail = |why: ThemeError| why.message(&file_name);
+    let io = |error: std::io::Error| fail(ThemeError::Io(error.to_string()));
+    let metadata = std::fs::metadata(source).map_err(io)?;
     if metadata.len() > THEME_MAX_BYTES {
-        return Err(fail("it is larger than 2 MB.".into()));
+        return Err(fail(ThemeError::TooLarge));
     }
-    let css =
-        std::fs::read_to_string(source).map_err(|_| fail("it isn't a UTF-8 text file.".into()))?;
+    let css = std::fs::read_to_string(source).map_err(|_| fail(ThemeError::NotText))?;
     // A theme made for Carrier gets Chatpane's names in the kept copy.
     let css = crate::custom_css::convert_legacy_css(&css).unwrap_or(css);
     let header = parse_header(&css).map_err(fail)?;
@@ -641,8 +716,8 @@ fn import_theme(dir: &Path, source: &Path) -> Result<String, String> {
             _ => break,
         }
     }
-    std::fs::create_dir_all(dir).map_err(|error| fail(error.to_string()))?;
-    std::fs::write(dir.join(format!("{id}.css")), css).map_err(|error| fail(error.to_string()))?;
+    std::fs::create_dir_all(dir).map_err(io)?;
+    std::fs::write(dir.join(format!("{id}.css")), css).map_err(io)?;
     Ok(id)
 }
 
@@ -654,8 +729,8 @@ pub(crate) async fn add_theme(app: tauri::AppHandle) -> Result<Option<String>, S
     let mut picker = app
         .dialog()
         .file()
-        .set_title("Add theme")
-        .add_filter("Theme", &["css"]);
+        .set_title(t("theme.picker.title"))
+        .add_filter(t("theme.picker.filter"), &["css"]);
     if let Some(settings) = app.get_webview_window("settings") {
         picker = picker.set_parent(&settings);
     }
@@ -672,13 +747,13 @@ pub(crate) async fn add_theme(app: tauri::AppHandle) -> Result<Option<String>, S
 #[tauri::command]
 pub(crate) fn remove_theme(app: tauri::AppHandle, id: String) -> Result<(), String> {
     if !is_user_theme_id(&id) {
-        return Err("Built-in themes can't be removed.".into());
+        return Err(t("theme.error.built_in").into());
     }
     let path = themes_dir(&app)?.join(format!("{id}.css"));
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("Couldn't remove the theme: {error}")),
+        Err(error) => Err(tf("theme.error.remove_failed", &[("error", &error)])),
     }
 }
 
@@ -686,7 +761,7 @@ pub(crate) fn remove_theme(app: tauri::AppHandle, id: String) -> Result<(), Stri
 pub(crate) fn open_themes_folder(app: tauri::AppHandle) -> Result<(), String> {
     let dir = themes_dir(&app)?;
     std::fs::create_dir_all(&dir)
-        .map_err(|error| format!("could not create the themes folder: {error}"))?;
+        .map_err(|error| tf("theme.error.create_folder", &[("error", &error)]))?;
     open::that_detached(dir).map_err(|error| error.to_string())
 }
 
@@ -734,37 +809,24 @@ mod tests {
 
     #[test]
     fn broken_headers_say_what_is_wrong() {
+        let error = |css: &str| parse_header(css).unwrap_err().message("x.css");
+        assert!(error("body { color: red }").contains("theme header"));
+        assert!(error("/* Chatpane theme\n author: x */").contains("name:"));
         assert!(
-            parse_header("body { color: red }")
-                .unwrap_err()
-                .contains("theme header")
+            error("/* Chatpane theme\n name: x\n preview: #fff #000 */").contains("five colors")
         );
-        assert!(
-            parse_header("/* Chatpane theme\n author: x */")
-                .unwrap_err()
-                .contains("name")
-        );
-        assert!(
-            parse_header("/* Chatpane theme\n name: x\n preview: #fff #000 */")
-                .unwrap_err()
-                .contains("five colors")
-        );
-        assert!(
-            parse_header("/* Chatpane theme\n name: x\n mode: sepia */")
-                .unwrap_err()
-                .contains("light or dark")
-        );
+        assert!(error("/* Chatpane theme\n name: x\n mode: sepia */").contains("light or dark"));
     }
 
     #[test]
     fn built_in_themes_have_headers_and_pass_the_checks() {
         for (id, css) in BUILT_IN.iter().filter(|(id, _)| *id != DEFAULT_THEME) {
-            let header = parse_header(css).unwrap_or_else(|e| panic!("{id}: {e}"));
+            let header = parse_header(css).unwrap_or_else(|e| panic!("{id}: {e:?}"));
             assert!(
                 header.preview.is_some(),
                 "{id} needs a preview for its card"
             );
-            check_css(css).unwrap_or_else(|e| panic!("{id}: {e}"));
+            check_css(css).unwrap_or_else(|e| panic!("{id}: {e:?}"));
         }
     }
 
@@ -801,9 +863,11 @@ mod tests {
             ),
         ];
         for (css, why) in cases {
-            let error = check_css(&format!("{HEADER}\n{css}")).unwrap_err();
+            let error = check_css(&format!("{HEADER}\n{css}"))
+                .unwrap_err()
+                .message("x.css");
             assert!(error.contains(why), "{css}: {error}");
-            assert!(error.starts_with("line 7"), "{css}: {error}");
+            assert!(error.contains(": line 7 "), "{css}: {error}");
         }
     }
 
@@ -883,7 +947,7 @@ mod tests {
     #[test]
     fn deeply_nested_css_is_refused_not_a_stack_overflow() {
         let error = check_css(&"(".repeat(1_000_000)).unwrap_err();
-        assert!(error.contains("nested too deeply"), "{error}");
+        assert!(matches!(error, ThemeError::TooDeep(_)), "{error:?}");
         assert!(
             check_css(&format!(
                 "a {{ width: {}1px{} }}",

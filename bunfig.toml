@@ -1,0 +1,2 @@
+[test]
+preload = ["./inject/test-preload.ts"]

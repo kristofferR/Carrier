@@ -11,8 +11,9 @@
     "noUncheckedIndexedAccess": true,
     "forceConsistentCasingInFileNames": true,
     "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
     "types": ["bun"],
     "noEmit": true
   },
-  "include": ["inject/src/**/*.test.ts", "inject/build.ts"]
+  "include": ["inject/src/**/*.test.ts", "inject/build.ts", "inject/test-preload.ts"]
 }

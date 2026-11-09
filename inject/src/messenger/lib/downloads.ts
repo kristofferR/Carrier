@@ -1,5 +1,6 @@
 /* Download-name helpers for the media download path (context menu + the
  * viewer's Download button). */
+import { t } from "../../i18n";
 
 /** The basename of a URL's path, when it looks like a real filename. */
 export const filenameFromUrl = (u: string, base: string): string => {
@@ -37,7 +38,7 @@ export const friendlyDownloadName = (name: string): string => {
 };
 
 export const downloadRevealLabel = (userAgent: string): string =>
-  /Mac/i.test(userAgent) ? "Show in Finder" : "Show in folder";
+  /Mac/i.test(userAgent) ? t("page.download.show_in_finder") : t("page.download.show_in_folder");
 
 export const isDownloadCancellation = (error: unknown): boolean =>
   error instanceof Error && error.message === "download cancelled";
@@ -54,10 +55,7 @@ export const downloadAccessDeniedToast = (
 ): { message: string; action?: ChatpaneToastAction } =>
   platform === "macos"
     ? {
-        message: "Chatpane isn't allowed to save to your Downloads folder",
-        action: { label: "Open Settings", kind: "open-download-privacy" },
+        message: t("page.download.access_denied_macos"),
+        action: { label: t("page.download.open_privacy_settings"), kind: "open-download-privacy" },
       }
-    : {
-        message:
-          "Chatpane isn't allowed to save to your Downloads folder. Check the folder's permissions.",
-      };
+    : { message: t("page.download.access_denied") };

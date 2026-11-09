@@ -215,6 +215,9 @@ pub(crate) struct Settings {
     pub(crate) download_behavior: String,
     /// Keep broken webviews intact for live inspection. Manual reload still works.
     pub(crate) hold_failures: bool,
+    /// Chatpane's own UI language: "system" follows the OS, or a code from
+    /// `i18n::LANGUAGES`. Applies on the next launch.
+    pub(crate) language: String,
 }
 
 /// Valid page-zoom range in percent (matches `clampZoom` in
@@ -255,6 +258,9 @@ impl Settings {
         }
         if self.download_behavior != "downloads" && self.download_behavior != "ask" {
             self.download_behavior = "downloads".into();
+        }
+        if !crate::i18n::is_valid_setting(&self.language) {
+            self.language = crate::i18n::SYSTEM.into();
         }
         if !matches!(self.title_bar.as_str(), "auto" | "show" | "hide") {
             self.title_bar = "auto".into();
@@ -374,6 +380,7 @@ impl Default for Settings {
             send_with_accelerator: false,
             download_behavior: "downloads".into(),
             hold_failures: false,
+            language: crate::i18n::SYSTEM.into(),
         }
     }
 }
@@ -834,12 +841,10 @@ pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
 /// OS rejected.
 pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
     if is_snap() {
-        return Err(
-            "Start on System Startup is unavailable in this sandboxed installation.".into(),
-        );
+        return Err(crate::i18n::t("autostart.error.sandboxed").into());
     }
     crate::autostart::set(app, want)
-        .map_err(|e| format!("Couldn't update Start on System Startup: {e}"))
+        .map_err(|e| crate::i18n::tf("autostart.error.update_failed", &[("error", &e)]))
 }
 
 /// Apply the settings that have an immediate runtime effect (window topmost

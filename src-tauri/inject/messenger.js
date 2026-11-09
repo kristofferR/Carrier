@@ -8,6 +8,46 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+  // inject/src/i18n.ts
+  var ENGLISH = { lang: "en", dir: "ltr", strings: {} };
+  function current() {
+    return globalThis.__CHATPANE_I18N__ ?? ENGLISH;
+  }
+  function language() {
+    const { lang, dir } = current();
+    return { lang, dir };
+  }
+  function formatLocale() {
+    const { lang } = current();
+    if (lang.includes("-")) return lang;
+    return globalThis.navigator?.languages?.find((tag) => tag.split("-")[0] === lang) ?? lang;
+  }
+  function fill(text2, vars) {
+    if (!vars) return text2;
+    const locale = formatLocale();
+    return text2.replace(/\{(\w+)\}/g, (match, name) => {
+      const value = vars[name];
+      if (value === void 0) return match;
+      return typeof value === "number" ? value.toLocaleString(locale) : value;
+    });
+  }
+  function text(key, vars) {
+    return fill(current().strings[key] ?? key, vars);
+  }
+  var pluralRules = /* @__PURE__ */ new Map();
+  function plural(key, count, vars) {
+    const { lang, strings } = current();
+    let rules = pluralRules.get(lang);
+    if (!rules) {
+      rules = new Intl.PluralRules(lang);
+      pluralRules.set(lang, rules);
+    }
+    const form = strings[`${key}#${rules.select(count)}`] ?? strings[`${key}#other`] ?? key;
+    return fill(form, { count, ...vars });
+  }
+  var t = text;
+  var tn = plural;
+
   // inject/src/messenger/lib/downloads.ts
   var filenameFromUrl = (u, base) => {
     try {
@@ -33,16 +73,14 @@
     }
     return name;
   };
-  var downloadRevealLabel = (userAgent) => /Mac/i.test(userAgent) ? "Show in Finder" : "Show in folder";
+  var downloadRevealLabel = (userAgent) => /Mac/i.test(userAgent) ? t("page.download.show_in_finder") : t("page.download.show_in_folder");
   var isDownloadCancellation = (error) => error instanceof Error && error.message === "download cancelled";
   var DOWNLOAD_ACCESS_DENIED = "download folder access denied";
   var isDownloadAccessDenied = (error) => error instanceof Error && error.message === DOWNLOAD_ACCESS_DENIED;
   var downloadAccessDeniedToast = (platform) => platform === "macos" ? {
-    message: "Chatpane isn't allowed to save to your Downloads folder",
-    action: { label: "Open Settings", kind: "open-download-privacy" }
-  } : {
-    message: "Chatpane isn't allowed to save to your Downloads folder. Check the folder's permissions."
-  };
+    message: t("page.download.access_denied_macos"),
+    action: { label: t("page.download.open_privacy_settings"), kind: "open-download-privacy" }
+  } : { message: t("page.download.access_denied") };
 
   // inject/src/messenger/lib/links.ts
   var INTERNAL_HOSTS = [
@@ -171,16 +209,16 @@
     () => diag("ipc.open-url", "opener invoke failed")
   );
   var toastDownloadSaved = (url) => toast(
-    window.__CHATPANE_SETTINGS__?.download_behavior === "ask" ? "Download saved" : "Saved to Downloads",
+    window.__CHATPANE_SETTINGS__?.download_behavior === "ask" ? t("page.download.saved") : t("page.download.saved_to_downloads"),
     {
       label: downloadRevealLabel(navigator.userAgent),
       kind: "reveal-download",
       url
     }
   );
-  var toastDownloadFailure = (error, message = "Download failed") => {
+  var toastDownloadFailure = (error, message) => {
     if (isDownloadCancellation(error) || isDownloadAccessDenied(error)) return;
-    toast(message);
+    toast(message ?? t("page.download.failed"));
   };
   var toastDownloadAccessDenied = () => {
     const { message, action: action2 } = downloadAccessDeniedToast(chatpaneMediaPlatform);
@@ -198,7 +236,7 @@
     }
     return module;
   }
-  function loadFacebookModules(load, names2, timeoutMs = 1e4) {
+  function loadFacebookModules(load, names, timeoutMs = 1e4) {
     return new Promise((resolve, reject) => {
       let bootloader;
       try {
@@ -210,16 +248,16 @@
         return;
       }
       const timer = setTimeout(
-        () => reject(new Error(`Messenger did not load ${names2.join(", ")}`)),
+        () => reject(new Error(`Messenger did not load ${names.join(", ")}`)),
         timeoutMs
       );
       try {
         bootloader.loadModules(
-          names2,
+          names,
           () => {
             clearTimeout(timer);
             try {
-              resolve(names2.map((name) => load(name)));
+              resolve(names.map((name) => load(name)));
             } catch (error) {
               reject(error);
             }
@@ -267,7 +305,7 @@
     ]);
     const data = await relay.fetchQuery(defaultExport(environment), query, {}, { fetchPolicy: "network-only" }).toPromise();
     const hash = data?.viewer?.logout_hash;
-    if (typeof hash !== "string" || !hash) throw new Error("Facebook sent no logout token.");
+    if (typeof hash !== "string" || !hash) throw new Error(t("page.account.no_logout_token"));
     const body = new URLSearchParams({ h: hash, ref: "mb" });
     const token = dtsg.getToken?.();
     if (typeof token === "string" && token) body.set("fb_dtsg", token);
@@ -278,7 +316,7 @@
     const url = typeof built === "string" && built.startsWith("/logout.php") ? built : "/logout.php";
     await post(url, body).catch(() => {
     });
-    if (accountId(cookie())) throw new Error("Facebook didn't end the session.");
+    if (accountId(cookie())) throw new Error(t("page.account.session_not_ended"));
     try {
       const [monster, serviceWorker] = await loadFacebookModules(
         load,
@@ -305,12 +343,12 @@
     return until < 0 || until * 1e3 > nowMs;
   }
   function muteUntilFromDatabase(raw, i64ToString) {
-    let text = raw;
+    let text2 = raw;
     if (typeof raw === "number") return Number.isFinite(raw) ? Math.trunc(raw) : null;
-    if (typeof raw === "bigint") text = raw.toString();
-    else if (typeof raw !== "string" && raw != null && i64ToString) text = i64ToString(raw);
-    if (typeof text !== "string" || !/^-?\d+$/.test(text)) return null;
-    const seconds = Number(text);
+    if (typeof raw === "bigint") text2 = raw.toString();
+    else if (typeof raw !== "string" && raw != null && i64ToString) text2 = i64ToString(raw);
+    if (typeof text2 !== "string" || !/^-?\d+$/.test(text2)) return null;
+    const seconds = Number(text2);
     return Number.isSafeInteger(seconds) ? seconds : null;
   }
   async function readMessengerDndUntil(account2, load, timeoutMs = 750) {
@@ -359,7 +397,7 @@
   async function loadPreferencesCode(load) {
     const loadRoot = async (entrypoint) => {
       const root = defaultExport(entrypoint).root;
-      if (typeof root?.load !== "function") throw new Error("Messenger's Preferences changed.");
+      if (typeof root?.load !== "function") throw new Error(t("page.account.preferences_changed"));
       await root.load();
     };
     const [dialog] = await loadFacebookModules(load, ["MWInboxSettingsDialog.entrypoint"]);
@@ -376,7 +414,7 @@
       "resolveActiveStatus"
     ]);
     const data = await relay.fetchQuery(defaultExport(environment), query, {}, { fetchPolicy: "network-only" }).toPromise();
-    if (!data?.viewer) throw new Error("Messenger didn't report its settings.");
+    if (!data?.viewer) throw new Error(t("page.account.no_settings"));
     const dndUntil = await readMessengerDndUntil(account2, load, 3e3);
     return stateFromViewer(
       data.viewer,
@@ -403,7 +441,7 @@
     for (let attempt = 0; ; attempt++) {
       const state3 = await readMessengerAccount(load, account2);
       if (applied(state3, change)) return state3;
-      if (attempt === 3) throw new Error("Messenger didn't apply the change.");
+      if (attempt === 3) throw new Error(t("page.account.not_applied"));
       await new Promise((resolve) => setTimeout(resolve, 1e3));
     }
   }
@@ -463,7 +501,7 @@
           {
             mutation,
             variables: { input },
-            onCompleted: (_response, errors) => errors?.length ? reject(new Error(errors[0]?.message || "Facebook refused the change.")) : resolve(),
+            onCompleted: (_response, errors) => errors?.length ? reject(new Error(errors[0]?.message || t("page.account.refused"))) : resolve(),
             onError: reject
           }
         )
@@ -485,7 +523,7 @@
     if (!window.__TAURI_INTERNALS__) return;
     const signedIn = () => {
       const account2 = accountId(document.cookie);
-      if (!account2) throw new Error("Log in to Messenger first.");
+      if (!account2) throw new Error(t("page.account.log_in_first"));
       return account2;
     };
     const actions = {
@@ -1016,14 +1054,14 @@ ${button.innerHTML}`)
     }
     return changed.length === 1 ? changed[0] ?? null : null;
   }
-  function replaceComposerText(box, text) {
+  function replaceComposerText(box, text2) {
     box.focus();
     const range = document.createRange();
     range.selectNodeContents(box);
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-    return document.execCommand(text ? "insertText" : "delete", false, text);
+    return document.execCommand(text2 ? "insertText" : "delete", false, text2);
   }
 
   // inject/src/messenger/lib/scheduled-send.ts
@@ -1043,10 +1081,10 @@ ${button.innerHTML}`)
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(9, 0, 0, 0);
     return [
-      { label: "In 15 minutes", due: now + 15 * 6e4 },
-      { label: "In 1 hour", due: now + 60 * 6e4 },
-      ...evening.getTime() > now ? [{ label: "This evening", due: evening.getTime() }] : [],
-      { label: "Tomorrow morning", due: tomorrow.getTime() }
+      { label: t("page.schedule.preset.in_15_minutes"), due: now + 15 * 6e4 },
+      { label: t("page.schedule.preset.in_1_hour"), due: now + 60 * 6e4 },
+      ...evening.getTime() > now ? [{ label: t("page.schedule.preset.this_evening"), due: evening.getTime() }] : [],
+      { label: t("page.schedule.preset.tomorrow_morning"), due: tomorrow.getTime() }
     ];
   }
   function localScheduleTime(date, time) {
@@ -1062,7 +1100,7 @@ ${button.innerHTML}`)
     const date = new Date(time);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }
-  var formatScheduleTime = (time, includeDate = false) => new Intl.DateTimeFormat(void 0, {
+  var formatScheduleTime = (time, includeDate = false) => new Intl.DateTimeFormat(formatLocale(), {
     ...includeDate ? { month: "short", day: "numeric" } : {},
     hour: "2-digit",
     minute: "2-digit",
@@ -1633,14 +1671,14 @@ ${button.innerHTML}`)
     return Math.min(ms, RATE_LIMIT_MAX_MS);
   }
   function nextRateLimit(previous, now, retryMs) {
-    const current = readRateLimitState(previous, now);
-    if (current && current.until > now) {
-      if (retryMs && now + retryMs > current.until) {
-        return { ...current, detectedAt: now, until: now + Math.min(retryMs, RATE_LIMIT_MAX_MS) };
+    const current2 = readRateLimitState(previous, now);
+    if (current2 && current2.until > now) {
+      if (retryMs && now + retryMs > current2.until) {
+        return { ...current2, detectedAt: now, until: now + Math.min(retryMs, RATE_LIMIT_MAX_MS) };
       }
-      return current;
+      return current2;
     }
-    const attempts = Math.min(3, (current?.attempts ?? 0) + 1);
+    const attempts = Math.min(3, (current2?.attempts ?? 0) + 1);
     const delay = retryMs ?? RATE_LIMIT_BASE_MS * 2 ** (attempts - 1);
     return {
       detectedAt: now,
@@ -2686,15 +2724,15 @@ ${button.innerHTML}`)
         if (rect.width <= 1 || rect.height <= 1 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) {
           continue;
         }
-        let current = el;
+        let current2 = el;
         let hidden = false;
-        while (current) {
-          const style = getComputedStyle(current);
+        while (current2) {
+          const style = getComputedStyle(current2);
           if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.contentVisibility === "hidden" || Number(style.opacity) <= 0) {
             hidden = true;
             break;
           }
-          current = current.parentElement;
+          current2 = current2.parentElement;
         }
         if (!hidden) return true;
       }
@@ -3111,8 +3149,8 @@ ${button.innerHTML}`)
         const check = () => {
           const now = performance.now();
           if (cancelled || now - startedAt > OPEN_WAIT_MS || explicitActionRecent()) return stop();
-          const current = log();
-          if (threadIdFromHref(location.pathname) !== target || !current || current === staleLog || !focusComposerReady()) {
+          const current2 = log();
+          if (threadIdFromHref(location.pathname) !== target || !current2 || current2 === staleLog || !focusComposerReady()) {
             requestAnimationFrame(check);
             return;
           }
@@ -3200,10 +3238,10 @@ ${button.innerHTML}`)
     let pinchFrom = 1;
     function pickTarget(target2) {
       if (!(target2 instanceof Element)) return null;
-      const t = target2;
-      const video = t.closest("video") || t.closest("div")?.querySelector("video");
+      const t2 = target2;
+      const video = t2.closest("video") || t2.closest("div")?.querySelector("video");
       if (video) return video;
-      const img = t.closest("img[alt]");
+      const img = t2.closest("img[alt]");
       if (!img) return null;
       const src = img.currentSrc || img.src || "";
       if (src.startsWith("data:") || src.includes("stp=dst-png_s")) return null;
@@ -3230,8 +3268,8 @@ ${button.innerHTML}`)
       active = false;
       zoomActive = false;
       pinching = false;
-      handlers.forEach(([t, f, o]) => {
-        document.removeEventListener(t, f, o);
+      handlers.forEach(([t2, f, o]) => {
+        document.removeEventListener(t2, f, o);
       });
       const closedTarget = target;
       if (closedTarget) {
@@ -3321,18 +3359,18 @@ ${button.innerHTML}`)
       ["keyup", onKeyUp, { capture: true, passive: true }],
       ["click", onClick, { capture: true }]
     ];
-    function enter(t) {
+    function enter(t2) {
       active = true;
       zoomActive = true;
-      target = t;
-      targetCssText = t.style.cssText;
-      targetTabIndex = t.getAttribute("tabindex");
+      target = t2;
+      targetCssText = t2.style.cssText;
+      targetTabIndex = t2.getAttribute("tabindex");
       previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      t.setAttribute("tabindex", "-1");
+      t2.setAttribute("tabindex", "-1");
       scale = 1;
       tx = 0;
       ty = 0;
-      t.focus({ preventScroll: true });
+      t2.focus({ preventScroll: true });
       handlers.forEach(([type, f, o]) => {
         document.addEventListener(type, f, o);
       });
@@ -3340,12 +3378,12 @@ ${button.innerHTML}`)
     document.addEventListener(
       "dblclick",
       (e) => {
-        const t = pickTarget(e.target);
-        if (!t) return;
+        const t2 = pickTarget(e.target);
+        if (!t2) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         if (active) return exit();
-        enter(t);
+        enter(t2);
         zoomTo(2, e.clientX, e.clientY, false);
       },
       { capture: true }
@@ -3355,9 +3393,9 @@ ${button.innerHTML}`)
       (event) => {
         const e = event;
         if (!active) {
-          const t = pickTarget(e.target);
-          if (!t) return;
-          enter(t);
+          const t2 = pickTarget(e.target);
+          if (!t2) return;
+          enter(t2);
         }
         e.preventDefault();
         pinching = true;
@@ -3461,32 +3499,47 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/chat-row-menu.ts
-  var CHAT_ROW_CONTEXT_MENU_LABELS = [
-    "Mark as read",
-    "Mark as unread",
-    "Mute notifications",
-    "Unmute notifications",
-    "View profile",
-    "Start end-to-end encrypted chat",
-    "Block",
-    "Unblock",
-    "Archive chat",
-    "Unarchive chat",
-    "Delete chat",
-    "Report",
-    "Leave group"
+  var CHAT_ROW_CONTEXT_MENU_KEYS = [
+    "shared.context.mark_as_read",
+    "shared.context.mark_as_unread",
+    "shared.context.mute_notifications",
+    "shared.context.unmute_notifications",
+    "shared.context.view_profile",
+    "shared.context.start_encrypted_chat",
+    "shared.context.block",
+    "shared.context.unblock",
+    "shared.context.archive_chat",
+    "shared.context.unarchive_chat",
+    "shared.context.delete_chat",
+    "shared.context.report",
+    "shared.context.leave_group"
   ];
-  function chatRowAction(text) {
-    const normalized = text.replace(/\s+/g, " ").trim();
-    return CHAT_ROW_CONTEXT_MENU_LABELS.find((action2) => action2 === normalized) ?? null;
+  var MESSENGER_ROW_TEXT = {
+    "shared.context.mark_as_read": "Mark as read",
+    "shared.context.mark_as_unread": "Mark as unread",
+    "shared.context.mute_notifications": "Mute notifications",
+    "shared.context.unmute_notifications": "Unmute notifications",
+    "shared.context.view_profile": "View profile",
+    "shared.context.start_encrypted_chat": "Start end-to-end encrypted chat",
+    "shared.context.block": "Block",
+    "shared.context.unblock": "Unblock",
+    "shared.context.archive_chat": "Archive chat",
+    "shared.context.unarchive_chat": "Unarchive chat",
+    "shared.context.delete_chat": "Delete chat",
+    "shared.context.report": "Report",
+    "shared.context.leave_group": "Leave group"
+  };
+  function chatRowAction(text2) {
+    const normalized = text2.replace(/\s+/g, " ").trim();
+    return CHAT_ROW_CONTEXT_MENU_KEYS.find((action2) => MESSENGER_ROW_TEXT[action2] === normalized) ?? null;
   }
   function chatRowActions(texts) {
     const offered = new Set(texts.map(chatRowAction));
-    return CHAT_ROW_CONTEXT_MENU_LABELS.filter((action2) => offered.has(action2));
+    return CHAT_ROW_CONTEXT_MENU_KEYS.filter((action2) => offered.has(action2));
   }
-  var CHAT_EXPORT_CONTEXT_MENU_LABELS = [
-    "Export chat as HTML…",
-    "Export chat as JSON…"
+  var CHAT_EXPORT_CONTEXT_MENU_KEYS = [
+    "shared.context.export_chat_html",
+    "shared.context.export_chat_json"
   ];
 
   // inject/src/messenger/lib/download-completion.ts
@@ -3588,8 +3641,8 @@ ${button.innerHTML}`)
   function pointInRect(rect, x, y) {
     return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
   }
-  function pointerActivationIsSound(expected, current, x, y) {
-    return rectsMatch(expected, current) && pointInRect(current, x, y);
+  function pointerActivationIsSound(expected, current2, x, y) {
+    return rectsMatch(expected, current2) && pointInRect(current2, x, y);
   }
 
   // inject/src/messenger/lib/emoji.ts
@@ -3599,11 +3652,11 @@ ${button.innerHTML}`)
   var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
   var KEYCAP_RE = /[#*0-9]️?⃣/gu;
   function emojiGlyph(value) {
-    const text = String(value || "").trim();
-    if (/^\(y\)$/i.test(text)) return "👍";
-    if (!text || text.length > 24 || !EMOJI_TEXT_RE.test(text)) return "";
-    if (LABEL_TEXT_RE.test(text.replace(KEYCAP_RE, ""))) return "";
-    return text;
+    const text2 = String(value || "").trim();
+    if (/^\(y\)$/i.test(text2)) return "👍";
+    if (!text2 || text2.length > 24 || !EMOJI_TEXT_RE.test(text2)) return "";
+    if (LABEL_TEXT_RE.test(text2.replace(KEYCAP_RE, ""))) return "";
+    return text2;
   }
   function isReactionMenuShape(children) {
     if (children.length < 6 || children.length > 9) return false;
@@ -3612,31 +3665,41 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/message-menu.ts
-  var MESSAGE_CONTEXT_MENU_LABELS = [
-    "Reply",
-    "Copy text",
-    "Edit",
-    "Forward",
-    "Pin",
-    "Unpin",
-    "Unsend",
-    "Remove"
+  var MESSAGE_CONTEXT_MENU_KEYS = [
+    "shared.context.reply",
+    "shared.context.copy_text",
+    "shared.context.edit",
+    "shared.context.forward",
+    "shared.context.pin",
+    "shared.context.unpin",
+    "shared.context.unsend",
+    "shared.context.remove"
   ];
-  var DRIVEN_ACTIONS = MESSAGE_CONTEXT_MENU_LABELS.filter(
-    (action2) => action2 !== "Copy text"
+  var COPY_TEXT = "shared.context.copy_text";
+  var MESSENGER_ROW_TEXT2 = {
+    "shared.context.reply": "Reply",
+    "shared.context.edit": "Edit",
+    "shared.context.forward": "Forward",
+    "shared.context.pin": "Pin",
+    "shared.context.unpin": "Unpin",
+    "shared.context.unsend": "Unsend",
+    "shared.context.remove": "Remove"
+  };
+  var DRIVEN_ACTIONS = MESSAGE_CONTEXT_MENU_KEYS.filter(
+    (action2) => action2 !== COPY_TEXT
   );
-  function menuRowAction(text) {
-    const normalized = text.replace(/\s+/g, " ").trim();
-    return DRIVEN_ACTIONS.find((action2) => action2 === normalized) ?? null;
+  function menuRowAction(text2) {
+    const normalized = text2.replace(/\s+/g, " ").trim();
+    return DRIVEN_ACTIONS.find((action2) => MESSENGER_ROW_TEXT2[action2] === normalized) ?? null;
   }
   function toolbarAction(label2) {
-    if (/^Reply\b/.test(label2)) return "Reply";
-    if (/^Forward\b/.test(label2)) return "Forward";
+    if (/^Reply\b/.test(label2)) return "shared.context.reply";
+    if (/^Forward\b/.test(label2)) return "shared.context.forward";
     return null;
   }
   function messageActions(offer) {
-    return MESSAGE_CONTEXT_MENU_LABELS.filter(
-      (action2) => action2 === "Copy text" ? offer.text.length > 0 : offer.actions.includes(action2)
+    return MESSAGE_CONTEXT_MENU_KEYS.filter(
+      (action2) => action2 === COPY_TEXT ? offer.text.length > 0 : offer.actions.includes(action2)
     );
   }
   function reactionLabel(emoji) {
@@ -3665,14 +3728,14 @@ ${button.innerHTML}`)
     const tag = (node.tagName || "").toUpperCase();
     if (tag === "IMG") return node.getAttribute?.("alt") || "";
     if (tag === "BR") return "\n";
-    let text = "";
+    let text2 = "";
     for (const child of Array.from(node.childNodes || [])) {
       const part = messageNodeText(child);
       const block = (child.tagName || "").toUpperCase() === "DIV";
-      if (part && text && block && !text.endsWith("\n")) text += "\n";
-      text += part;
+      if (part && text2 && block && !text2.endsWith("\n")) text2 += "\n";
+      text2 += part;
     }
-    return text;
+    return text2;
   }
 
   // inject/src/messenger/features/hidden-menu.ts
@@ -3742,7 +3805,7 @@ ${button.innerHTML}`)
   async function runChatRowAction(href, action2) {
     const button = currentMenuButton(href);
     if (!button) {
-      toast("That conversation is no longer in the list");
+      toast(t("page.context.conversation_gone"));
       return;
     }
     const picked = await withHiddenMenu(
@@ -3756,7 +3819,7 @@ ${button.innerHTML}`)
     );
     if (picked) return;
     diag("chat-row-menu.action", `${action2} was not offered when chosen`);
-    toast("Messenger no longer offers that action");
+    toast(t("page.context.action_unavailable"));
   }
 
   // inject/src/messenger/lib/conversation-export.ts
@@ -3770,8 +3833,8 @@ ${button.innerHTML}`)
     if (typeof value === "string") return /^-?\d+$/.test(value) ? value : null;
     if (value == null || !i64ToText) return null;
     try {
-      const text = i64ToText(value);
-      return typeof text === "string" && /^-?\d+$/.test(text) ? text : null;
+      const text2 = i64ToText(value);
+      return typeof text2 === "string" && /^-?\d+$/.test(text2) ? text2 : null;
     } catch {
       return null;
     }
@@ -3970,18 +4033,18 @@ ${button.innerHTML}`)
     const others = participants.filter((person) => person.id !== rows.viewerId && person.name);
     if (!rows.isGroup && others[0]) return others[0].name;
     if (others.length) return listedNames(others.map((person) => person.name));
-    return "Conversation";
+    return t("page.export.untitled");
   }
   var TITLE_BYTES = 900;
-  function listedNames(names2) {
-    const bytes = (text) => new TextEncoder().encode(text).length;
+  function listedNames(names) {
+    const bytes = (text2) => new TextEncoder().encode(text2).length;
     let title = "";
-    for (const [index, name] of names2.entries()) {
+    for (const [index, name] of names.entries()) {
       const next = title ? `${title}, ${name}` : name;
-      const more = names2.length - index - 1;
-      const suffix = more ? ` and ${more} more` : "";
-      if (bytes(next + suffix) > TITLE_BYTES) {
-        return title ? `${title} and ${names2.length - index} more` : `${names2.length} people`;
+      const more = names.length - index - 1;
+      const shown = more ? tn("page.export.names_and_more", more, { names: next }) : next;
+      if (bytes(shown) > TITLE_BYTES) {
+        return title ? tn("page.export.names_and_more", names.length - index, { names: title }) : tn("page.export.people", names.length);
       }
       title = next;
     }
@@ -4126,7 +4189,7 @@ ${button.innerHTML}`)
     return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
   async function exportConversation(threadId, format) {
-    toast("Preparing export…");
+    toast(t("page.export.preparing"));
     const conversation = await readConversationExport(
       threadId,
       window.require,
@@ -4137,11 +4200,11 @@ ${button.innerHTML}`)
     );
     if (!conversation) {
       diag("export.read", "conversation database unavailable");
-      toast("Couldn't read this conversation", void 0, { warning: true });
+      toast(t("page.export.read_failed"), void 0, { warning: true });
       return;
     }
     if (new TextEncoder().encode(JSON.stringify(conversation)).length > EXPORT_MAX_BYTES) {
-      toast("This conversation is too large to export", void 0, { warning: true });
+      toast(t("page.export.too_large"), void 0, { warning: true });
       return;
     }
     const reveal = `chatpane-export:${randomHex()}`;
@@ -4149,15 +4212,14 @@ ${button.innerHTML}`)
       await chatpaneExportConversation({ format, conversation, reveal });
     } catch (error) {
       if (error instanceof Error && error.message === "export cancelled") {
-        toast("Export cancelled");
+        toast(t("page.export.cancelled"));
         return;
       }
       diag("export.save", error instanceof Error ? error.message : "save failed");
-      toast("Couldn't save the export", void 0, { warning: true });
+      toast(t("page.export.save_failed"), void 0, { warning: true });
       return;
     }
-    const count = conversation.messages.length;
-    toast(`Exported ${count.toLocaleString()} ${count === 1 ? "message" : "messages"}`, {
+    toast(tn("page.export.done", conversation.messages.length), {
       label: downloadRevealLabel(navigator.userAgent),
       kind: "reveal-download",
       url: reveal
@@ -4166,17 +4228,17 @@ ${button.innerHTML}`)
   var busy = false;
   function startConversationExport(format, threadId = threadIdFromHref(location.pathname)) {
     if (!threadId) {
-      toast("Open a conversation to export it");
+      toast(t("page.export.no_conversation"));
       return;
     }
     if (busy) {
-      toast("An export is already in progress");
+      toast(t("page.export.in_progress"));
       return;
     }
     busy = true;
     exportConversation(threadId, format).catch(() => {
       diag("export.run", "export failed");
-      toast("Couldn't export this conversation", void 0, { warning: true });
+      toast(t("page.export.failed"), void 0, { warning: true });
     }).finally(() => {
       busy = false;
     });
@@ -4226,8 +4288,8 @@ ${button.innerHTML}`)
     return found;
   }
   async function readMessageOffer(message) {
-    const text = messageText(message);
-    if (!await ensureToolbar(message)) return { reactions: [], text, actions: [] };
+    const text2 = messageText(message);
+    if (!await ensureToolbar(message)) return { reactions: [], text: text2, actions: [] };
     const react = toolbarButton(message, "React");
     const reactions = react ? await withHiddenMenu(
       react,
@@ -4245,16 +4307,16 @@ ${button.innerHTML}`)
           (menu) => [...moreRows(menu)].map((row) => menuRowAction(row.textContent ?? "")).filter((action2) => action2 !== null)
         ) ?? []
       );
-    return { reactions: uniqueReactions(reactions).slice(0, MAX_REACTIONS), text, actions };
+    return { reactions: uniqueReactions(reactions).slice(0, MAX_REACTIONS), text: text2, actions };
   }
   async function drive(message, run, what) {
     if (!message.isConnected) {
-      toast("That message is no longer on screen");
+      toast(t("page.context.message_gone"));
       return;
     }
     if (await run()) return;
     diag("message-menu.action", `${what} was not offered when chosen`);
-    toast("Messenger no longer offers that action");
+    toast(t("page.context.action_unavailable"));
   }
   var reactTo = (message, emoji) => drive(
     message,
@@ -4305,15 +4367,33 @@ ${button.innerHTML}`)
   var MAX_BLOB = 512 * 1024 * 1024;
   var MAX_CLIPBOARD_IMAGE = 16 * 1024 * 1024;
   var MAX_NATIVE_CONTEXT_VALUE = 64 * 1024;
-  var IMAGE_CONTEXT_MENU_LABELS = [
-    "Copy image",
-    "Download image",
-    "Share…",
-    "Copy image address",
-    "Open image in browser"
+  var IMAGE_CONTEXT_MENU_KEYS = [
+    "shared.context.copy_image",
+    "shared.context.download_image",
+    "shared.context.share",
+    "shared.context.copy_image_address",
+    "shared.context.open_image_in_browser"
   ];
-  var VIDEO_CONTEXT_MENU_LABELS = ["Download video", "Share…", "Copy video address"];
-  var LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"];
+  var VIDEO_CONTEXT_MENU_KEYS = [
+    "shared.context.download_video",
+    "shared.context.share",
+    "shared.context.copy_video_address"
+  ];
+  var LINK_CONTEXT_MENU_KEYS = [
+    "shared.context.copy_link_address",
+    "shared.context.open_link_in_browser"
+  ];
+  var ROW_LABELS = Object.fromEntries(
+    [
+      ...IMAGE_CONTEXT_MENU_KEYS,
+      ...VIDEO_CONTEXT_MENU_KEYS,
+      ...LINK_CONTEXT_MENU_KEYS,
+      ...MESSAGE_CONTEXT_MENU_KEYS,
+      ...CHAT_ROW_CONTEXT_MENU_KEYS,
+      ...CHAT_EXPORT_CONTEXT_MENU_KEYS
+    ].map((key) => [key, t(key)])
+  );
+  var ROW_LANGUAGE = language();
   var nativeAddEventListener2 = EventTarget.prototype.addEventListener;
   var nativeRemoveEventListener2 = EventTarget.prototype.removeEventListener;
   var nativeObjectDefineProperty = Object.defineProperty;
@@ -4446,8 +4526,8 @@ ${button.innerHTML}`)
     await chatpaneShareDownload(id, fx, fy, action2);
   }
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
-  var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
-  var copyText = (text) => navigator.clipboard?.writeText(text).then(() => toast("Text copied")).catch(() => toast("Copy failed"));
+  var copyAddress = (text2) => navigator.clipboard?.writeText(cleanSharedUrl(text2)).then(() => toast(t("shared.context.address_copied"))).catch(() => toast(t("shared.context.copy_failed")));
+  var copyText = (text2) => navigator.clipboard?.writeText(text2).then(() => toast(t("shared.context.text_copied"))).catch(() => toast(t("shared.context.copy_failed")));
   async function downloadSrc(src, fallbackName, action2) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`download failed (${res.status})`);
@@ -4551,11 +4631,11 @@ ${button.innerHTML}`)
       }
       menuRequest += 1;
     };
-    const openContextMenu = async (t, contextPoint, keyboard, prevent, selectedByClick = false) => {
-      const anchor = t.closest?.("a[href]");
+    const openContextMenu = async (target, contextPoint, keyboard, prevent, selectedByClick = false) => {
+      const anchor = target.closest?.("a[href]");
       const chatRow = anchor && chatRowFor(anchor);
-      const video = chatRow ? null : t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
-      const img = chatRow ? null : t.closest?.("img[alt]");
+      const video = chatRow ? null : target.closest?.("video") || (target.closest?.("div")?.querySelector?.("video") ?? null);
+      const img = chatRow ? null : target.closest?.("img[alt]");
       const imgSrc = img && (img.currentSrc || img.src);
       const vidSrc = video && (video.currentSrc || video.src);
       const linkHref = chatRow ? void 0 : anchor?.href;
@@ -4567,52 +4647,52 @@ ${button.innerHTML}`)
       };
       if (imgSrc) {
         addItem([
-          IMAGE_CONTEXT_MENU_LABELS[0],
-          (action2) => copyImageSrc(imgSrc, action2).then(() => toast("Image copied")).catch(() => toast("Copy failed"))
+          IMAGE_CONTEXT_MENU_KEYS[0],
+          (action2) => copyImageSrc(imgSrc, action2).then(() => toast(t("page.context.image_copied"))).catch(() => toast(t("shared.context.copy_failed")))
         ]);
         addItem([
-          IMAGE_CONTEXT_MENU_LABELS[1],
+          IMAGE_CONTEXT_MENU_KEYS[1],
           () => downloadSrc(imgSrc, "image").then(({ url }) => toastDownloadSaved(url)).catch((error) => toastDownloadFailure(error))
         ]);
         if (isMac2) {
           addItem([
-            IMAGE_CONTEXT_MENU_LABELS[2],
+            IMAGE_CONTEXT_MENU_KEYS[2],
             (action2) => action2 ? shareSrc(imgSrc, "image", fx, fy, action2).catch(
-              (error) => toastDownloadFailure(error, "Share failed")
+              (error) => toastDownloadFailure(error, t("page.context.share_failed"))
             ) : void 0
           ]);
         }
-        addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
-        addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
+        addItem([IMAGE_CONTEXT_MENU_KEYS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
+        addItem([IMAGE_CONTEXT_MENU_KEYS[4], () => openUrl(imgSrc)]);
       } else if (vidSrc) {
         addItem([
-          VIDEO_CONTEXT_MENU_LABELS[0],
+          VIDEO_CONTEXT_MENU_KEYS[0],
           () => downloadSrc(vidSrc, "video").then(({ url }) => toastDownloadSaved(url)).catch((error) => toastDownloadFailure(error))
         ]);
         if (isMac2) {
           addItem([
-            VIDEO_CONTEXT_MENU_LABELS[1],
+            VIDEO_CONTEXT_MENU_KEYS[1],
             (action2) => action2 ? shareSrc(vidSrc, "video", fx, fy, action2).catch(
-              (error) => toastDownloadFailure(error, "Share failed")
+              (error) => toastDownloadFailure(error, t("page.context.share_failed"))
             ) : void 0
           ]);
         }
-        addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
+        addItem([VIDEO_CONTEXT_MENU_KEYS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
       } else if (linkHref && !linkHref.startsWith("javascript:")) {
-        addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref), cleanSharedUrl(linkHref)]);
-        addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
+        addItem([LINK_CONTEXT_MENU_KEYS[0], () => copyAddress(linkHref), cleanSharedUrl(linkHref)]);
+        addItem([LINK_CONTEXT_MENU_KEYS[1], () => openUrl(linkHref)]);
       }
       const selection = getSelection();
-      const selected = !selectedByClick && selection !== null && !selection.isCollapsed && selection.containsNode(t, true);
-      const message = (imgSrc || vidSrc || !items.length) && !(selected && !items.length) ? messageFor(t) ?? null : null;
+      const selected = !selectedByClick && selection !== null && !selection.isCollapsed && selection.containsNode(target, true);
+      const message = (imgSrc || vidSrc || !items.length) && !(selected && !items.length) ? messageFor(target) ?? null : null;
       const conversation = selected ? null : chatRow;
       if (!items.length && !message && !conversation) return;
       prevent();
       if (selectedByClick && selection && !selection.isCollapsed) selection.collapseToEnd();
       const keyboardPoint = message || keyboard ? keyboardMenuPoint(
         contextPoint,
-        rectOf(t),
-        rectOf(message ? messageTextBlock(message) ?? message : t)
+        rectOf(target),
+        rectOf(message ? messageTextBlock(message) ?? message : target)
       ) : null;
       menuRequest += 1;
       const request = menuRequest;
@@ -4637,16 +4717,16 @@ ${button.innerHTML}`)
         const threadId = threadIdFromHref(href);
         if (threadId) {
           addItem([
-            CHAT_EXPORT_CONTEXT_MENU_LABELS[0],
+            CHAT_EXPORT_CONTEXT_MENU_KEYS[0],
             () => startConversationExport("html", threadId)
           ]);
           addItem([
-            CHAT_EXPORT_CONTEXT_MENU_LABELS[1],
+            CHAT_EXPORT_CONTEXT_MENU_KEYS[1],
             () => startConversationExport("json", threadId)
           ]);
         }
         if (!items.length) {
-          toast("Messenger offers no actions for this conversation");
+          toast(t("page.context.no_conversation_actions"));
           return;
         }
       }
@@ -4666,12 +4746,12 @@ ${button.innerHTML}`)
         const actions = messageActions(offer);
         for (let index = 0; index < actions.length; index += 1) {
           const action2 = actions[index];
-          if (action2 === MESSAGE_CONTEXT_MENU_LABELS[1])
+          if (action2 === MESSAGE_CONTEXT_MENU_KEYS[1])
             addItem([action2, () => copyText(offer.text), offer.text]);
           else if (action2) addItem([action2, () => runMessageAction(message, action2)]);
         }
         if (!items.length) {
-          toast("Messenger offers no actions for this message");
+          toast(t("page.context.no_message_actions"));
           return;
         }
       }
@@ -4701,7 +4781,7 @@ ${button.innerHTML}`)
       const previouslyFocused = document.activeElement;
       const priorReturnFocus = ctxMenu && nativeReflectApply3(nativeContains, ctxMenu, [previouslyFocused]) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
       closeMenu();
-      ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
+      ctxMenuReturnFocus = target.closest?.(focusableSelector) ?? priorReturnFocus;
       ctxMenu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
       const ctxMenuStyle = nativeReflectApply3(nativeGetStyle, ctxMenu, []);
       applyStyles(ctxMenuStyle, {
@@ -4715,9 +4795,13 @@ ${button.innerHTML}`)
       ]);
       const menu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
       nativeReflectApply3(nativeSetAttribute, menu, ["role", "menu"]);
+      nativeReflectApply3(nativeSetAttribute, menu, ["lang", ROW_LANGUAGE.lang]);
+      nativeReflectApply3(nativeSetAttribute, menu, ["dir", ROW_LANGUAGE.dir]);
       nativeReflectApply3(nativeSetAttribute, menu, [
         "aria-label",
-        message ? "Message actions" : conversation ? "Conversation actions" : "Media actions"
+        t(
+          message ? "page.context.message_actions" : conversation ? "page.context.conversation_actions" : "page.context.media_actions"
+        )
       ]);
       const menuStyle = nativeReflectApply3(nativeGetStyle, menu, []);
       applyStyles(menuStyle, {
@@ -4743,13 +4827,13 @@ ${button.innerHTML}`)
         const item = items[index];
         if (!item) continue;
         const label2 = item[0];
-        if (isMac2 && (label2 === IMAGE_CONTEXT_MENU_LABELS[2] || label2 === VIDEO_CONTEXT_MENU_LABELS[1])) {
+        if (isMac2 && (label2 === IMAGE_CONTEXT_MENU_KEYS[2] || label2 === VIDEO_CONTEXT_MENU_KEYS[1])) {
           continue;
         }
         const fn = item[1];
         const rowIndex = menuItems.length;
         const reaction = item[3];
-        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_LABELS.includes(label2) ? 2 : conversation && CHAT_ROW_CONTEXT_MENU_LABELS.includes(label2) ? 3 : conversation && CHAT_EXPORT_CONTEXT_MENU_LABELS.includes(label2) ? 4 : 0;
+        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_KEYS.includes(label2) ? 2 : conversation && CHAT_ROW_CONTEXT_MENU_KEYS.includes(label2) ? 3 : conversation && CHAT_EXPORT_CONTEXT_MENU_KEYS.includes(label2) ? 4 : 0;
         if (previousGroup !== null && previousGroup !== group) {
           const divider = nativeReflectApply3(nativeCreateElement, document, [
             "div"
@@ -4764,13 +4848,18 @@ ${button.innerHTML}`)
         }
         previousGroup = group;
         const el = nativeReflectApply3(nativeCreateElement, document, ["div"]);
-        nativeReflectApply3(nativeSetTextContent, el, [label2]);
+        nativeReflectApply3(nativeSetTextContent, el, [
+          reaction ? label2 : ROW_LABELS[label2] ?? label2
+        ]);
         nativeReflectApply3(nativeSetAttribute, el, [
           "role",
           reaction ? "menuitemcheckbox" : "menuitem"
         ]);
         if (reaction) {
-          nativeReflectApply3(nativeSetAttribute, el, ["aria-label", `React ${label2}`]);
+          nativeReflectApply3(nativeSetAttribute, el, [
+            "aria-label",
+            t("page.context.react_with", { emoji: label2 })
+          ]);
           nativeReflectApply3(nativeSetAttribute, el, ["aria-checked", `${reaction.checked}`]);
         }
         nativeReflectApply3(nativeSetTabIndex, el, [-1]);
@@ -4813,7 +4902,7 @@ ${button.innerHTML}`)
             const point = clientPointOf(ev);
             if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
               closeMenu();
-              toast("Menu action cancelled");
+              toast(t("page.context.action_cancelled"));
               return;
             }
             activate(fn);
@@ -4837,7 +4926,10 @@ ${button.innerHTML}`)
               "div"
             ]);
             nativeReflectApply3(nativeSetAttribute, reactionRow, ["role", "group"]);
-            nativeReflectApply3(nativeSetAttribute, reactionRow, ["aria-label", "React"]);
+            nativeReflectApply3(nativeSetAttribute, reactionRow, [
+              "aria-label",
+              t("shared.context.react")
+            ]);
             applyStyles(nativeReflectApply3(nativeGetStyle, reactionRow, []), {
               display: "flex",
               gap: "2px"
@@ -4867,10 +4959,10 @@ ${button.innerHTML}`)
         (event) => {
           if (!event.isTrusted) return;
           const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
-          const current = focusedIndex;
+          const current2 = focusedIndex;
           let next = null;
-          if (key === "ArrowDown") next = (current + 1) % menuItems.length;
-          if (key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+          if (key === "ArrowDown") next = (current2 + 1) % menuItems.length;
+          if (key === "ArrowUp") next = (current2 - 1 + menuItems.length) % menuItems.length;
           if (key === "Home") next = 0;
           if (key === "End") next = menuItems.length - 1;
           if (key === "Escape") {
@@ -5029,15 +5121,15 @@ ${button.innerHTML}`)
   var primaryBlueScore = (el) => {
     let best = 0;
     for (let cur = el; cur && cur !== document.documentElement; cur = cur.parentElement) {
-      const fill = blueScore(cur);
-      if (!fill) continue;
-      best = Math.max(best, fill.score);
-      if (fill.opaque) break;
+      const fill2 = blueScore(cur);
+      if (!fill2) continue;
+      best = Math.max(best, fill2.score);
+      if (fill2.opaque) break;
     }
     const box = el.getBoundingClientRect();
     for (const inner of el.querySelectorAll("*")) {
-      const fill = blueScore(inner);
-      if (fill && coversButton(inner, box)) best = Math.max(best, fill.score);
+      const fill2 = blueScore(inner);
+      if (fill2 && coversButton(inner, box)) best = Math.max(best, fill2.score);
     }
     return best;
   };
@@ -5811,12 +5903,12 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/nickname-replies.ts
-  function replyAttribution(text, sender, recipient, info, mode) {
-    if (showNicknames(mode, info.isGroup)) return text;
+  function replyAttribution(text2, sender, recipient, info, mode) {
+    if (showNicknames(mode, info.isGroup)) return text2;
     const person = (id) => info.participants.find((p) => p.id === id);
     const name = (p) => info.isGroup ? participantFirstName(p) : p.name;
     const from = person(sender), to = person(recipient);
-    let result = text;
+    let result = text2;
     if (from) {
       const alias = [from.nickname, from.name].find(
         (value) => value && result.startsWith(`${value} `)
@@ -5855,9 +5947,9 @@ ${button.innerHTML}`)
       return request;
     };
     const hook = function useChatpaneReplyAttribution(...args) {
-      const text = Reflect.apply(original, this, args);
+      const text2 = Reflect.apply(original, this, args);
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
-      const [names2, setNames] = useState(null);
+      const [names, setNames] = useState(null);
       const message = args[0];
       const id = (field) => {
         try {
@@ -5871,7 +5963,7 @@ ${button.innerHTML}`)
       };
       const key = id("threadKey"), sender = id("senderId"), recipient = id("replyToUserId");
       useEffect(() => {
-        if (!key || typeof text !== "string" || !text) return;
+        if (!key || typeof text2 !== "string" || !text2) return;
         let cancelled = false;
         readNames(key).then((info) => {
           if (!cancelled) setNames({ key, info });
@@ -5880,8 +5972,8 @@ ${button.innerHTML}`)
         return () => {
           cancelled = true;
         };
-      }, [key, text, mode]);
-      return typeof text === "string" && names2?.key === key && names2.info ? replyAttribution(text, sender, recipient, names2.info, mode) : text;
+      }, [key, text2, mode]);
+      return typeof text2 === "string" && names?.key === key && names.info ? replyAttribution(text2, sender, recipient, names.info, mode) : text2;
     };
     try {
       exports.default = hook;
@@ -5923,13 +6015,13 @@ ${button.innerHTML}`)
     remember(thread2, original, displayed) {
       this.entries.delete(thread2);
       if (!/^\d+$/.test(thread2) || original === displayed) return;
-      const normalize = (text) => text.replace(/\s+/g, " ");
+      const normalize = (text2) => text2.replace(/\s+/g, " ");
       this.entries.set(thread2, { original: normalize(original), displayed: normalize(displayed) });
       if (this.entries.size > 500) this.entries.delete(this.entries.keys().next().value);
     }
-    original(thread2, text) {
+    original(thread2, text2) {
       const entry = this.entries.get(thread2);
-      return entry && text.startsWith(entry.displayed) ? entry.original + text.slice(entry.displayed.length) : text;
+      return entry && text2.startsWith(entry.displayed) ? entry.original + text2.slice(entry.displayed.length) : text2;
     }
   };
   var nativeSnippetPrefixes = new NativeSnippetPrefixes();
@@ -5952,7 +6044,7 @@ ${button.innerHTML}`)
     const { maybeUnvault } = vault;
     const component = function ChatpaneNicknameSnippet(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
-      const [names2, setNames] = useState(null);
+      const [names, setNames] = useState(null);
       const owner = useRef({}).current;
       const record4 = props && typeof props === "object" ? props : {};
       const thread2 = record4.thread;
@@ -5978,7 +6070,7 @@ ${button.innerHTML}`)
           cancelled = true;
         };
       }, [key, snippet, draft, mode]);
-      const info = !draft && names2?.key === key && names2.snippet === snippet ? names2.info : null;
+      const info = !draft && names?.key === key && names.snippet === snippet ? names.info : null;
       const sender = info ? notificationSenderPrefix(snippet, info) : void 0;
       let displayed = snippet;
       if (sender && info?.isGroup) {
@@ -6483,45 +6575,45 @@ ${button.innerHTML}`)
     return notificationsGloballyMuted(settings) || suppressMutedDelivery(muted, settings);
   }
   function conversationMuteFromLabel(value) {
-    const text = (value || "").replace(/\s+/g, " ").trim();
-    if (!text || text.length > MUTE_LABEL_LIMIT) return null;
-    if (UNMUTE_ACTION_RE.test(text) || MUTED_STATUS_RE.test(text)) return true;
-    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return false;
+    const text2 = (value || "").replace(/\s+/g, " ").trim();
+    if (!text2 || text2.length > MUTE_LABEL_LIMIT) return null;
+    if (UNMUTE_ACTION_RE.test(text2) || MUTED_STATUS_RE.test(text2)) return true;
+    if (MUTE_ACTION_RE.test(text2) && !/\bmuted\b/i.test(text2)) return false;
     return null;
   }
   function isExplicitUnmuteAction(value) {
     return muteStateAfterExplicitAction(value) === false;
   }
   function muteStateAfterExplicitAction(value) {
-    const text = (value || "").replace(/\s+/g, " ").trim();
-    if (!text || text.length > MUTE_LABEL_LIMIT) return void 0;
-    if (UNMUTE_ACTION_RE.test(text)) return false;
-    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return true;
+    const text2 = (value || "").replace(/\s+/g, " ").trim();
+    if (!text2 || text2.length > MUTE_LABEL_LIMIT) return void 0;
+    if (UNMUTE_ACTION_RE.test(text2)) return false;
+    if (MUTE_ACTION_RE.test(text2) && !/\bmuted\b/i.test(text2)) return true;
     return void 0;
   }
   function muteStateAfterControlAction(value, role, ariaChecked) {
-    const text = (value || "").replace(/\s+/g, " ").trim();
+    const text2 = (value || "").replace(/\s+/g, " ").trim();
     const normalizedRole = (role || "").toLowerCase();
-    if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(normalizedRole)) {
+    if (MUTE_ACTION_RE.test(text2) && STATEFUL_MUTE_ROLES.has(normalizedRole)) {
       if (ariaChecked === "true") return false;
       if (ariaChecked === "false") return true;
       return void 0;
     }
-    return muteStateAfterExplicitAction(text);
+    return muteStateAfterExplicitAction(text2);
   }
   function muteSignalFromSource(source) {
     if (source.attribute === "alt") return null;
-    const text = (source.value || "").replace(/\s+/g, " ").trim();
-    const signal = conversationMuteFromLabel(text);
+    const text2 = (source.value || "").replace(/\s+/g, " ").trim();
+    const signal = conversationMuteFromLabel(text2);
     if (signal === null) return null;
     const tag = source.tagName.toLowerCase();
     const role = (source.role || "").toLowerCase();
-    if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(role)) {
+    if (MUTE_ACTION_RE.test(text2) && STATEFUL_MUTE_ROLES.has(role)) {
       if (source.ariaChecked === "true") return true;
       if (source.ariaChecked === "false") return false;
       return null;
     }
-    if (UNMUTE_ACTION_RE.test(text) || MUTE_ACTION_RE.test(text)) {
+    if (UNMUTE_ACTION_RE.test(text2) || MUTE_ACTION_RE.test(text2)) {
       return tag === "button" || MUTE_ACTION_ROLES.has(role) ? signal : null;
     }
     if (tag === "a" || tag === "img" || role === "link" || role === "row" || role === "gridcell") {
@@ -6588,10 +6680,10 @@ ${button.innerHTML}`)
     const labels = [];
     const seen = /* @__PURE__ */ new Set();
     const push = (value) => {
-      const text = (value || "").replace(/\s+/g, " ").trim();
-      if (!text || seen.has(text)) return;
-      seen.add(text);
-      labels.push(text);
+      const text2 = (value || "").replace(/\s+/g, " ").trim();
+      if (!text2 || seen.has(text2)) return;
+      seen.add(text2);
+      labels.push(text2);
     };
     const inspect2 = (el) => {
       for (const attr of LABEL_ATTRS) {
@@ -6772,16 +6864,16 @@ ${button.innerHTML}`)
     return rewritten;
   }
   function messengerId(value, i64ToString) {
-    let text = value;
-    if (typeof value === "number" || typeof value === "bigint") text = String(value);
+    let text2 = value;
+    if (typeof value === "number" || typeof value === "bigint") text2 = String(value);
     else if (typeof value !== "string" && value != null && i64ToString) {
       try {
-        text = i64ToString(value);
+        text2 = i64ToString(value);
       } catch {
         return null;
       }
     }
-    return typeof text === "string" && /^\d+$/.test(text) ? text : null;
+    return typeof text2 === "string" && /^\d+$/.test(text2) ? text2 : null;
   }
   var MESSAGE_LIMIT = 100;
   var PageMessageIndex = class {
@@ -7296,13 +7388,13 @@ ${button.innerHTML}`)
         });
         return;
       }
-      let current = wrap(page.__d);
+      let current2 = wrap(page.__d);
       Object.defineProperty(window, "__d", {
         configurable: true,
         enumerable: true,
-        get: () => current,
+        get: () => current2,
         set: (value) => {
-          current = wrap(value);
+          current2 = wrap(value);
         }
       });
     } catch (_) {
@@ -7404,9 +7496,9 @@ ${button.innerHTML}`)
   function initFullscreenPolyfill() {
     if (document.fullscreenEnabled && Element.prototype.requestFullscreen)
       return;
-    let current = null;
+    let current2 = null;
     const enter = (el) => {
-      current = el;
+      current2 = el;
       el.dataset.chatpanePrevStyle = el.getAttribute("style") || "";
       Object.assign(el.style, {
         position: "fixed",
@@ -7420,15 +7512,15 @@ ${button.innerHTML}`)
       return Promise.resolve();
     };
     const leave = () => {
-      if (current) {
-        current.setAttribute("style", current.dataset.chatpanePrevStyle || "");
-        delete current.dataset.chatpanePrevStyle;
-        current = null;
+      if (current2) {
+        current2.setAttribute("style", current2.dataset.chatpanePrevStyle || "");
+        delete current2.dataset.chatpanePrevStyle;
+        current2 = null;
         document.dispatchEvent(new Event("fullscreenchange"));
       }
       return Promise.resolve();
     };
-    Object.defineProperty(document, "fullscreenElement", { get: () => current, configurable: true });
+    Object.defineProperty(document, "fullscreenElement", { get: () => current2, configurable: true });
     Element.prototype.requestFullscreen = function() {
       return enter(this);
     };
@@ -7438,7 +7530,7 @@ ${button.innerHTML}`)
     document.addEventListener(
       "keydown",
       (e) => {
-        if (e.key === "Escape" && current) leave();
+        if (e.key === "Escape" && current2) leave();
       },
       true
     );
@@ -7472,9 +7564,9 @@ ${button.innerHTML}`)
     };
     return { start: locate(from, false), end: locate(to, true) };
   }
-  function prefixRange(text, prefix) {
-    const lead = text.length - text.trimStart().length;
-    if (!prefix || !text.startsWith(prefix, lead)) return null;
+  function prefixRange(text2, prefix) {
+    const lead = text2.length - text2.trimStart().length;
+    if (!prefix || !text2.startsWith(prefix, lead)) return null;
     return [lead, lead + prefix.length];
   }
   var NAME_CHAR = "[\\p{L}\\p{M}\\p{N}_.'-]";
@@ -7483,8 +7575,8 @@ ${button.innerHTML}`)
     `(^|[^\\p{L}\\p{M}\\p{N}_])(@${NAME_CHAR}+(?:[ \\u00a0](?:${PARTICLE}[ \\u00a0])*\\p{Lu}${NAME_CHAR}*){0,3})`,
     "gu"
   );
-  function mentionRanges(text) {
-    return [...text.matchAll(MENTION_RE)].map((m) => {
+  function mentionRanges(text2) {
+    return [...text2.matchAll(MENTION_RE)].map((m) => {
       const start = m.index + m[1].length;
       return [start, start + m[2].length];
     });
@@ -7844,9 +7936,9 @@ ${button.innerHTML}`)
     if (!paste.fileTypes.length || !paste.fileTypes.every((type) => type.startsWith("image/"))) {
       return false;
     }
-    const text = paste.text.trim();
-    if (!text && paste.htmlText === null) return false;
-    if (text && !ADDRESS.test(text)) return false;
+    const text2 = paste.text.trim();
+    if (!text2 && paste.htmlText === null) return false;
+    if (text2 && !ADDRESS.test(text2)) return false;
     if (paste.htmlText === null) return true;
     return !paste.htmlText.trim() && paste.htmlHasImage;
   }
@@ -8011,6 +8103,7 @@ ${button.innerHTML}`)
     if (chatpaneMediaPlatform !== "linux" || engineSupportsCalls(window)) return;
     const host = document.createElement("div");
     host.id = "chatpane-linux-call-notice";
+    Object.assign(host, language());
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>
     :host { all: initial; color-scheme: light dark;
@@ -8029,13 +8122,12 @@ ${button.innerHTML}`)
     button { all: unset; color: var(--link); font-weight: 600; cursor: pointer; }
     button:hover { text-decoration: underline; }
     button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 3px; }
-  </style><section role="note">
-    <strong>Calls don't work on Linux yet</strong>
-    <p>The browser engine Chatpane uses on Linux is missing the calling support Messenger
-      needs, so voice and video calls can't start here.</p>
-    <button type="button">Read more about it</button>
-  </section>`;
-    root.querySelector("button").addEventListener("click", () => openUrl(ISSUE_URL));
+  </style><section role="note"><strong></strong><p></p><button type="button"></button></section>`;
+    root.querySelector("strong").textContent = t("page.linux_calls.title");
+    root.querySelector("p").textContent = t("page.linux_calls.body");
+    const more = root.querySelector("button");
+    more.textContent = t("page.linux_calls.read_more");
+    more.addEventListener("click", () => openUrl(ISSUE_URL));
     const hideFacebookTooltips = document.createElement("style");
     hideFacebookTooltips.textContent = '[role="tooltip"] { visibility: hidden !important; }';
     let anchor = null;
@@ -8167,9 +8259,9 @@ ${button.innerHTML}`)
     let tidyObserver = null;
     const prefersDark = () => !!window.matchMedia?.("(prefers-color-scheme: dark)").matches;
     const wantDark = () => {
-      const t = window.__CHATPANE_SETTINGS__?.theme;
-      if (t === "dark") return true;
-      if (t === "light") return false;
+      const t2 = window.__CHATPANE_SETTINGS__?.theme;
+      if (t2 === "dark") return true;
+      if (t2 === "light") return false;
       return prefersDark();
     };
     const isRequiredLoginUi = (el) => {
@@ -8494,8 +8586,10 @@ ${button.innerHTML}`)
     if (constraints?.audio) devices.push("microphone");
     return devices;
   }
-  function mediaDeviceLabel(devices) {
-    return devices.join(" and ") || "media device";
+  function forDevices(devices, text2) {
+    const camera = devices.includes("camera");
+    if (camera && devices.includes("microphone")) return text2.both;
+    return camera ? text2.camera : text2.microphone;
   }
   function captureFailure(error) {
     const name = error && typeof error === "object" && "name" in error ? error.name : void 0;
@@ -8518,26 +8612,45 @@ ${button.innerHTML}`)
   function mediaPrivacyGuidance(platform) {
     switch (platform) {
       case "macos":
-        return "Check System Settings → Privacy & Security and allow Chatpane access. Then try the call again.";
+        return t("page.media.guidance.macos");
       case "windows":
-        return "Check Settings → Privacy & security and allow desktop apps access. Then try the call again.";
+        return t("page.media.guidance.windows");
       case "linux":
-        return "Check your desktop’s privacy and sound input settings, hardware privacy switches, and any sandbox permissions for Chatpane. Then try the call again.";
+        return t("page.media.guidance.linux");
     }
   }
   function captureFailureMessage(failure, devices) {
-    const label2 = mediaDeviceLabel(devices);
     switch (failure) {
       case "denied":
-        return `Access was denied for the requested ${label2}.`;
+        return forDevices(devices, {
+          camera: t("page.media.denied.camera"),
+          microphone: t("page.media.denied.microphone"),
+          both: t("page.media.denied.both")
+        });
       case "missing":
-        return `No matching device was found for the requested ${label2}. Check that the devices are connected and enabled, then try again.`;
+        return forDevices(devices, {
+          camera: t("page.media.missing.camera"),
+          microphone: t("page.media.missing.microphone"),
+          both: t("page.media.missing.both")
+        });
       case "unavailable":
-        return `The requested ${label2} could not start. Close other apps using these devices, check the connection, and try again.`;
+        return forDevices(devices, {
+          camera: t("page.media.unavailable.camera"),
+          microphone: t("page.media.unavailable.microphone"),
+          both: t("page.media.unavailable.both")
+        });
       case "constraints":
-        return `The requested ${label2} settings are not supported. Choose another device or call setting in Messenger and try again.`;
+        return forDevices(devices, {
+          camera: t("page.media.constraints.camera"),
+          microphone: t("page.media.constraints.microphone"),
+          both: t("page.media.constraints.both")
+        });
       case "other":
-        return `Capture failed for the requested ${label2}. Check Messenger’s call settings and try again.`;
+        return forDevices(devices, {
+          camera: t("page.media.other.camera"),
+          microphone: t("page.media.other.microphone"),
+          both: t("page.media.other.both")
+        });
     }
   }
   function canActivateMediaPrivacy(isTrusted, isActive) {
@@ -8579,7 +8692,6 @@ ${button.innerHTML}`)
   };
 
   // inject/src/messenger/features/media-permission-card.ts
-  var names = { camera: "Camera", microphone: "Microphone" };
   var icons = {
     camera: '<rect x="3" y="6" width="12" height="12" rx="3"/><path d="m15 10 6-3v10l-6-3"/>',
     microphone: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 10v2a6 6 0 0 0 12 0v-2M12 18v3m-3 0h6"/>'
@@ -8596,6 +8708,7 @@ ${button.innerHTML}`)
     const platform = chatpaneMediaPlatform;
     const host = document.createElement("div");
     host.id = "chatpane-media-permission-banner";
+    Object.assign(host, language());
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>
     :host { all: initial; position: fixed; bottom: 68px; right: 20px; z-index: 2147483646;
@@ -8629,14 +8742,16 @@ ${button.innerHTML}`)
     button:disabled { opacity: .6; cursor: wait; } [hidden] { display: none !important; }
     footer { display: flex; justify-content: space-between; gap: 10px; align-items: center;
       border-top: 1px solid var(--border); padding-top: 10px; font-size: 10px; color: var(--muted); }
-    footer button { color: var(--focus); background: transparent; padding: 5px 0 5px 8px; font-weight: 500; }
+    footer button { color: var(--focus); background: transparent; padding-block: 5px; padding-inline: 8px 0; font-weight: 500; }
     .guidance { margin: 0 0 12px; font-size: 11px; }
-  </style><section aria-label="Call device recovery">
+  </style><section>
     <header><span class="icon header-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${icons[devices.includes("camera") ? "camera" : "microphone"]}</svg></span>
       <div><h2 role="alert"></h2><p class="description"></p></div></header>
     <div class="devices"></div><p class="guidance"></p>
-    <footer><span></span><button type="button">Dismiss</button></footer>
+    <footer><span></span><button type="button"></button></footer>
   </section>`;
+    root.querySelector("section").setAttribute("aria-label", t("page.media.card_label"));
+    root.querySelector("footer button").textContent = t("page.media.dismiss");
     const title = root.querySelector("h2");
     const description = root.querySelector(".description");
     const guidance = root.querySelector(".guidance");
@@ -8650,8 +8765,9 @@ ${button.innerHTML}`)
       const row = document.createElement("div");
       row.className = "device";
       row.innerHTML = `<span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24">${icons[device]}</svg></span>
-      <div class="info"><strong>${names[device]}</strong><span class="status"></span></div>
+      <div class="info"><strong></strong><span class="status"></span></div>
       <span class="check" aria-hidden="true" hidden>✓</span><button type="button" hidden></button>`;
+      row.querySelector("strong").textContent = device === "camera" ? t("page.media.camera") : t("page.media.microphone");
       root.querySelector(".devices").append(row);
       const button = row.querySelector("button");
       button.addEventListener("click", async (event) => {
@@ -8668,7 +8784,7 @@ ${button.innerHTML}`)
             await chatpaneOpenMediaPrivacy(device);
           }
         } catch {
-          actionError = `The action could not finish. ${mediaPrivacyGuidance(platform)}`;
+          actionError = t("page.media.action_failed", { guidance: mediaPrivacyGuidance(platform) });
         } finally {
           pending = false;
           if (!disposed) {
@@ -8687,26 +8803,31 @@ ${button.innerHTML}`)
     const render = () => {
       const blocked = devices.filter((device) => snapshot[device] === "denied");
       const restricted = devices.some((device) => snapshot[device] === "restricted");
-      title.textContent = confirmation ? "Access updated" : failure === "denied" ? blocked.length === 1 ? `${names[blocked[0]]} access is blocked` : "Call access needs attention" : "Your call could not start";
-      description.textContent = confirmation ? "Try your call again in Messenger." : permissionOnly && blocked.length ? `Allow Chatpane to use your ${mediaDeviceLabel(blocked)} for calls.` : failureDescription;
-      guidance.textContent = actionError || (failure === "denied" && !confirmation ? restricted ? "Access is restricted by system policy. Check with the person who manages this Mac." : devices.every((device) => snapshot[device] === "allowed") ? "macOS allows access. Check Messenger’s call settings and try again." : mediaPrivacyGuidance(platform) : "");
+      title.textContent = confirmation ? t("page.media.access_updated") : failure === "denied" ? blocked.length === 1 ? blocked[0] === "camera" ? t("page.media.blocked.camera") : t("page.media.blocked.microphone") : t("page.media.needs_attention") : t("page.media.call_failed");
+      description.textContent = confirmation ? t("page.media.try_again") : permissionOnly && blocked.length ? forDevices(blocked, {
+        camera: t("page.media.allow.camera"),
+        microphone: t("page.media.allow.microphone"),
+        both: t("page.media.allow.both")
+      }) : failureDescription;
+      guidance.textContent = actionError || (failure === "denied" && !confirmation ? restricted ? t("page.media.restricted_guidance") : devices.every((device) => snapshot[device] === "allowed") ? t("page.media.macos_allows") : mediaPrivacyGuidance(platform) : "");
       guidance.hidden = !guidance.textContent;
       for (const { device, button, status, check } of rows) {
         const state3 = snapshot[device];
-        status.textContent = state3 === "allowed" ? "Allowed by macOS" : state3 === "denied" ? "Blocked in macOS Settings" : state3 === "restricted" ? "Restricted by system policy" : state3 === "not-determined" ? "Not requested yet" : "Status unavailable";
+        status.textContent = state3 === "allowed" ? t("page.media.status.allowed") : state3 === "denied" ? t("page.media.status.denied") : state3 === "restricted" ? t("page.media.status.restricted") : state3 === "not-determined" ? t("page.media.status.not_determined") : t("page.media.status.unknown");
         status.dataset.tone = state3 === "allowed" ? "good" : state3 === "denied" || state3 === "restricted" ? "warning" : "neutral";
         check.hidden = state3 !== "allowed";
         const allow = state3 === "not-determined" && platform === "macos" && failures2.get(device) === "denied" && devices.includes(device);
         const settings = state3 === "denied" && failures2.get(device) === "denied" || state3 === "unknown" && failures2.get(device) === "denied" && devices.includes(device) && platform !== "linux";
         button.hidden = !allow && !settings;
-        button.textContent = allow ? "Allow access" : "Open Settings";
+        button.textContent = allow ? t("page.media.allow_access") : t("page.media.open_settings");
+        const camera = device === "camera";
         button.setAttribute(
           "aria-label",
-          `${allow ? "Allow access to" : "Open settings for"} ${device}`
+          allow ? camera ? t("page.media.allow_access_to.camera") : t("page.media.allow_access_to.microphone") : camera ? t("page.media.open_settings_for.camera") : t("page.media.open_settings_for.microphone")
         );
         button.disabled = pending;
       }
-      footer.textContent = pending ? "Checking access…" : platform === "macos" ? "Rechecks when you return" : "OS permission status unavailable";
+      footer.textContent = pending ? t("page.media.checking") : platform === "macos" ? t("page.media.rechecks") : t("page.media.status_unavailable");
     };
     const accept = (next) => {
       if (disposed) return;
@@ -9064,16 +9185,16 @@ ${button.innerHTML}`)
       const source = node.getAttribute?.("src") || "";
       return !source || EMOJI_SOURCE_RE.test(source) ? emojiGlyph(node.getAttribute?.("alt")) : "";
     }
-    let text = "";
-    for (const child of Array.from(node.childNodes || [])) text += conversationNodeText(child);
-    return text || emojiGlyph(node.getAttribute?.("aria-label"));
+    let text2 = "";
+    for (const child of Array.from(node.childNodes || [])) text2 += conversationNodeText(child);
+    return text2 || emojiGlyph(node.getAttribute?.("aria-label"));
   }
   function plainNodeText(node) {
     if (node.nodeType === 3) return node.nodeValue || "";
     if (node.nodeType !== 1) return "";
-    let text = "";
-    for (const child of Array.from(node.childNodes || [])) text += plainNodeText(child);
-    return text;
+    let text2 = "";
+    for (const child of Array.from(node.childNodes || [])) text2 += plainNodeText(child);
+    return text2;
   }
   function hasCandidateTextChild(node) {
     for (const child of Array.from(node.childNodes || [])) {
@@ -9087,7 +9208,7 @@ ${button.innerHTML}`)
   function conversationTextParts(candidates, canonicalBody) {
     const values = [];
     const eligible = candidates.filter(
-      ({ text, width: width2, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width2 > 1 && height > 1 && text.trim().length > 0
+      ({ text: text2, width: width2, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width2 > 1 && height > 1 && text2.trim().length > 0
     );
     const textNodes = new Set(eligible.map(({ node }) => node).filter(Boolean));
     for (const candidate of eligible.filter(({ node }) => {
@@ -9096,17 +9217,17 @@ ${button.innerHTML}`)
       }
       return true;
     }).sort((left, right) => left.y - right.y || left.x - right.x)) {
-      const text = candidate.text.replace(/\s+/g, " ").trim();
-      if (!text) continue;
+      const text2 = candidate.text.replace(/\s+/g, " ").trim();
+      if (!text2) continue;
       const last = values[values.length - 1];
       if (last && Math.abs(last.y - candidate.y) < 1) {
-        if (last.text.includes(text)) continue;
-        if (text.includes(last.text)) {
-          values[values.length - 1] = { text, y: candidate.y };
+        if (last.text.includes(text2)) continue;
+        if (text2.includes(last.text)) {
+          values[values.length - 1] = { text: text2, y: candidate.y };
           continue;
         }
       }
-      values.push({ text, y: candidate.y });
+      values.push({ text: text2, y: candidate.y });
     }
     const body = values[1]?.text || "";
     return {
@@ -9114,9 +9235,9 @@ ${button.innerHTML}`)
       body: (canonicalBody ? canonicalBody(body) : body).slice(0, ROW_BODY_LIMIT)
     };
   }
-  function isUnreadConversationText(fontWeight, text) {
+  function isUnreadConversationText(fontWeight, text2) {
     const weight = typeof fontWeight === "number" ? fontWeight : Number.parseInt(fontWeight, 10) || 0;
-    return weight >= 600 && text.trim().length > 1;
+    return weight >= 600 && text2.trim().length > 1;
   }
 
   // inject/src/messenger/lib/notification-fallback.ts
@@ -9140,10 +9261,10 @@ ${button.innerHTML}`)
      * hydration a row can render its text before its unread styling, and that
      * flap would otherwise report as a new message.
      */
-    observe(current, observedKeys, confirmedRead, readTransitions) {
+    observe(current2, observedKeys, confirmedRead, readTransitions) {
       const currentKeys = /* @__PURE__ */ new Set();
       const changed = [];
-      for (const conversation of current) {
+      for (const conversation of current2) {
         currentKeys.add(conversation.key);
         const previous = this.signatures.get(conversation.key);
         const wasRead = this.readSince.delete(conversation.key);
@@ -9349,15 +9470,15 @@ ${button.innerHTML}`)
     markHandled(conversationKey, fingerprint, bodyHash, suppressed) {
       this.readStreaks.delete(conversationKey);
       const retired = this.readFingerprints.delete(conversationKey);
-      const current = this.entries.get(conversationKey);
-      if (current?.fingerprint === fingerprint && !current.legacy) {
+      const current2 = this.entries.get(conversationKey);
+      if (current2?.fingerprint === fingerprint && !current2.legacy) {
         let changed = false;
-        if (bodyHash !== void 0 && current.bodyHash !== bodyHash) {
-          current.bodyHash = bodyHash;
+        if (bodyHash !== void 0 && current2.bodyHash !== bodyHash) {
+          current2.bodyHash = bodyHash;
           changed = true;
         }
-        if (current.suppressed !== suppressed) {
-          current.suppressed = suppressed;
+        if (current2.suppressed !== suppressed) {
+          current2.suppressed = suppressed;
           changed = true;
         }
         if (changed || retired) this.persist();
@@ -10159,7 +10280,7 @@ ${button.innerHTML}`)
   }
   function notificationPhotoText(title, body, hasThumbnail) {
     if (hasThumbnail && isPhotoSummary(body)) {
-      return { title: `${title} sent an image:`, body: "" };
+      return { title: t("page.notification.sent_image", { name: title }), body: "" };
     }
     return { title, body };
   }
@@ -10240,9 +10361,9 @@ ${button.innerHTML}`)
       const leaves = [...link.querySelectorAll("span")].filter(
         (span) => !span.closest('[aria-hidden="true"]') && !hasCandidateTextChild(span)
       );
-      const labels = (leaves.length ? leaves.map(conversationNodeText) : [conversationNodeText(link)]).map((text) => text.replace(/\s+/g, " ").trim()).filter((text) => {
-        const label2 = text.toLowerCase().replace(/^www\./, "");
-        return text && !linkTarget(text) && label2 !== target.host && label2 !== target.provider.toLowerCase();
+      const labels = (leaves.length ? leaves.map(conversationNodeText) : [conversationNodeText(link)]).map((text2) => text2.replace(/\s+/g, " ").trim()).filter((text2) => {
+        const label2 = text2.toLowerCase().replace(/^www\./, "");
+        return text2 && !linkTarget(text2) && label2 !== target.host && label2 !== target.provider.toLowerCase();
       });
       const title = labels[0] || "";
       const image = [...link.querySelectorAll("img")].find((image2) => {
@@ -10269,10 +10390,10 @@ ${button.innerHTML}`)
     );
     const title = titles.size === 1 ? [...titles][0] : "";
     if (target.provider === "YouTube" || target.provider === "Spotify") {
-      const summary = `Sent a ${target.provider} link`;
-      return title ? `${summary}: ${title}`.slice(0, 240) : summary;
+      const { provider } = target;
+      return title ? t("page.notification.sent_provider_link_titled", { provider, title }).slice(0, 240) : t("page.notification.sent_provider_link", { provider });
     }
-    return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
+    return title ? t("page.notification.sent_link", { title, host: target.host }).slice(0, 240) : body;
   }
 
   // inject/src/messenger/lib/reload-safe-storage.ts
@@ -10390,8 +10511,8 @@ ${button.innerHTML}`)
     const m = (title || "").match(/^\s*\((\d+)\)/);
     return m ? parseInt(m[1], 10) : 0;
   }
-  function didMutedFilterPolicyChange(previous, current) {
-    return previous !== null && previous !== current;
+  function didMutedFilterPolicyChange(previous, current2) {
+    return previous !== null && previous !== current2;
   }
   var UnreadListReadiness = class {
     constructor() {
@@ -10593,7 +10714,7 @@ ${button.innerHTML}`)
     };
     const avatarToDataUrl = (url) => facesToDataUrl([url]);
     const isMac4 = /mac/i.test(navigator.platform);
-    const groupPicture2 = (names2) => isMac4 ? names2.then(
+    const groupPicture2 = (names) => isMac4 ? names.then(
       (group) => group?.isGroup && group.picture ? avatarToDataUrl(group.picture) : ""
     ) : Promise.resolve("");
     const withGroupPicture = (sender, picture) => sender?.group && picture ? { ...sender, group_picture: picture } : sender;
@@ -10831,7 +10952,7 @@ ${button.innerHTML}`)
         }
         const matchWait = pageMatch.signal?.matchPromise && !taggedThread && (ignoresMutedConversations(s) || groupFiltering()) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
         const identityMatchWait = pageMatch.signal && !taggedThread && !hidePreviewAtConstruction ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
-        const names2 = Promise.all([matchWait, identityMatchWait]).then(
+        const names = Promise.all([matchWait, identityMatchWait]).then(
           () => hidePreviewAtConstruction || window.__CHATPANE_SETTINGS__?.hide_notification_preview ? null : conversationNames(
             threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || ""
           )
@@ -10857,8 +10978,8 @@ ${button.innerHTML}`)
           avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
           kindWait,
           thumbnail,
-          names2,
-          groupPicture2(names2)
+          names,
+          groupPicture2(names)
         ]).then(([icon2, , image, group, picture]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
@@ -10926,7 +11047,7 @@ ${button.innerHTML}`)
             showNicknames(nicknameMode(deliverySettings), group?.isGroup),
             group?.isGroup && displayTitle ? "group" : "unknown"
           );
-          const text = notificationPhotoText(
+          const text2 = notificationPhotoText(
             displayTitle || named.title,
             richMessageBody(named.body, threadPath),
             Boolean(image)
@@ -10945,8 +11066,8 @@ ${button.innerHTML}`)
           );
           emitNotification(
             id,
-            hidePreview ? "Messenger" : text.title,
-            hidePreview ? "New message" : text.body,
+            hidePreview ? "Messenger" : text2.title,
+            hidePreview ? t("page.notification.hidden_body") : text2.body,
             hidePreview ? "" : icon2,
             pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
             () => {
@@ -11158,7 +11279,7 @@ ${button.innerHTML}`)
         };
       });
       let displayBody = "";
-      const text = conversationTextParts(surfaces, (body) => {
+      const text2 = conversationTextParts(surfaces, (body) => {
         displayBody = body.slice(0, 240);
         return nativeSnippetPrefixes.original(id, body);
       });
@@ -11176,9 +11297,9 @@ ${button.innerHTML}`)
       return {
         key: id,
         threadPath: `/t/${id}/`,
-        title: nativeThreadTitles.original(id, text.title),
-        displayTitle: text.title,
-        body: text.body,
+        title: nativeThreadTitles.original(id, text2.title),
+        displayTitle: text2.title,
+        body: text2.body,
         displayBody,
         draft: nativeSnippetPrefixes.isDraft(id, displayBody),
         // Every face the row draws, in render order. A photo-less group renders
@@ -11274,7 +11395,7 @@ ${button.innerHTML}`)
       emitNotification(
         ++notifySeq,
         hidePreview ? "Messenger" : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
-        hidePreview ? "New message" : fallback.displayBody,
+        hidePreview ? t("page.notification.hidden_body") : fallback.displayBody,
         "",
         fallback.dedupeKey,
         () => window.__chatpaneOpenThread?.(fallback.threadPath),
@@ -11340,8 +11461,8 @@ ${button.innerHTML}`)
       );
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
       const hiddenAtConstruction = window.__CHATPANE_SETTINGS__?.hide_notification_preview === true;
-      const names2 = hiddenAtConstruction ? Promise.resolve(null) : conversationNames(conversation.key);
-      const senderAvatar = hiddenAtConstruction ? Promise.resolve("") : names2.then((group) => {
+      const names = hiddenAtConstruction ? Promise.resolve(null) : conversationNames(conversation.key);
+      const senderAvatar = hiddenAtConstruction ? Promise.resolve("") : names.then((group) => {
         const person = notificationSender(conversation.body, group);
         return avatarToDataUrl(person ? person.avatar || senderIcon : group ? "" : senderIcon);
       });
@@ -11364,7 +11485,7 @@ ${button.innerHTML}`)
           return;
         }
         const hiddenBeforeImages = settings.hide_notification_preview === true;
-        const [sender, thread2, image, group, picture] = hiddenBeforeImages ? ["", "", "", null, ""] : await Promise.all([senderAvatar, threadAvatar, thumbnail, names2, groupPicture2(names2)]);
+        const [sender, thread2, image, group, picture] = hiddenBeforeImages ? ["", "", "", null, ""] : await Promise.all([senderAvatar, threadAvatar, thumbnail, names, groupPicture2(names)]);
         const presentation = notificationPresentation(
           nativeThreadTitles.displayed(
             conversation.key,
@@ -11420,11 +11541,11 @@ ${button.innerHTML}`)
           showNicknames(nicknameMode(deliverySettings), group?.isGroup),
           visiblePresentation.subtitle ? "sender" : "group"
         );
-        const text = notificationPhotoText(named.title, named.body, Boolean(image));
+        const text2 = notificationPhotoText(named.title, named.body, Boolean(image));
         emitNotification(
           ++notifySeq,
-          hidePreview ? "Messenger" : text.title,
-          hidePreview ? "New message" : text.body,
+          hidePreview ? "Messenger" : text2.title,
+          hidePreview ? t("page.notification.hidden_body") : text2.body,
           hidePreview ? "" : icon2,
           dedupeKey,
           () => {
@@ -12283,8 +12404,8 @@ ${button.innerHTML}`)
     const staleLog = log();
     if (window.__chatpaneOpenThread?.(path) !== true) return null;
     return () => {
-      const current = log();
-      return onRoute() && current !== null && current !== staleLog;
+      const current2 = log();
+      return onRoute() && current2 !== null && current2 !== staleLog;
     };
   }
   function stopThreadRestore() {
@@ -12312,12 +12433,12 @@ ${button.innerHTML}`)
     }
     const attempt = () => {
       if (cancelled) return;
-      const current = threadIdFromHref(location.pathname);
-      if (lastThread && current !== lastThread && current !== id) {
+      const current2 = threadIdFromHref(location.pathname);
+      if (lastThread && current2 !== lastThread && current2 !== id) {
         cancelThreadRestore();
         return;
       }
-      lastThread = current ?? lastThread;
+      lastThread = current2 ?? lastThread;
       let done = false;
       try {
         done = sessionStorage.getItem(RESTORED_THREAD_KEY) === id;
@@ -12328,7 +12449,7 @@ ${button.innerHTML}`)
       ].find((a) => threadIdFromHref(a.getAttribute("href")) === id);
       const step = threadRestoreStep({
         done,
-        onThread: current === id,
+        onThread: current2 === id,
         rowFound: !!row,
         waitedMs: Date.now() - startedAt
       });
@@ -12396,7 +12517,7 @@ ${button.innerHTML}`)
         btn.click();
         return true;
       }
-      toast("Open a conversation first");
+      toast(t("page.thread.open_first"));
       return false;
     };
   }
@@ -12639,8 +12760,8 @@ ${button.innerHTML}`)
       () => diag("quick-reply.ack", "reply acknowledgement emit failed")
     );
   };
-  var validRequest = (path, text, id, attempt) => threadPathId(path) !== null && text.trim().length > 0 && [...text].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0;
-  async function deliver(path, text, id, state3) {
+  var validRequest = (path, text2, id, attempt) => threadPathId(path) !== null && text2.trim().length > 0 && [...text2].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0;
+  async function deliver(path, text2, id, state3) {
     const wantedThread = threadPathId(path);
     if (!wantedThread || currentThreadId() !== wantedThread && window.__chatpaneOpenThread?.(path) !== true) {
       diag("quick-reply.open", "validated thread could not be opened");
@@ -12670,7 +12791,7 @@ ${button.innerHTML}`)
         const snapshot = {
           threadMatches: currentThreadId() === wantedThread,
           composerReady: box !== null,
-          draftMatches: composerContainsReply(box ? composerText(box) : null, text),
+          draftMatches: composerContainsReply(box ? composerText(box) : null, text2),
           sendAvailable: button !== null,
           composerEmpty: !box || !composerText(box).trim(),
           manualSubmitted
@@ -12685,11 +12806,11 @@ ${button.innerHTML}`)
             if (!box) return false;
             controls = composerControls(box);
             box.focus();
-            if (!document.execCommand("insertText", false, text)) {
+            if (!document.execCommand("insertText", false, text2)) {
               diag("quick-reply.insert", "composer rejected insertText");
               return false;
             }
-            insertedReplies.set(id, { path, text });
+            insertedReplies.set(id, { path, text: text2 });
             break;
           }
           case "send":
@@ -12711,7 +12832,7 @@ ${button.innerHTML}`)
       document.removeEventListener("click", onClick, true);
     }
   }
-  async function preserveDraft(path, text, id) {
+  async function preserveDraft(path, text2, id) {
     const wantedThread = threadPathId(path);
     if (!wantedThread || currentThreadId() !== wantedThread && window.__chatpaneOpenThread?.(path) !== true) {
       return false;
@@ -12721,14 +12842,14 @@ ${button.innerHTML}`)
       const box = composer();
       if (currentThreadId() === wantedThread && box) {
         box.focus();
-        if (!text) return true;
+        if (!text2) return true;
         const inserted = insertedReplies.get(id);
-        const current = composerText(box);
-        if (composerContainsReply(current, text) || inserted?.path === path && inserted.text === text && composerIncludesReply(current, text)) {
+        const current2 = composerText(box);
+        if (composerContainsReply(current2, text2) || inserted?.path === path && inserted.text === text2 && composerIncludesReply(current2, text2)) {
           insertedReplies.delete(id);
           return true;
         }
-        if (current.trim()) {
+        if (current2.trim()) {
           const selection = window.getSelection();
           const range = document.createRange();
           range.selectNodeContents(box);
@@ -12737,14 +12858,14 @@ ${button.innerHTML}`)
           selection?.addRange(range);
           if (!document.execCommand("insertText", false, `
 
-${text}`)) {
+${text2}`)) {
             diag("quick-reply.draft", "fallback append failed");
             return false;
           }
           insertedReplies.delete(id);
           return true;
         }
-        if (!document.execCommand("insertText", false, text)) {
+        if (!document.execCommand("insertText", false, text2)) {
           diag("quick-reply.draft", "fallback insertText failed");
           return false;
         }
@@ -12759,8 +12880,8 @@ ${text}`)) {
   function initQuickReply() {
     window.__chatpaneQuickReply = (path, rawText, id, attempt) => {
       noteExplicitAction();
-      const text = String(rawText);
-      if (!validRequest(path, text, id, attempt)) {
+      const text2 = String(rawText);
+      if (!validRequest(path, text2, id, attempt)) {
         emitReplyResult(id, attempt, false);
         return;
       }
@@ -12770,7 +12891,7 @@ ${text}`)) {
       replyAttempts.set(id, state3);
       if (replyAttempts.size > 128) replyAttempts.delete(replyAttempts.keys().next().value);
       void withComposerDelivery(async () => {
-        const ok = await deliver(path, text, id, state3);
+        const ok = await deliver(path, text2, id, state3);
         state3.sent = ok;
         return ok;
       }).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
@@ -12780,7 +12901,7 @@ ${text}`)) {
     };
     window.__chatpaneQuickReplyDraft = (path, rawText, id, attempt) => {
       noteExplicitAction();
-      const text = String(rawText);
+      const text2 = String(rawText);
       if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) {
         emitReplyResult(id, attempt, false);
         return;
@@ -12798,7 +12919,7 @@ ${text}`)) {
         }
       }
       void withComposerDeliveryWhenAvailable(
-        () => state3?.clicked || state3?.sent ? Promise.resolve(true) : preserveDraft(path, text, id)
+        () => state3?.clicked || state3?.sent ? Promise.resolve(true) : preserveDraft(path, text2, id)
       ).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");
         emitReplyResult(id, attempt, false);
@@ -13006,14 +13127,14 @@ ${text}`)) {
 
   // inject/src/messenger/lib/recent-threads.ts
   var MAX_NAME_CHARS = 60;
-  function conversationTitle2(names2, viewer, mode) {
-    const nicknames = showNicknames(mode, names2.isGroup);
-    const others = names2.participants.filter((person) => person.id !== viewer);
-    if (!names2.isGroup) {
+  function conversationTitle2(names, viewer, mode) {
+    const nicknames = showNicknames(mode, names.isGroup);
+    const others = names.participants.filter((person) => person.id !== viewer);
+    if (!names.isGroup) {
       const [person, extra] = others;
       return person && !extra ? nicknames && person.nickname || person.name : "";
     }
-    if (names2.title.trim()) return names2.title;
+    if (names.title.trim()) return names.title;
     return others.map((person) => nicknames && person.nickname || participantFirstName(person)).filter(Boolean).join(", ");
   }
   var MAX_ROWS_READ = 576;
@@ -13049,9 +13170,9 @@ ${text}`)) {
             if (typeof id !== "string" || !/^\d+$/.test(id) || seen.has(id)) continue;
             let name = types.isGroup(thread2.threadType) === true && typeof thread2.threadName === "string" ? thread2.threadName.trim() : "";
             if (!name) {
-              const names2 = await readConversationNotificationNames(id, load2);
+              const names = await readConversationNotificationNames(id, load2);
               if (stopped) return out;
-              name = names2 ? conversationTitle2(names2, viewer, mode).trim() : "";
+              name = names ? conversationTitle2(names, viewer, mode).trim() : "";
             }
             name || (name = fallbackName?.(id) ?? "");
             if (!name) continue;
@@ -13077,8 +13198,8 @@ ${text}`)) {
     const rowName = (a) => {
       const row = a.closest('[role="row"]') || a;
       for (const span of row.querySelectorAll("span")) {
-        const t = (span.textContent || "").replace(/\s+/g, " ").trim();
-        if (t && !SEPARATOR_RE.test(t)) return t.slice(0, 60);
+        const t2 = (span.textContent || "").replace(/\s+/g, " ").trim();
+        if (t2 && !SEPARATOR_RE.test(t2)) return t2.slice(0, 60);
       }
       return "";
     };
@@ -13091,20 +13212,20 @@ ${text}`)) {
       return false;
     };
     const rowNames = () => {
-      const names2 = /* @__PURE__ */ new Map();
+      const names = /* @__PURE__ */ new Map();
       for (const a of chatRows()) {
         const id = threadIdFromHref(a.getAttribute("href"));
-        if (id && !names2.has(id)) names2.set(id, rowName(a));
+        if (id && !names.has(id)) names.set(id, rowName(a));
       }
-      return names2;
+      return names;
     };
     const readDatabase = (viewer) => {
-      let names2;
+      let names;
       return readRecentThreads(window.require, {
         viewer,
         mode: nicknameMode(window.__CHATPANE_SETTINGS__),
         limit: MAX_THREADS,
-        fallbackName: (id) => (names2 ?? (names2 = rowNames())).get(id) ?? ""
+        fallbackName: (id) => (names ?? (names = rowNames())).get(id) ?? ""
       });
     };
     const scan = () => {
@@ -13241,29 +13362,29 @@ ${text}`)) {
     try {
       while (Date.now() <= deadline) {
         if (interrupted || account() !== message.account || !connectionReady()) break;
-        const current = findComposer();
+        const current2 = findComposer();
         if (thread() !== message.thread) {
           if (inserted) break;
           await pause4();
           continue;
         }
-        if (!current || hasComposerMedia(current)) {
+        if (!current2 || hasComposerMedia(current2)) {
           if (inserted) break;
           await pause4();
           continue;
         }
         if (paneThread() !== message.thread) return "defer";
         if (!inserted) {
-          if (composerText(current).trim()) return "defer";
-          box = current;
+          if (composerText(current2).trim()) return "defer";
+          box = current2;
           controls = composerControls(box);
           if (!replaceComposerText(box, message.text)) break;
           inserted = true;
           await pause4();
           continue;
         }
-        if (current !== box || composerText(current) !== message.text) break;
-        const send = findSendButton(current, controls);
+        if (current2 !== box || composerText(current2) !== message.text) break;
+        const send = findSendButton(current2, controls);
         if (!send) {
           await pause4();
           continue;
@@ -13292,10 +13413,10 @@ ${text}`)) {
     if (inserted && box?.isConnected && composerText(box).trim()) return "missed";
     return sendWindow(message.due, Date.now()) === "missed" ? "missed" : "defer";
   }
-  function element(tag, className, text) {
+  function element(tag, className, text2) {
     const el = document.createElement(tag);
     el.className = className;
-    if (text !== void 0) el.textContent = text;
+    if (text2 !== void 0) el.textContent = text2;
     return el;
   }
   var action = (label2, run, className = "chatpane-schedule-action") => {
@@ -13331,19 +13452,19 @@ ${text}`)) {
       if (focus) button?.focus();
     };
     const request = async (operation) => {
-      const current = account();
-      if (!current) throw new Error("Sign in to schedule a message.");
-      const response = await chatpaneScheduledSend({ ...operation, account: current });
-      if (account() !== current) throw new Error("The signed-in account changed.");
+      const current2 = account();
+      if (!current2) throw new Error(t("page.schedule.sign_in"));
+      const response = await chatpaneScheduledSend({ ...operation, account: current2 });
+      if (account() !== current2) throw new Error(t("page.schedule.account_changed"));
       if (response.error) throw new Error(response.error);
-      owner = current;
+      owner = current2;
       rows = response.items;
       canDeliver = response.can_deliver;
       ensureButton();
       return response;
     };
     const failed = (error) => {
-      toast(error instanceof Error ? error.message : "Could not update scheduled messages.");
+      toast(error instanceof Error ? error.message : t("page.schedule.update_failed"));
       diag("scheduled-send.action", "schedule operation failed");
     };
     const warning = async () => {
@@ -13353,7 +13474,7 @@ ${text}`)) {
       );
       if (!missed.length) return;
       toast(
-        missed.some((row) => row.status === "uncertain") ? "⚠ Scheduled send could not be confirmed. It will not be retried. Open Schedule send to review." : "⚠ Scheduled message not sent: its time window passed. Open Schedule send to reschedule.",
+        missed.some((row) => row.status === "uncertain") ? t("page.schedule.unconfirmed_warning") : t("page.schedule.missed_warning"),
         void 0,
         { warning: true }
       );
@@ -13369,31 +13490,31 @@ ${text}`)) {
     const syncColors = () => {
       if (!button || !emoji) return;
       const icon2 = emoji.querySelector("svg path") || emoji.querySelector("svg");
-      const fill = icon2 ? getComputedStyle(icon2).fill : "";
-      const accent = fill && fill !== "none" ? fill : getComputedStyle(emoji).color;
+      const fill2 = icon2 ? getComputedStyle(icon2).fill : "";
+      const accent = fill2 && fill2 !== "none" ? fill2 : getComputedStyle(emoji).color;
       button.style.color = accent;
       if (!panel) return;
       panel.style.setProperty("--schedule-accent", accent);
     };
     const save = async (due) => {
       if (busy2) return;
-      const current = account();
-      if (!current || current !== owner || thread() !== panelThread) {
+      const current2 = account();
+      if (!current2 || current2 !== owner || thread() !== panelThread) {
         close();
         return;
       }
-      const text = editing?.text ?? sourceText;
-      if (!text.trim() || [...text].length > MAX_SCHEDULED_CHARS) {
-        toast("Use 1–2,000 characters for a scheduled message.");
+      const text2 = editing?.text ?? sourceText;
+      if (!text2.trim() || [...text2].length > MAX_SCHEDULED_CHARS) {
+        toast(t("page.schedule.length", { max: MAX_SCHEDULED_CHARS }));
         return;
       }
       if (!editing && (!sourceBox?.isConnected || composerText(sourceBox) !== sourceText || hasComposerMedia(sourceBox))) {
-        toast("Your draft changed. Reopen Schedule send.");
+        toast(t("page.schedule.draft_changed_reopen"));
         close();
         return;
       }
       if (due <= Date.now()) {
-        toast("Choose a future date and time.");
+        toast(t("page.schedule.future_time"));
         return;
       }
       busy2 = true;
@@ -13404,7 +13525,7 @@ ${text}`)) {
       const recoveredDraft = editingItem?.status === "draft" || editingItem?.status === "missed_draft";
       if (recoveredDraft && (editingItem.thread !== expectedThread || !expectedBox?.isConnected || composerText(expectedBox) !== editingItem.text || hasComposerMedia(expectedBox))) {
         busy2 = false;
-        toast("Open the original conversation with its unchanged draft to schedule this message.");
+        toast(t("page.schedule.open_original"));
         return;
       }
       try {
@@ -13414,7 +13535,7 @@ ${text}`)) {
             op: "save",
             ...editingItem ? { id: editingItem.id } : {},
             thread: editingItem?.thread ?? expectedThread ?? void 0,
-            text,
+            text: text2,
             due
           });
         } catch (error) {
@@ -13424,11 +13545,9 @@ ${text}`)) {
             saved = (await request({ op: "list" })).items.find((row) => row.id === editingItem.id);
           } catch {
           }
-          if (saved?.status !== "scheduled" || saved.account !== current || saved.thread !== editingItem.thread || saved.text !== text || saved.due !== due) {
+          if (saved?.status !== "scheduled" || saved.account !== current2 || saved.thread !== editingItem.thread || saved.text !== text2 || saved.due !== due) {
             if (saved && (saved.due !== due || saved.status !== "scheduled")) throw error;
-            throw new Error(
-              "Scheduling could not be confirmed. Check Schedule send before retrying."
-            );
+            throw new Error(t("page.schedule.unconfirmed"));
           }
           result = {
             items: rows,
@@ -13438,15 +13557,15 @@ ${text}`)) {
             can_deliver: canDeliver
           };
         }
-        if (!result.saved) throw new Error("Message was not saved.");
+        if (!result.saved) throw new Error(t("page.schedule.not_saved"));
         if (!editingItem || recoveredDraft) {
           const textToClear = recoveredDraft ? editingItem?.text ?? "" : expectedText;
-          const unchanged = expectedBox?.isConnected && thread() === expectedThread && account() === current && composerText(expectedBox) === textToClear && !hasComposerMedia(expectedBox);
+          const unchanged = expectedBox?.isConnected && thread() === expectedThread && account() === current2 && composerText(expectedBox) === textToClear && !hasComposerMedia(expectedBox);
           if (!unchanged || !expectedBox) {
             if (!editingItem) await request({ op: "cancel", id: result.saved });
-            throw new Error("Your draft changed. The message was not scheduled.");
+            throw new Error(t("page.schedule.draft_changed"));
           }
-          const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account() === current && !hasComposerMedia(expectedBox);
+          const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account() === current2 && !hasComposerMedia(expectedBox);
           replaceComposerText(expectedBox, "");
           for (let attempt = 0; attempt < 10; attempt++) {
             await pause4();
@@ -13454,9 +13573,7 @@ ${text}`)) {
           }
           if (!sameComposer() || composerText(expectedBox).trim()) {
             close();
-            throw new Error(
-              "Draft clearing could not be confirmed. Your message is saved but not scheduled."
-            );
+            throw new Error(t("page.schedule.clear_unconfirmed"));
           }
         }
         if (!editingItem || recoveredDraft) {
@@ -13472,14 +13589,12 @@ ${text}`)) {
             }
             if (status !== "scheduled") {
               if (status === "draft" || status === "missed_draft") throw error;
-              throw new Error(
-                "Scheduling could not be confirmed. Check Schedule send before retrying."
-              );
+              throw new Error(t("page.schedule.unconfirmed"));
             }
           }
         }
         close();
-        toast(`Message scheduled for ${formatScheduleTime(due, true)}. It will send automatically.`);
+        toast(t("page.schedule.scheduled", { time: formatScheduleTime(due, true) }));
       } catch (error) {
         failed(error);
       } finally {
@@ -13488,13 +13603,13 @@ ${text}`)) {
     };
     const customPicker = (container, due = Date.now() + 10 * 6e4) => {
       const fields = element("div", "chatpane-schedule-fields");
-      const dateLabel = element("label", "", "Date");
+      const dateLabel = element("label", "", t("page.schedule.date"));
       const date = element("input", "");
       date.type = "date";
       date.value = localDateValue(due);
       date.min = localDateValue(Date.now());
       date.required = true;
-      const timeLabel = element("label", "", "Time (24h)");
+      const timeLabel = element("label", "", t("page.schedule.time_24h"));
       const time = element("input", "");
       time.type = "text";
       time.inputMode = "numeric";
@@ -13507,12 +13622,12 @@ ${text}`)) {
       timeLabel.append(time);
       fields.append(dateLabel, timeLabel);
       const confirm = action(
-        editing ? "Reschedule message" : "Schedule message",
+        editing ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_message"),
         () => {
           if (!date.reportValidity() || !time.reportValidity()) return;
           const value = localScheduleTime(date.value, time.value);
           if (value === null) {
-            toast("Choose a valid local time in HH:mm format.");
+            toast(t("page.schedule.invalid_time"));
             return;
           }
           void save(value);
@@ -13526,23 +13641,21 @@ ${text}`)) {
       panel.replaceChildren();
       const heading = element("div", "chatpane-schedule-heading");
       const closeButton = action("", () => close(true), "chatpane-schedule-close");
-      closeButton.setAttribute("aria-label", "Close scheduling");
+      closeButton.setAttribute("aria-label", t("page.schedule.close"));
       closeButton.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
       heading.append(
-        element("h2", "", editing ? "Reschedule message" : "Schedule send"),
+        element(
+          "h2",
+          "",
+          editing ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_send")
+        ),
         closeButton
       );
       panel.append(heading);
       if (editing) {
         panel.append(element("p", "chatpane-schedule-preview", editing.text));
         if (editing.status === "uncertain")
-          panel.append(
-            element(
-              "p",
-              "chatpane-schedule-warning",
-              "Check the conversation before rescheduling. Messenger may already have accepted this message."
-            )
-          );
+          panel.append(element("p", "chatpane-schedule-warning", t("page.schedule.uncertain_note")));
         customPicker(panel, Math.max(editing.due, Date.now() + 15 * 6e4));
       } else if (sourceText.trim()) {
         for (const preset of schedulePresets(Date.now())) {
@@ -13561,57 +13674,62 @@ ${text}`)) {
           panel.append(choice);
         }
         const details = element("details", "chatpane-schedule-custom");
-        details.append(element("summary", "", "Choose date & time"));
+        details.append(element("summary", "", t("page.schedule.choose_date_time")));
         customPicker(details);
         details.addEventListener("toggle", positionPanel);
         panel.append(details);
-      } else
-        panel.append(element("p", "chatpane-schedule-note", "Write a text message to schedule it."));
+      } else panel.append(element("p", "chatpane-schedule-note", t("page.schedule.write_text")));
       panel.append(
         element(
           "p",
           "chatpane-schedule-note",
-          `${Intl.DateTimeFormat().resolvedOptions().timeZone} · 24-hour time`
+          t("page.schedule.time_zone", { zone: Intl.DateTimeFormat().resolvedOptions().timeZone })
         ),
         element(
           "p",
           "chatpane-schedule-note chatpane-schedule-divider",
-          "Sends automatically while Chatpane is running and connected."
+          t("page.schedule.sends_while_running")
         )
       );
       if (rows.length && !editing) {
-        panel.append(element("h3", "chatpane-schedule-divider", "Scheduled messages"));
+        panel.append(
+          element("h3", "chatpane-schedule-divider", t("page.schedule.scheduled_messages"))
+        );
         for (const row of [...rows].sort((a, b) => a.due - b.due)) {
           const item = element("div", "chatpane-schedule-item");
-          const status = row.status === "missed" || row.status === "missed_draft" ? "Not sent" : row.status === "uncertain" ? "Send unconfirmed" : row.status === "sending" ? "Submitting…" : row.status === "draft" ? "Not scheduled" : "Scheduled";
+          const time = formatScheduleTime(row.due, true);
+          const status = row.status === "missed" || row.status === "missed_draft" ? t("page.schedule.status.not_sent", { time }) : row.status === "uncertain" ? t("page.schedule.status.unconfirmed", { time }) : row.status === "sending" ? t("page.schedule.status.submitting", { time }) : row.status === "draft" ? t("page.schedule.status.not_scheduled", { time }) : t("page.schedule.status.scheduled", { time });
           item.append(
             element(
               "strong",
               row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain" ? "chatpane-schedule-warning" : "",
-              `${status} · ${formatScheduleTime(row.due, true)}`
+              status
             ),
             element(
               "small",
               "chatpane-schedule-note",
-              row.thread === thread() ? "This conversation" : "Another conversation"
+              row.thread === thread() ? t("page.schedule.this_conversation") : t("page.schedule.another_conversation")
             ),
             element("p", "chatpane-schedule-preview", row.text)
           );
           const actions = element("div", "chatpane-schedule-item-actions");
           if (row.status !== "sending") {
             actions.append(
-              action(row.status === "scheduled" ? "Edit time" : "Reschedule", () => {
-                editing = row;
-                render();
-              }),
-              action("Cancel", () => {
+              action(
+                row.status === "scheduled" ? t("page.schedule.edit_time") : t("page.schedule.reschedule"),
+                () => {
+                  editing = row;
+                  render();
+                }
+              ),
+              action(t("page.schedule.cancel"), () => {
                 void request({ op: "cancel", id: row.id }).then(render).catch(failed);
               })
             );
           }
           actions.append(
-            action("Copy text", () => {
-              void navigator.clipboard.writeText(row.text).then(() => toast("Message copied")).catch(() => toast("Could not copy the message"));
+            action(t("page.schedule.copy_text"), () => {
+              void navigator.clipboard.writeText(row.text).then(() => toast(t("page.schedule.copied"))).catch(() => toast(t("page.schedule.copy_failed")));
             })
           );
           item.append(actions);
@@ -13627,7 +13745,7 @@ ${text}`)) {
         return;
       }
       if (window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ === false) {
-        toast("Scheduled sending is unavailable with multiple app instances enabled.");
+        toast(t("page.schedule.unavailable"));
         return;
       }
       const box = findComposer();
@@ -13645,7 +13763,8 @@ ${text}`)) {
       panel = element("div", "chatpane-schedule-panel");
       panel.id = "chatpane-schedule-panel";
       panel.setAttribute("role", "dialog");
-      panel.setAttribute("aria-label", "Schedule send");
+      panel.setAttribute("aria-label", t("page.schedule.schedule_send"));
+      Object.assign(panel, language());
       document.body.append(panel);
       button?.setAttribute("aria-expanded", "true");
       render();
@@ -13692,17 +13811,17 @@ ${text}`)) {
           "chatpane-schedule-button"
         );
         button.setAttribute("data-chatpane-schedule", "");
-        button.setAttribute("aria-label", "Schedule send");
+        button.setAttribute("aria-label", t("page.schedule.schedule_send"));
         button.setAttribute("aria-haspopup", "dialog");
         button.setAttribute("aria-expanded", "false");
         button.setAttribute("aria-controls", "chatpane-schedule-panel");
-        button.title = "Schedule send";
+        button.title = t("page.schedule.schedule_send");
         button.innerHTML = '<svg viewBox="2 2 20 20" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 4h2v5.4l3.5 2-.9 1.8L11 12.6Z"/></svg>';
       }
       if (button.parentElement !== parent || button.nextElementSibling !== before)
         parent.insertBefore(button, before);
       button.dataset.queued = String(rows.length > 0);
-      button.title = rows.length ? `Schedule send · ${rows.length} saved` : "Schedule send";
+      button.title = rows.length ? tn("page.schedule.button_saved", rows.length) : t("page.schedule.schedule_send");
       syncColors();
     }
     const poll = async () => {
@@ -13989,7 +14108,7 @@ ${text}`)) {
         diag(`selector.${key}`, "core selector matched nothing on a logged-in Messenger page");
         if (!warnedUser) {
           warnedUser = true;
-          toast("A Messenger update may have broken part of Chatpane — check for updates (F2).");
+          toast(t("page.selector_health.broken"));
         }
       }
     };
@@ -14063,8 +14182,8 @@ ${text}`)) {
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute(BUTTON_ATTR, "");
-    button.setAttribute("aria-label", "Chatpane Settings");
-    button.title = "Chatpane Settings";
+    button.setAttribute("aria-label", t("page.settings_button"));
+    button.title = t("page.settings_button");
     button.appendChild(createGearIcon());
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -14153,7 +14272,7 @@ ${text}`)) {
       if (!shareIsDeliverable(pending.parkedAt, Date.now())) {
         clearTimeout(pending.timer);
         pending = null;
-        toast("Shared file expired");
+        toast(t("page.share.expired"));
         return true;
       }
       const composer2 = firstShown(COMPOSER_SELECTOR3);
@@ -14167,7 +14286,7 @@ ${text}`)) {
         diag("share.attached", `${files.length}`);
       } else {
         diag("share.attach-failed", `${files.length}`);
-        toast("Could not attach the shared file");
+        toast(t("page.share.attach_failed"));
       }
       return true;
     };
@@ -14196,7 +14315,7 @@ ${text}`)) {
         if (pending) {
           if (pending.files.length + files.length > MAX_SHARED_FILES) {
             diag("share.busy", `${pending.files.length}`);
-            toast("Attach the current shared files before sharing more");
+            toast(t("page.share.busy"));
             return;
           }
           clearTimeout(pending.timer);
@@ -14207,7 +14326,7 @@ ${text}`)) {
         }
         if (!tryDeliver()) {
           diag("share.waiting-for-composer", `${pending.files.length}`);
-          toast("Open a conversation to attach the shared file");
+          toast(t("page.share.open_conversation"));
           pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
         }
       },
@@ -14516,13 +14635,13 @@ ${text}`)) {
       if (rect.width <= 1 || rect.height <= 1 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) {
         return false;
       }
-      let current = el;
-      while (current) {
-        const style = getComputedStyle(current);
+      let current2 = el;
+      while (current2) {
+        const style = getComputedStyle(current2);
         if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || Number(style.opacity) <= 0) {
           return false;
         }
-        current = current.parentElement;
+        current2 = current2.parentElement;
       }
       return true;
     };
@@ -14548,7 +14667,7 @@ ${text}`)) {
           label2.setAttribute("role", "alert");
           banner.appendChild(label2);
         }
-        const message = limited ? rateLimitRemainingMs() > 0 ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 6e4))} min. Chats may be out of date.` : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish." : recoveryFailed ? "Messenger could not reconnect. Chats may be out of date." : syncProcessingStalled ? "Messenger is slow to update messages. Chats may be out of date." : "⚠ Messenger sync is broken — chats may be out of date";
+        const message = limited ? rateLimitRemainingMs() > 0 ? tn("page.sync.rate_limited", Math.max(1, Math.ceil(rateLimitRemainingMs() / 6e4))) : t("page.sync.cooldown_ended") : recoveryFailed ? t("page.sync.reconnect_failed") : syncProcessingStalled ? t("page.sync.slow") : t("page.sync.broken");
         if (label2.textContent !== message) label2.textContent = message;
         const buttonStyle = {
           background: "#1c1e21",
@@ -14565,7 +14684,7 @@ ${text}`)) {
         if ((limited || recoveryFailed) && !retry) {
           retry = document.createElement("button");
           retry.type = "button";
-          retry.textContent = "Try again";
+          retry.textContent = t("page.sync.try_again");
           Object.assign(retry.style, buttonStyle);
           retry.addEventListener("click", (event) => {
             if (!event.isTrusted || manualRetryPending) return;
@@ -14580,14 +14699,14 @@ ${text}`)) {
         if (retry) {
           retry.hidden = !limited && !recoveryFailed;
           retry.disabled = limited ? manualRetryPending || rateLimitRemainingMs() <= 0 : protectedNow || !navigator.onLine;
-          retry.textContent = limited ? retry.disabled ? "Retry pending…" : "Try again" : "Reconnect";
+          retry.textContent = limited ? retry.disabled ? t("page.sync.retry_pending") : t("page.sync.try_again") : t("page.sync.reconnect");
         }
         let reload = banner.querySelector("[data-chatpane-reload]");
         if ((recoveryFailed || syncProcessingStalled) && !reload) {
           reload = document.createElement("button");
           reload.type = "button";
           reload.dataset.chatpaneReload = "";
-          reload.textContent = "Reload";
+          reload.textContent = t("page.sync.reload");
           Object.assign(reload.style, buttonStyle);
           reload.addEventListener("click", (event) => {
             if (event.isTrusted) window.dispatchEvent(new Event(SILENT_RECOVERY_RELOAD_EVENT));
@@ -14599,6 +14718,7 @@ ${text}`)) {
           reload.disabled = protectedNow || !navigator.onLine;
         }
         if (existing) return;
+        Object.assign(banner, language());
         Object.assign(banner.style, {
           display: "flex",
           alignItems: "center",
@@ -14961,7 +15081,7 @@ ${text}`)) {
     const box = document.createElement("div");
     box.id = CONTROLS_ID;
     box.setAttribute("role", "group");
-    box.setAttribute("aria-label", "Window");
+    box.setAttribute("aria-label", t("page.window.controls"));
     const button = (name, label2, action2) => {
       const b = document.createElement("button");
       b.type = "button";
@@ -14972,9 +15092,9 @@ ${text}`)) {
       return b;
     };
     box.append(
-      button("minimize", "Minimize", "minimize"),
-      button("maximize", "Maximize", "toggle-maximize"),
-      button("close", "Close", "close")
+      button("minimize", t("page.window.minimize"), "minimize"),
+      button("maximize", t("page.window.maximize"), "toggle-maximize"),
+      button("close", t("page.window.close"), "close")
     );
     return box;
   }
@@ -15037,7 +15157,7 @@ ${text}`)) {
       if (maximize.dataset.icon !== name) {
         maximize.dataset.icon = name;
         maximize.innerHTML = icon(name);
-        const label2 = next.maximized ? "Restore" : "Maximize";
+        const label2 = next.maximized ? t("page.window.restore") : t("page.window.maximize");
         maximize.setAttribute("aria-label", label2);
         maximize.title = label2;
       }
@@ -15102,9 +15222,9 @@ ${text}`)) {
    * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    * SOFTWARE.
    */
-  function parseJson(text) {
+  function parseJson(text2) {
     try {
-      return JSON.parse(text);
+      return JSON.parse(text2);
     } catch {
       return null;
     }
@@ -15117,13 +15237,13 @@ ${text}`)) {
   var TYPING_REQUEST = 4;
   var TYPING_LABEL = "3";
   var IS_TYPING = /(is_typing(?:\\)*":)1(?![0-9])/g;
-  function clearTyping(text) {
-    const request = parseJson(text);
+  function clearTyping(text2) {
+    const request = parseJson(text2);
     if (request?.type !== TYPING_REQUEST) return null;
     const update = nested(request, "payload");
     if (update?.label !== TYPING_LABEL || !nested(update, "payload")?.is_typing) return null;
-    const edited = text.replace(IS_TYPING, "$10");
-    return edited === text ? null : edited;
+    const edited = text2.replace(IS_TYPING, "$10");
+    return edited === text2 ? null : edited;
   }
   var PART_DATA = 13;
   var PART_CLOSE = 14;
@@ -15220,9 +15340,9 @@ ${text}`)) {
       else if (typeof raw === "number" && Number.isFinite(raw)) value = BigInt(Math.trunc(raw));
       else if (typeof raw === "string" && /^-?\d+$/.test(raw)) value = BigInt(raw);
       else if (raw != null && i64ToString) {
-        const text = i64ToString(raw);
-        if (typeof text !== "string" || !/^-?\d+$/.test(text)) return null;
-        value = BigInt(text);
+        const text2 = i64ToString(raw);
+        if (typeof text2 !== "string" || !/^-?\d+$/.test(text2)) return null;
+        value = BigInt(text2);
       } else return null;
     } catch {
       return null;

@@ -58,17 +58,18 @@ pub(crate) async fn page_request(
     action: &str,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let window = crate::menu::target_window(app).ok_or("Messenger isn't open.")?;
+    let window = crate::menu::target_window(app).ok_or(crate::i18n::t("account.error.not_open"))?;
     let request = uuid::Uuid::new_v4().simple().to_string();
     let (sender, receiver) = oneshot::channel();
     pending().lock().unwrap().insert(request.clone(), sender);
     let args = serde_json::json!([request, action, value]);
+    let loading = serde_json::Value::from(crate::i18n::t("account.error.still_loading"));
     // The page may be loading or showing an error page without Chatpane's
     // scripts; answer for it then, so Settings doesn't wait for the timeout.
     let script = format!(
         "(() => {{ const a = {args}; if (window.__chatpaneAccount) window.__chatpaneAccount(...a); \
          else window.__TAURI_INTERNALS__?.invoke('plugin:event|emit', {{ event: '{RESULT_EVENT}', \
-         payload: {{ request: a[0], ok: false, error: 'Messenger is still loading.' }} }}); }})()"
+         payload: {{ request: a[0], ok: false, error: {loading} }} }}); }})()"
     );
     let outcome = match window.eval(script) {
         Ok(()) => tokio::time::timeout(REQUEST_TIMEOUT, receiver).await.ok(),
@@ -82,8 +83,8 @@ pub(crate) async fn page_request(
         Some(Ok(reply)) if reply.ok => Ok(reply.state),
         Some(Ok(reply)) => Err(reply
             .error
-            .unwrap_or_else(|| "Messenger refused the request.".into())),
-        _ => Err("Messenger didn't answer. Check your connection and try again.".into()),
+            .unwrap_or_else(|| crate::i18n::t("account.error.refused").into())),
+        _ => Err(crate::i18n::t("account.error.no_answer").into()),
     }
 }
 
@@ -118,13 +119,16 @@ impl MessengerAccountChange {
             {
                 ("set-dnd", minutes.into())
             }
-            Self::DoNotDisturb(_) => return Err("Unsupported Do Not Disturb length.".into()),
+            Self::DoNotDisturb(_) => {
+                return Err(crate::i18n::t("account.error.unsupported_dnd").into());
+            }
         })
     }
 }
 
 fn parse_state(value: serde_json::Value) -> Result<MessengerAccountState, String> {
-    serde_json::from_value(value).map_err(|_| "Messenger reported an unexpected answer.".into())
+    serde_json::from_value(value)
+        .map_err(|_| crate::i18n::t("account.error.unexpected_answer").into())
 }
 
 /// Settings → Account: read Messenger's own account settings.

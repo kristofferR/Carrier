@@ -1,5 +1,6 @@
 /* ------------------- Open thread & conversation info ------------------ */
 
+import { t } from "../../i18n";
 import { diag, invoke, toast } from "../bridge";
 import { noteExplicitAction } from "../lib/composer-focus";
 import { threadRestoreStep } from "../lib/thread-restore";
@@ -176,7 +177,7 @@ export function initThreadNav() {
       btn.click();
       return true;
     }
-    toast("Open a conversation first");
+    toast(t("page.thread.open_first"));
     return false;
   };
 }

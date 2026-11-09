@@ -16,6 +16,7 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::download::{
     complete_download, downloads_dir, is_unsafe_download, remember_download, sanitize_filename,
 };
+use crate::i18n::{t, tf};
 use crate::settings::AppState;
 use crate::{NativeResultPhase, SignedAction, result_signature, signed_action_window};
 
@@ -93,7 +94,7 @@ impl Format {
 
     fn filter_name(self) -> &'static str {
         match self {
-            Self::Html => "Web page",
+            Self::Html => t("export.filter.html"),
             Self::Json => "JSON",
         }
     }
@@ -374,8 +375,40 @@ impl Moment {
     }
 
     fn day(&self) -> String {
+        use time::{Month, Weekday};
         let d = self.date;
-        format!("{}, {} {} {}", d.weekday(), d.day(), d.month(), d.year())
+        let weekday = match d.weekday() {
+            Weekday::Monday => t("export.date.monday"),
+            Weekday::Tuesday => t("export.date.tuesday"),
+            Weekday::Wednesday => t("export.date.wednesday"),
+            Weekday::Thursday => t("export.date.thursday"),
+            Weekday::Friday => t("export.date.friday"),
+            Weekday::Saturday => t("export.date.saturday"),
+            Weekday::Sunday => t("export.date.sunday"),
+        };
+        let month = match d.month() {
+            Month::January => t("export.date.january"),
+            Month::February => t("export.date.february"),
+            Month::March => t("export.date.march"),
+            Month::April => t("export.date.april"),
+            Month::May => t("export.date.may"),
+            Month::June => t("export.date.june"),
+            Month::July => t("export.date.july"),
+            Month::August => t("export.date.august"),
+            Month::September => t("export.date.september"),
+            Month::October => t("export.date.october"),
+            Month::November => t("export.date.november"),
+            Month::December => t("export.date.december"),
+        };
+        tf(
+            "export.date.day",
+            &[
+                ("weekday", &weekday),
+                ("day", &d.day()),
+                ("month", &month),
+                ("year", &d.year()),
+            ],
+        )
     }
 
     fn time(&self) -> String {
@@ -401,19 +434,11 @@ fn utc_iso(timestamp_ms: i64) -> String {
 fn notes(export: &PageExport, history: History) -> Vec<String> {
     let mut notes = Vec::new();
     if export.truncated {
-        notes.push("Only the newest 50,000 messages are included.".to_string());
+        notes.push(t("export.note.truncated").to_string());
     } else if history == History::Partial {
-        notes.push(
-            "Older messages are not included because Messenger has not loaded them on this \
-             device. Scroll up in the conversation to load more, then export again."
-                .into(),
-        );
+        notes.push(t("export.note.partial").into());
     } else if history == History::Unknown {
-        notes.push(
-            "Includes the messages Messenger has stored on this device. Older messages may be \
-             missing; scroll up in the conversation to load more, then export again."
-                .into(),
-        );
+        notes.push(t("export.note.unknown").into());
     }
     let unreadable = export
         .messages
@@ -421,28 +446,20 @@ fn notes(export: &PageExport, history: History) -> Vec<String> {
         .filter(|message| message.unreadable)
         .count();
     if unreadable == 1 {
-        notes.push("1 encrypted message couldn't be read on this device.".into());
+        notes.push(t("export.note.unreadable_one").into());
     } else if unreadable > 1 {
-        notes.push(format!(
-            "{unreadable} encrypted messages couldn't be read on this device."
-        ));
+        notes.push(tf("export.note.unreadable", &[("count", &unreadable)]));
     }
-    notes.push(
-        "Photos, videos, and files are not included. Attachments are listed by type and name."
-            .into(),
-    );
+    notes.push(t("export.note.no_media").into());
     for (part, note) in [
         (
             MissingPart::Participants,
-            "Participant names could not be read.",
+            t("export.note.missing_participants"),
         ),
-        (
-            MissingPart::Reactions,
-            "Not every reaction could be read, so some may be missing.",
-        ),
+        (MissingPart::Reactions, t("export.note.missing_reactions")),
         (
             MissingPart::Attachments,
-            "Not every attachment or call could be read, so some may be missing.",
+            t("export.note.missing_attachments"),
         ),
     ] {
         if export.missing.contains(&part) {
@@ -523,19 +540,22 @@ time,.flags{color:var(--muted);font-size:12px}
 
 fn attachment_label(attachment: &Attachment) -> String {
     let label = match attachment.kind {
-        AttachmentKind::Image => "Photo",
-        AttachmentKind::Video => "Video",
-        AttachmentKind::Audio => "Audio",
-        AttachmentKind::File => "File",
-        AttachmentKind::Link => "Link",
-        AttachmentKind::Other => "Attachment",
+        AttachmentKind::Image => t("export.attachment.photo"),
+        AttachmentKind::Video => t("export.attachment.video"),
+        AttachmentKind::Audio => t("export.attachment.audio"),
+        AttachmentKind::File => t("export.attachment.file"),
+        AttachmentKind::Link => t("export.attachment.link"),
+        AttachmentKind::Other => t("export.attachment.other"),
     };
     match attachment
         .filename
         .as_deref()
         .or(attachment.title.as_deref())
     {
-        Some(detail) => format!("{label}: {detail}"),
+        Some(detail) => tf(
+            "export.attachment.named",
+            &[("kind", &label), ("name", &detail)],
+        ),
         None => label.to_string(),
     }
 }
@@ -543,27 +563,34 @@ fn attachment_label(attachment: &Attachment) -> String {
 fn duration_label(seconds: u32) -> String {
     let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
     if hours > 0 {
-        format!("{hours} h {minutes} min")
+        tf(
+            "export.duration.hours",
+            &[("hours", &hours), ("minutes", &minutes)],
+        )
     } else if minutes > 0 {
-        format!("{minutes} min {seconds} s")
+        tf(
+            "export.duration.minutes",
+            &[("minutes", &minutes), ("seconds", &seconds)],
+        )
     } else {
-        format!("{seconds} s")
+        tf("export.duration.seconds", &[("seconds", &seconds)])
     }
 }
 
 fn call_label(call: &Call) -> String {
     let label = match (call.kind, call.outcome) {
-        (CallType::Audio, Some(CallOutcome::Missed)) => "Missed audio call",
-        (CallType::Video, Some(CallOutcome::Missed)) => "Missed video call",
-        (CallType::Audio, Some(CallOutcome::Started)) => "Audio call started",
-        (CallType::Video, Some(CallOutcome::Started)) => "Video call started",
-        (CallType::Audio, _) => "Audio call",
-        (CallType::Video, _) => "Video call",
+        (CallType::Audio, Some(CallOutcome::Missed)) => t("export.call.missed_audio"),
+        (CallType::Video, Some(CallOutcome::Missed)) => t("export.call.missed_video"),
+        (CallType::Audio, Some(CallOutcome::Started)) => t("export.call.audio_started"),
+        (CallType::Video, Some(CallOutcome::Started)) => t("export.call.video_started"),
+        (CallType::Audio, _) => t("export.call.audio"),
+        (CallType::Video, _) => t("export.call.video"),
     };
     match call.duration_sec {
-        Some(duration) if call.outcome != Some(CallOutcome::Missed) => {
-            format!("{label}, {}", duration_label(duration))
-        }
+        Some(duration) if call.outcome != Some(CallOutcome::Missed) => tf(
+            "export.call.with_duration",
+            &[("call", &label), ("duration", &duration_label(duration))],
+        ),
         _ => label.to_string(),
     }
 }
@@ -578,23 +605,28 @@ fn render_html(document: &ExportDocument) -> String {
     let title = escape(&document.conversation.title);
     let count = document.messages.len();
     let mut out = String::with_capacity(4096 + count * 256);
+    // "2026-11-07T10:30:00.000Z" -> "2026-11-07 10:30 UTC"
+    let exported = format!(
+        "{} UTC",
+        document
+            .exported_at
+            .get(..16)
+            .unwrap_or_default()
+            .replace('T', " ")
+    );
     let _ = write!(
         out,
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+        "<!doctype html>\n<html lang=\"{lang}\" dir=\"{dir}\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <meta name=\"generator\" content=\"Chatpane\">\n<title>{title}</title>\n<style>{STYLE}</style>\n\
          </head>\n<body>\n<header>\n<h1>{title}</h1>\n\
-         <p class=\"meta\">{count} {noun}, exported {exported}</p>\n",
-        noun = if count == 1 { "message" } else { "messages" },
-        // "2026-11-07T10:30:00.000Z" -> "2026-11-07 10:30 UTC"
-        exported = escape(&format!(
-            "{} UTC",
-            document
-                .exported_at
-                .get(..16)
-                .unwrap_or_default()
-                .replace('T', " ")
+         <p class=\"meta\">{summary}</p>\n",
+        lang = crate::i18n::current().code,
+        dir = crate::i18n::current().dir(),
+        summary = escape(&tf(
+            "export.html.summary",
+            &[("count", &count), ("date", &exported)],
         )),
     );
     let people: Vec<&str> = document
@@ -610,8 +642,11 @@ fn render_html(document: &ExportDocument) -> String {
     if !people.is_empty() {
         let _ = writeln!(
             out,
-            "<p class=\"meta\">Participants: {}</p>",
-            escape(&people.join(", "))
+            "<p class=\"meta\">{}</p>",
+            escape(&tf(
+                "export.html.participants",
+                &[("names", &people.join(", "))],
+            ))
         );
     }
     out.push_str("<ul class=\"notes\">");
@@ -637,7 +672,10 @@ fn render_html(document: &ExportDocument) -> String {
             escape(&moment.time())
         );
         if message.system {
-            let text = message.text.as_deref().unwrap_or("Conversation update");
+            let text = message
+                .text
+                .as_deref()
+                .unwrap_or(t("export.html.conversation_update"));
             let _ = writeln!(
                 out,
                 "<p class=\"system\" id=\"m{anchor}\">{} · {when}</p>",
@@ -645,28 +683,38 @@ fn render_html(document: &ExportDocument) -> String {
             );
             continue;
         }
-        let sender = message.sender_name.as_deref().unwrap_or("Unknown sender");
+        let sender = message
+            .sender_name
+            .as_deref()
+            .unwrap_or(t("export.html.unknown_sender"));
         let _ = write!(
             out,
             "<article class=\"msg\" id=\"m{anchor}\"><div class=\"head\"><span class=\"sender\">{}</span>{when}",
             escape(sender)
         );
         let flags: Vec<&str> = [
-            message.forwarded.then_some("Forwarded"),
-            message.edited.then_some("Edited"),
+            message.forwarded.then(|| t("export.html.forwarded")),
+            message.edited.then(|| t("export.html.edited")),
         ]
         .into_iter()
         .flatten()
         .collect();
         if !flags.is_empty() {
-            let _ = write!(out, "<span class=\"flags\">{}</span>", flags.join(" · "));
+            let _ = write!(
+                out,
+                "<span class=\"flags\">{}</span>",
+                escape(&flags.join(" · "))
+            );
         }
         out.push_str("</div>");
         if let Some(reply) = &message.reply_to {
-            let who = escape(reply.sender_name.as_deref().unwrap_or("a message"));
+            let replying = escape(&match reply.sender_name.as_deref() {
+                Some(name) => tf("export.html.replying_to", &[("name", &name)]),
+                None => t("export.html.replying_to_message").into(),
+            });
             let label = match anchors.get(reply.message_id.as_str()) {
-                Some(target) => format!("<a href=\"#m{target}\">Replying to {who}</a>"),
-                None => format!("Replying to {who}"),
+                Some(target) => format!("<a href=\"#m{target}\">{replying}</a>"),
+                None => replying,
             };
             let quoted = reply
                 .text
@@ -681,14 +729,15 @@ fn render_html(document: &ExportDocument) -> String {
         if let Some(call) = &message.call {
             let _ = write!(out, "<p class=\"text\">{}</p>", escape(&call_label(call)));
         }
+        let note = |text: &str| format!("<p class=\"note\">{}</p>", escape(text));
         if message.unsent {
-            out.push_str("<p class=\"note\">Message unsent</p>");
+            out.push_str(&note(t("export.html.unsent")));
         } else if message.unreadable {
-            out.push_str("<p class=\"note\">Encrypted message (couldn't be read)</p>");
+            out.push_str(&note(t("export.html.unreadable")));
         } else if let Some(text) = &message.text {
             let _ = write!(out, "<p class=\"text\">{}</p>", escape(text));
         } else if message.sticker {
-            out.push_str("<p class=\"note\">Sticker</p>");
+            out.push_str(&note(t("export.html.sticker")));
         }
         if !message.attachments.is_empty() {
             out.push_str("<ul class=\"attachments\">");
@@ -711,7 +760,11 @@ fn render_html(document: &ExportDocument) -> String {
         out.push_str("</article>\n");
     }
     if count == 0 {
-        out.push_str("<p class=\"system\">No messages are stored on this device yet.</p>\n");
+        let _ = writeln!(
+            out,
+            "<p class=\"system\">{}</p>",
+            escape(t("export.html.empty"))
+        );
     }
     out.push_str("</main>\n</body>\n</html>\n");
     out
@@ -743,7 +796,11 @@ struct ExportMsg<C> {
 /// The suggested file name: the conversation title made safe, or a generic
 /// name while names are hidden (the dialog may be on a shared screen).
 fn suggested_file_name(title: &str, names_hidden: bool, format: Format) -> String {
-    let title = if names_hidden { "Conversation" } else { title };
+    let title = if names_hidden {
+        t("export.file_name.hidden")
+    } else {
+        title
+    };
     let stem: String = sanitize_filename(title).chars().take(80).collect();
     format!("{}.{}", stem.trim(), format.extension())
 }
@@ -913,7 +970,7 @@ pub(crate) fn install(app: &tauri::AppHandle) {
         #[cfg(not(target_os = "macos"))]
         let dialog = dialog.set_parent(&window);
         let mut dialog = dialog
-            .set_title("Export Conversation")
+            .set_title(t("export.dialog.title"))
             .set_file_name(suggested_file_name(&title, names_hidden, format))
             .add_filter(format.filter_name(), &[format.extension()]);
         if let Some(directory) = downloads_dir() {
@@ -1182,10 +1239,10 @@ mod tests {
         assert!(html.contains("<time datetime=\"2026-11-07T10:30:00.000+01:00\">10:30</time>"));
         assert!(html.contains("Missed video call"));
         assert!(html.contains("Audio call, 2 min 5 s"));
-        assert!(html.contains("Encrypted message (couldn't be read)"));
+        assert!(html.contains("Encrypted message (couldn&#39;t be read)"));
         assert!(html.contains("<a href=\"#m1\">Replying to Alex Example</a>: Lunch?"));
         assert!(html.contains("Participants: Alex Example"));
-        assert!(html.contains("5 messages, exported 2026-11-07 10:30 UTC"));
+        assert!(html.contains("Messages: 5, exported 2026-11-07 10:30 UTC"));
     }
 
     #[test]

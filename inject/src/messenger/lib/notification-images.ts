@@ -1,3 +1,5 @@
+import { t } from "../../i18n";
+
 const photoSummary =
   /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
 
@@ -9,7 +11,7 @@ export function isPhotoSummary(body: string) {
 /** Use the sender line to introduce an attached photo, keeping link and caption text intact. */
 export function notificationPhotoText(title: string, body: string, hasThumbnail: boolean) {
   if (hasThumbnail && isPhotoSummary(body)) {
-    return { title: `${title} sent an image:`, body: "" };
+    return { title: t("page.notification.sent_image", { name: title }), body: "" };
   }
   return { title, body };
 }

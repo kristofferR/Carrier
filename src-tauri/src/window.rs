@@ -961,8 +961,8 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
                     match handle
                         .notification()
                         .builder()
-                        .title("Chatpane is still running")
-                        .body("Use the tray icon to reopen or quit Chatpane.")
+                        .title(crate::i18n::t("notification.tray_notice.title"))
+                        .body(crate::i18n::t("notification.tray_notice.body"))
                         .show()
                     {
                         Ok(()) => {
@@ -1219,7 +1219,10 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     };
     let builder =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-            .title(format!("{APP_TITLE} Settings"))
+            .title(crate::i18n::tf(
+                "window.settings_title",
+                &[("title", &APP_TITLE)],
+            ))
             .inner_size(900.0, 720.0)
             .min_inner_size(720.0, 620.0)
             .resizable(true)
@@ -1244,6 +1247,7 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         let builder = builder.decorations(false);
         builder
             .initialization_script(crate::title_bar::initial_script(&s, false))
+            .initialization_script(crate::i18n::script(crate::i18n::Audience::Settings))
             // The page draws the controls once it's loaded: restate them then.
             .on_page_load(|window, payload| {
                 if payload.event() == tauri::webview::PageLoadEvent::Finished {
@@ -1316,6 +1320,10 @@ fn init_script(
         serde_json::to_string(download_reveal_token).expect("reveal token serialises");
     // The strip for the window controls, set before the features run.
     let title_bar_inset = crate::title_bar::initial_script(settings, true);
+    let i18n_script = crate::i18n::script(crate::i18n::Audience::Page);
+    let scheduled_timeout_literal =
+        serde_json::to_string(crate::i18n::t("schedule.error.no_response"))
+            .expect("UI string serialises");
     format!(
         r#"(function () {{
   var chatpaneHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
@@ -1325,6 +1333,8 @@ fn init_script(
   // A window Messenger opened (a call). On macOS it shares its opener's
   // scripts, but Chatpane's features and bridges belong to its own windows.
   if (window.opener) return;
+  // Chatpane's own text, for the features below and the bundled pages.
+  {i18n_script}
   var chatpaneInjectable =
     chatpaneHost === 'facebook.com' ||
     chatpaneHost.endsWith('.facebook.com') ||
@@ -1665,7 +1675,7 @@ fn init_script(
         cleanup();
         try {{ resolve(JSON.parse(result.data)); }} catch (error) {{ reject(error); }}
       }};
-      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error('Scheduled messages did not respond. Restart Chatpane to retry.')); }}, 15000);
+      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error({scheduled_timeout_literal})); }}, 15000);
       nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
       payload.request = request;
       chatpaneAuthorizedEmit('chatpane:scheduled-send', payload).catch(function (error) {{ cleanup(); reject(error); }});

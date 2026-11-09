@@ -29,6 +29,32 @@ var ChatpaneSettingsUpdate = (() => {
   __export(update_consent_exports, {
     UpdateConsentController: () => UpdateConsentController
   });
+
+  // inject/src/i18n.ts
+  var ENGLISH = { lang: "en", dir: "ltr", strings: {} };
+  function current() {
+    return globalThis.__CHATPANE_I18N__ ?? ENGLISH;
+  }
+  function formatLocale() {
+    const { lang } = current();
+    if (lang.includes("-")) return lang;
+    return globalThis.navigator?.languages?.find((tag) => tag.split("-")[0] === lang) ?? lang;
+  }
+  function fill(text2, vars) {
+    if (!vars) return text2;
+    const locale = formatLocale();
+    return text2.replace(/\{(\w+)\}/g, (match, name) => {
+      const value = vars[name];
+      if (value === void 0) return match;
+      return typeof value === "number" ? value.toLocaleString(locale) : value;
+    });
+  }
+  function text(key, vars) {
+    return fill(current().strings[key] ?? key, vars);
+  }
+  var settingsText = text;
+
+  // inject/src/settings/update-consent.ts
   function parseInstallMode(value) {
     if (typeof value !== "object" || value === null || !("kind" in value)) {
       throw new Error("missing update install mode");
@@ -43,12 +69,23 @@ var ChatpaneSettingsUpdate = (() => {
     }
     throw new Error("invalid update install mode");
   }
-  function availableState(version, installMode, status = `Chatpane ${version} is available.`) {
-    const manual = installMode.kind === "manual";
+  var checkLabel = () => settingsText("settings.update.check");
+  var installLabel = (version) => settingsText("settings.update.install", { version });
+  function availableState(version, installMode, opened = false) {
+    if (installMode.kind !== "manual") {
+      return {
+        phase: "available",
+        buttonLabel: installLabel(version),
+        status: settingsText("settings.update.available", { version }),
+        busy: false,
+        version
+      };
+    }
+    const { buttonLabel, instructions } = installMode;
     return {
       phase: "available",
-      buttonLabel: manual ? installMode.buttonLabel : `Install Chatpane ${version}`,
-      status: manual ? `${status} ${installMode.instructions}` : status,
+      buttonLabel,
+      status: opened ? settingsText("settings.update.page_opened_with_instructions", { instructions }) : settingsText("settings.update.available_with_instructions", { version, instructions }),
       busy: false,
       version
     };
@@ -92,7 +129,7 @@ var ChatpaneSettingsUpdate = (() => {
       this.version = "";
       return this.publish({
         phase: "idle",
-        buttonLabel: "Check for updates",
+        buttonLabel: checkLabel(),
         status: "",
         busy: false
       });
@@ -118,7 +155,7 @@ var ChatpaneSettingsUpdate = (() => {
       if (version) return this.publish(availableState(version, this.installMode));
       return this.publish({
         phase: "idle",
-        buttonLabel: "Check for updates",
+        buttonLabel: checkLabel(),
         status: "",
         busy: false
       });
@@ -137,16 +174,16 @@ var ChatpaneSettingsUpdate = (() => {
       if (!this.version) {
         this.publish({
           phase: "checking",
-          buttonLabel: "Check for updates",
-          status: "Checking for updates…",
+          buttonLabel: checkLabel(),
+          status: settingsText("settings.update.checking"),
           busy: true
         });
         const result = String(await this.invoke("check_for_updates"));
         if (result === "up-to-date") {
           return this.publish({
             phase: "up-to-date",
-            buttonLabel: "Check for updates",
-            status: "Chatpane is up to date.",
+            buttonLabel: checkLabel(),
+            status: settingsText("settings.update.up_to_date"),
             busy: false
           });
         }
@@ -159,17 +196,17 @@ var ChatpaneSettingsUpdate = (() => {
         this.publish({
           phase: "opening-manual",
           buttonLabel: this.installMode.buttonLabel,
-          status: "Opening package-manager update instructions…",
+          status: settingsText("settings.update.opening_manual"),
           busy: true,
           version: this.version
         });
         await this.invoke("open_manual_update");
-        return this.publish(availableState(this.version, this.installMode, "Update page opened."));
+        return this.publish(availableState(this.version, this.installMode, true));
       }
       this.publish({
         phase: "installing",
-        buttonLabel: `Install Chatpane ${this.version}`,
-        status: "Downloading and installing update…",
+        buttonLabel: installLabel(this.version),
+        status: settingsText("settings.update.installing"),
         busy: true,
         version: this.version
       });
@@ -178,20 +215,27 @@ var ChatpaneSettingsUpdate = (() => {
         this.version = "";
         return this.publish({
           phase: "up-to-date",
-          buttonLabel: "Check for updates",
-          status: "Chatpane is already up to date.",
+          buttonLabel: checkLabel(),
+          status: settingsText("settings.update.already_up_to_date"),
           busy: false
         });
       }
       return this.publish(availableState(this.version, this.installMode));
     }
     fail(error) {
-      const action = this.phase === "installing" ? "Update install failed." : this.phase === "opening-manual" ? "Could not open the update page." : "Update check failed.";
       const detail = failureDetail(error);
+      let status;
+      if (this.phase === "installing") {
+        status = detail ? settingsText("settings.update.install_failed_detail", { detail }) : settingsText("settings.update.install_failed");
+      } else if (this.phase === "opening-manual") {
+        status = detail ? settingsText("settings.update.open_failed_detail", { detail }) : settingsText("settings.update.open_failed");
+      } else {
+        status = detail ? settingsText("settings.update.check_failed_detail", { detail }) : settingsText("settings.update.check_failed");
+      }
       return this.publish({
         phase: this.version ? "available" : "idle",
-        buttonLabel: this.version && this.installMode?.kind === "manual" ? this.installMode.buttonLabel : this.version ? `Install Chatpane ${this.version}` : "Check for updates",
-        status: detail ? `${action} ${detail}` : action,
+        buttonLabel: this.version && this.installMode?.kind === "manual" ? this.installMode.buttonLabel : this.version ? installLabel(this.version) : checkLabel(),
+        status,
         busy: false,
         version: this.version || void 0
       });

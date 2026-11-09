@@ -3,6 +3,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import english from "../../../../src-tauri/locales/en.json";
 
 const repoUrl = (path: string) => new URL(`../../../../${path}`, import.meta.url);
 const repoAsset = (path: string) => Bun.file(repoUrl(path)).text();
@@ -83,7 +84,8 @@ describe("hand-maintained injected assets", () => {
 
     expect(settings).toContain("const IS_LINUX = !IS_MAC && !IS_WINDOWS");
     expect(settings).toContain('...(IS_MAC || IS_LINUX || IS_WINDOWS ? ["tray_icon_style"] : [])');
-    expect(settings).toContain('[["color", "Color"], ["symbolic", "Monochrome"]]');
+    expect(settings).toContain('["symbolic", t("settings.tray.tray_icon_style.symbolic")]');
+    expect(english["settings.tray.tray_icon_style.symbolic"]).toBe("Monochrome");
   });
 
   test("notification polish is configurable, with a taskbar flash on Windows", async () => {
@@ -95,15 +97,17 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain(
       '...(IS_MAC || IS_WINDOWS ? ["clear_notifications_on_view", "attention_on_message"] : [])',
     );
-    expect(settings).toContain('label: "Flash Taskbar Icon"');
+    expect(settings).toContain('label: t("settings.notifications.attention.label_windows")');
+    expect(english["settings.notifications.attention.label_windows"]).toBe("Flash Taskbar Icon");
   });
 
   test("downloads can save automatically or ask for a location", async () => {
     const settings = await repoAsset("dist/settings.html");
 
     expect(settings).toContain('"download_behavior", "downloads"');
-    expect(settings).toContain('["downloads", "Downloads folder"]');
-    expect(settings).toContain('["ask", "Ask every time"]');
+    expect(settings).toContain('["downloads", t("settings.general.download_behavior.downloads")]');
+    expect(settings).toContain('["ask", t("settings.general.download_behavior.ask")]');
+    expect(english["settings.general.download_behavior.ask"]).toBe("Ask every time");
     expect(settings).toContain('"focus_composer_on_return", "download_behavior"');
     expect(settings).toContain("download_behavior: downloadBehaviorRow");
   });
@@ -112,8 +116,13 @@ describe("hand-maintained injected assets", () => {
     const settings = await repoAsset("dist/settings.html");
 
     expect(settings).toContain('invoke("open_custom_css")');
-    expect(settings).toContain("Save custom.css, then reload Chatpane to apply it.");
-    expect(settings).toContain("missing or invalid CSS is safely ignored");
+    expect(settings).toContain('t("settings.advanced.custom_css.opened")');
+    expect(english["settings.advanced.custom_css.opened"]).toBe(
+      "Save custom.css, then reload {app} to apply it.",
+    );
+    expect(english["settings.advanced.custom_css.hint"]).toContain(
+      "missing or invalid CSS is safely ignored",
+    );
   });
 
   test("privacy settings share their own tab", async () => {
@@ -128,7 +137,10 @@ describe("hand-maintained injected assets", () => {
     const settings = await repoAsset("dist/settings.html");
 
     expect(settings).toContain(
-      '["strip_link_tracking", "Remove Facebook link tracking", "Strip Facebook tracking IDs',
+      '["strip_link_tracking", t("settings.privacy.strip_link_tracking.label")',
+    );
+    expect(english["settings.privacy.strip_link_tracking.label"]).toBe(
+      "Remove Facebook link tracking",
     );
     expect(settings).toContain('"block_telemetry", "strip_link_tracking"');
   });

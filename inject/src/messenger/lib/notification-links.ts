@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 import { conversationNodeText, hasCandidateTextChild } from "./conversation-row";
 import { EMOJI_SOURCE_RE } from "./emoji";
 import { stripFacebookTracking } from "./links";
@@ -104,8 +105,12 @@ export function notificationLinkBody(body: string, cards: NotificationLinkCard[]
   // Conflicting cards are not enough evidence to pick a title.
   const title = titles.size === 1 ? [...titles][0] : "";
   if (target.provider === "YouTube" || target.provider === "Spotify") {
-    const summary = `Sent a ${target.provider} link`;
-    return title ? `${summary}: ${title}`.slice(0, 240) : summary;
+    const { provider } = target;
+    return title
+      ? t("page.notification.sent_provider_link_titled", { provider, title }).slice(0, 240)
+      : t("page.notification.sent_provider_link", { provider });
   }
-  return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
+  return title
+    ? t("page.notification.sent_link", { title, host: target.host }).slice(0, 240)
+    : body;
 }

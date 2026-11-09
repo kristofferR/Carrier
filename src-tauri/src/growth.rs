@@ -27,11 +27,11 @@ const EVENT: &str = "chatpane:star-prompt";
 /// The confirmation shown after the share message is copied.
 pub(crate) const SHARE_COPIED: &str = "Copied. Paste it to anyone you like.";
 
-/// The app's name in the share message, the star toast and the Help menu.
-pub(crate) const NAME: &str = "Chatpane";
-
 pub(crate) fn share_message() -> String {
-    format!("I use {NAME} for Messenger on my computer. It's free and open source: {SITE_URL}")
+    format!(
+        "I use {} for Messenger on my computer. It's free and open source: {SITE_URL}",
+        crate::i18n::APP_NAME
+    )
 }
 
 /// Days the main window was used and whether the star prompt has run.
@@ -94,7 +94,7 @@ pub(crate) fn main_focused(app: &tauri::AppHandle) {
     if usage.star_prompt_due(today)
         && let Some(main) = app.get_webview_window("main")
     {
-        let Ok(name) = serde_json::to_string(NAME) else {
+        let Ok(name) = serde_json::to_string(crate::i18n::APP_NAME) else {
             return;
         };
         let _ = main.eval(format!(

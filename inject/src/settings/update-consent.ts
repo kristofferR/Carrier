@@ -1,3 +1,5 @@
+import { settingsText } from "../i18n";
+
 export type UpdatePhase =
   | "idle"
   | "checking"
@@ -45,16 +47,31 @@ function parseInstallMode(value: unknown): UpdateInstallMode {
   throw new Error("invalid update install mode");
 }
 
+const checkLabel = () => settingsText("settings.update.check");
+const installLabel = (version: string) => settingsText("settings.update.install", { version });
+
+/** An offered update; `opened` once its package-manager page was opened. */
 function availableState(
   version: string,
   installMode: UpdateInstallMode,
-  status = `Chatpane ${version} is available.`,
+  opened = false,
 ): UpdateUiState {
-  const manual = installMode.kind === "manual";
+  if (installMode.kind !== "manual") {
+    return {
+      phase: "available",
+      buttonLabel: installLabel(version),
+      status: settingsText("settings.update.available", { version }),
+      busy: false,
+      version,
+    };
+  }
+  const { buttonLabel, instructions } = installMode;
   return {
     phase: "available",
-    buttonLabel: manual ? installMode.buttonLabel : `Install Chatpane ${version}`,
-    status: manual ? `${status} ${installMode.instructions}` : status,
+    buttonLabel,
+    status: opened
+      ? settingsText("settings.update.page_opened_with_instructions", { instructions })
+      : settingsText("settings.update.available_with_instructions", { version, instructions }),
     busy: false,
     version,
   };
@@ -113,7 +130,7 @@ export class UpdateConsentController {
     this.version = "";
     return this.publish({
       phase: "idle",
-      buttonLabel: "Check for updates",
+      buttonLabel: checkLabel(),
       status: "",
       busy: false,
     });
@@ -143,7 +160,7 @@ export class UpdateConsentController {
     if (version) return this.publish(availableState(version, this.installMode));
     return this.publish({
       phase: "idle",
-      buttonLabel: "Check for updates",
+      buttonLabel: checkLabel(),
       status: "",
       busy: false,
     });
@@ -163,16 +180,16 @@ export class UpdateConsentController {
     if (!this.version) {
       this.publish({
         phase: "checking",
-        buttonLabel: "Check for updates",
-        status: "Checking for updates…",
+        buttonLabel: checkLabel(),
+        status: settingsText("settings.update.checking"),
         busy: true,
       });
       const result = String(await this.invoke("check_for_updates"));
       if (result === "up-to-date") {
         return this.publish({
           phase: "up-to-date",
-          buttonLabel: "Check for updates",
-          status: "Chatpane is up to date.",
+          buttonLabel: checkLabel(),
+          status: settingsText("settings.update.up_to_date"),
           busy: false,
         });
       }
@@ -188,18 +205,18 @@ export class UpdateConsentController {
       this.publish({
         phase: "opening-manual",
         buttonLabel: this.installMode.buttonLabel,
-        status: "Opening package-manager update instructions…",
+        status: settingsText("settings.update.opening_manual"),
         busy: true,
         version: this.version,
       });
       await this.invoke("open_manual_update");
-      return this.publish(availableState(this.version, this.installMode, "Update page opened."));
+      return this.publish(availableState(this.version, this.installMode, true));
     }
 
     this.publish({
       phase: "installing",
-      buttonLabel: `Install Chatpane ${this.version}`,
-      status: "Downloading and installing update…",
+      buttonLabel: installLabel(this.version),
+      status: settingsText("settings.update.installing"),
       busy: true,
       version: this.version,
     });
@@ -208,8 +225,8 @@ export class UpdateConsentController {
       this.version = "";
       return this.publish({
         phase: "up-to-date",
-        buttonLabel: "Check for updates",
-        status: "Chatpane is already up to date.",
+        buttonLabel: checkLabel(),
+        status: settingsText("settings.update.already_up_to_date"),
         busy: false,
       });
     }
@@ -217,22 +234,30 @@ export class UpdateConsentController {
   }
 
   fail(error?: unknown): UpdateUiState {
-    const action =
-      this.phase === "installing"
-        ? "Update install failed."
-        : this.phase === "opening-manual"
-          ? "Could not open the update page."
-          : "Update check failed.";
     const detail = failureDetail(error);
+    let status: string;
+    if (this.phase === "installing") {
+      status = detail
+        ? settingsText("settings.update.install_failed_detail", { detail })
+        : settingsText("settings.update.install_failed");
+    } else if (this.phase === "opening-manual") {
+      status = detail
+        ? settingsText("settings.update.open_failed_detail", { detail })
+        : settingsText("settings.update.open_failed");
+    } else {
+      status = detail
+        ? settingsText("settings.update.check_failed_detail", { detail })
+        : settingsText("settings.update.check_failed");
+    }
     return this.publish({
       phase: this.version ? "available" : "idle",
       buttonLabel:
         this.version && this.installMode?.kind === "manual"
           ? this.installMode.buttonLabel
           : this.version
-            ? `Install Chatpane ${this.version}`
-            : "Check for updates",
-      status: detail ? `${action} ${detail}` : action,
+            ? installLabel(this.version)
+            : checkLabel(),
+      status,
       busy: false,
       version: this.version || undefined,
     });

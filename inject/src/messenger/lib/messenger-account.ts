@@ -4,6 +4,7 @@
  * does, so they sync to the account. Idea from fMess
  * (github.com/toanbku/fmess, MIT).
  */
+import { t } from "../../i18n";
 import { defaultExport, type Load, loadFacebookModules } from "./facebook-loader";
 import { readMessengerDndUntil } from "./messenger-dnd";
 
@@ -66,7 +67,7 @@ export function dndUntilFor(minutes: number, nowMs: number): number {
 async function loadPreferencesCode(load: Load | null): Promise<void> {
   const loadRoot = async (entrypoint: unknown) => {
     const root = (defaultExport(entrypoint) as { root?: { load?(): Promise<unknown> } }).root;
-    if (typeof root?.load !== "function") throw new Error("Messenger's Preferences changed.");
+    if (typeof root?.load !== "function") throw new Error(t("page.account.preferences_changed"));
     await root.load();
   };
   const [dialog] = await loadFacebookModules(load, ["MWInboxSettingsDialog.entrypoint"]);
@@ -91,7 +92,7 @@ export async function readMessengerAccount(
   const data = (await (relay as Relay)
     .fetchQuery(defaultExport(environment), query, {}, { fetchPolicy: "network-only" })
     .toPromise()) as { viewer?: ChatSettingsViewer | null } | null;
-  if (!data?.viewer) throw new Error("Messenger didn't report its settings.");
+  if (!data?.viewer) throw new Error(t("page.account.no_settings"));
   const dndUntil = await readMessengerDndUntil(account, load, 3000);
   return stateFromViewer(
     data.viewer,
@@ -125,7 +126,7 @@ export async function changeMessengerAccount(
   for (let attempt = 0; ; attempt++) {
     const state = await readMessengerAccount(load, account);
     if (applied(state, change)) return state;
-    if (attempt === 3) throw new Error("Messenger didn't apply the change.");
+    if (attempt === 3) throw new Error(t("page.account.not_applied"));
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 }
@@ -222,7 +223,7 @@ async function setActiveStatus(load: Load | null, on: boolean) {
         variables: { input },
         onCompleted: (_response: unknown, errors: { message?: string }[] | null) =>
           errors?.length
-            ? reject(new Error(errors[0]?.message || "Facebook refused the change."))
+            ? reject(new Error(errors[0]?.message || t("page.account.refused")))
             : resolve(),
         onError: reject,
       },

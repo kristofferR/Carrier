@@ -377,11 +377,8 @@ mod platform {
         }
         match service_status() {
             Status::On => remove_legacy_agent(app),
-            Status::NeedsApproval => Err(
-                "Allow Chatpane in System Settings → General → Login Items to start it when you log in."
-                    .into(),
-            ),
-            Status::Off => Err("macOS didn't add Chatpane to Login Items.".into()),
+            Status::NeedsApproval => Err(crate::i18n::t("autostart.error.needs_approval").into()),
+            Status::Off => Err(crate::i18n::t("autostart.error.not_added").into()),
         }
     }
 
@@ -768,9 +765,10 @@ mod platform {
         }
         let name = entry_name(app);
         let program = program(app)?;
+        let comment = crate::i18n::tf("autostart.desktop_comment", &[("name", &name)]);
         let entry = format!(
             "[Desktop Entry]\nType=Application\nVersion=1.0\nName={name}\n\
-             Comment=Start {name} at login\nExec={}\nStartupNotify=false\nTerminal=false\n",
+             Comment={comment}\nExec={}\nStartupNotify=false\nTerminal=false\n",
             exec_quote(&program.to_string_lossy()),
         );
         if let Some(dir) = path.parent() {

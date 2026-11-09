@@ -1,3 +1,4 @@
+import { language, t, tn } from "../../i18n";
 import { diag, toast } from "../bridge";
 import {
   composerControls,
@@ -220,9 +221,9 @@ export function initScheduledSend() {
     operation: Omit<ScheduleRequest, "account">,
   ): Promise<ScheduleResponse> => {
     const current = account();
-    if (!current) throw new Error("Sign in to schedule a message.");
+    if (!current) throw new Error(t("page.schedule.sign_in"));
     const response = await chatpaneScheduledSend({ ...operation, account: current });
-    if (account() !== current) throw new Error("The signed-in account changed.");
+    if (account() !== current) throw new Error(t("page.schedule.account_changed"));
     if (response.error) throw new Error(response.error);
     owner = current;
     rows = response.items;
@@ -231,7 +232,7 @@ export function initScheduledSend() {
     return response;
   };
   const failed = (error: unknown) => {
-    toast(error instanceof Error ? error.message : "Could not update scheduled messages.");
+    toast(error instanceof Error ? error.message : t("page.schedule.update_failed"));
     diag("scheduled-send.action", "schedule operation failed");
   };
   const warning = async () => {
@@ -244,8 +245,8 @@ export function initScheduledSend() {
     if (!missed.length) return;
     toast(
       missed.some((row) => row.status === "uncertain")
-        ? "⚠ Scheduled send could not be confirmed. It will not be retried. Open Schedule send to review."
-        : "⚠ Scheduled message not sent: its time window passed. Open Schedule send to reschedule.",
+        ? t("page.schedule.unconfirmed_warning")
+        : t("page.schedule.missed_warning"),
       undefined,
       { warning: true },
     );
@@ -276,7 +277,7 @@ export function initScheduledSend() {
     }
     const text = editing?.text ?? sourceText;
     if (!text.trim() || [...text].length > MAX_SCHEDULED_CHARS) {
-      toast("Use 1–2,000 characters for a scheduled message.");
+      toast(t("page.schedule.length", { max: MAX_SCHEDULED_CHARS }));
       return;
     }
     if (
@@ -285,12 +286,12 @@ export function initScheduledSend() {
         composerText(sourceBox) !== sourceText ||
         hasComposerMedia(sourceBox))
     ) {
-      toast("Your draft changed. Reopen Schedule send.");
+      toast(t("page.schedule.draft_changed_reopen"));
       close();
       return;
     }
     if (due <= Date.now()) {
-      toast("Choose a future date and time.");
+      toast(t("page.schedule.future_time"));
       return;
     }
     busy = true;
@@ -308,7 +309,7 @@ export function initScheduledSend() {
         hasComposerMedia(expectedBox))
     ) {
       busy = false;
-      toast("Open the original conversation with its unchanged draft to schedule this message.");
+      toast(t("page.schedule.open_original"));
       return;
     }
     try {
@@ -337,9 +338,7 @@ export function initScheduledSend() {
           saved.due !== due
         ) {
           if (saved && (saved.due !== due || saved.status !== "scheduled")) throw error;
-          throw new Error(
-            "Scheduling could not be confirmed. Check Schedule send before retrying.",
-          );
+          throw new Error(t("page.schedule.unconfirmed"));
         }
         result = {
           items: rows,
@@ -349,7 +348,7 @@ export function initScheduledSend() {
           can_deliver: canDeliver,
         };
       }
-      if (!result.saved) throw new Error("Message was not saved.");
+      if (!result.saved) throw new Error(t("page.schedule.not_saved"));
       if (!editingItem || recoveredDraft) {
         // Never clear a changed draft; cancel the persisted schedule instead.
         const textToClear = recoveredDraft ? (editingItem?.text ?? "") : expectedText;
@@ -361,7 +360,7 @@ export function initScheduledSend() {
           !hasComposerMedia(expectedBox);
         if (!unchanged || !expectedBox) {
           if (!editingItem) await request({ op: "cancel", id: result.saved });
-          throw new Error("Your draft changed. The message was not scheduled.");
+          throw new Error(t("page.schedule.draft_changed"));
         }
         const sameComposer = () =>
           expectedBox.isConnected &&
@@ -378,9 +377,7 @@ export function initScheduledSend() {
         if (!sameComposer() || composerText(expectedBox).trim()) {
           // Keep the saved copy unarmed if the editor's outcome is uncertain.
           close();
-          throw new Error(
-            "Draft clearing could not be confirmed. Your message is saved but not scheduled.",
-          );
+          throw new Error(t("page.schedule.clear_unconfirmed"));
         }
       }
       // Recovered drafts also need the composer-clear handshake before arming.
@@ -399,14 +396,12 @@ export function initScheduledSend() {
           }
           if (status !== "scheduled") {
             if (status === "draft" || status === "missed_draft") throw error;
-            throw new Error(
-              "Scheduling could not be confirmed. Check Schedule send before retrying.",
-            );
+            throw new Error(t("page.schedule.unconfirmed"));
           }
         }
       }
       close();
-      toast(`Message scheduled for ${formatScheduleTime(due, true)}. It will send automatically.`);
+      toast(t("page.schedule.scheduled", { time: formatScheduleTime(due, true) }));
     } catch (error) {
       failed(error);
     } finally {
@@ -415,13 +410,13 @@ export function initScheduledSend() {
   };
   const customPicker = (container: HTMLElement, due = Date.now() + 10 * 60_000) => {
     const fields = element("div", "chatpane-schedule-fields");
-    const dateLabel = element("label", "", "Date");
+    const dateLabel = element("label", "", t("page.schedule.date"));
     const date = element("input", "");
     date.type = "date";
     date.value = localDateValue(due);
     date.min = localDateValue(Date.now());
     date.required = true;
-    const timeLabel = element("label", "", "Time (24h)");
+    const timeLabel = element("label", "", t("page.schedule.time_24h"));
     const time = element("input", "");
     time.type = "text";
     time.inputMode = "numeric";
@@ -434,12 +429,12 @@ export function initScheduledSend() {
     timeLabel.append(time);
     fields.append(dateLabel, timeLabel);
     const confirm = action(
-      editing ? "Reschedule message" : "Schedule message",
+      editing ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_message"),
       () => {
         if (!date.reportValidity() || !time.reportValidity()) return;
         const value = localScheduleTime(date.value, time.value);
         if (value === null) {
-          toast("Choose a valid local time in HH:mm format.");
+          toast(t("page.schedule.invalid_time"));
           return;
         }
         void save(value);
@@ -453,24 +448,22 @@ export function initScheduledSend() {
     panel.replaceChildren();
     const heading = element("div", "chatpane-schedule-heading");
     const closeButton = action("", () => close(true), "chatpane-schedule-close");
-    closeButton.setAttribute("aria-label", "Close scheduling");
+    closeButton.setAttribute("aria-label", t("page.schedule.close"));
     closeButton.innerHTML =
       '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
     heading.append(
-      element("h2", "", editing ? "Reschedule message" : "Schedule send"),
+      element(
+        "h2",
+        "",
+        editing ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_send"),
+      ),
       closeButton,
     );
     panel.append(heading);
     if (editing) {
       panel.append(element("p", "chatpane-schedule-preview", editing.text));
       if (editing.status === "uncertain")
-        panel.append(
-          element(
-            "p",
-            "chatpane-schedule-warning",
-            "Check the conversation before rescheduling. Messenger may already have accepted this message.",
-          ),
-        );
+        panel.append(element("p", "chatpane-schedule-warning", t("page.schedule.uncertain_note")));
       customPicker(panel, Math.max(editing.due, Date.now() + 15 * 60_000));
     } else if (sourceText.trim()) {
       for (const preset of schedulePresets(Date.now())) {
@@ -489,71 +482,80 @@ export function initScheduledSend() {
         panel.append(choice);
       }
       const details = element("details", "chatpane-schedule-custom");
-      details.append(element("summary", "", "Choose date & time"));
+      details.append(element("summary", "", t("page.schedule.choose_date_time")));
       customPicker(details);
       details.addEventListener("toggle", positionPanel);
       panel.append(details);
-    } else
-      panel.append(element("p", "chatpane-schedule-note", "Write a text message to schedule it."));
+    } else panel.append(element("p", "chatpane-schedule-note", t("page.schedule.write_text")));
     panel.append(
       element(
         "p",
         "chatpane-schedule-note",
-        `${Intl.DateTimeFormat().resolvedOptions().timeZone} · 24-hour time`,
+        t("page.schedule.time_zone", { zone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
       ),
       element(
         "p",
         "chatpane-schedule-note chatpane-schedule-divider",
-        "Sends automatically while Chatpane is running and connected.",
+        t("page.schedule.sends_while_running"),
       ),
     );
     if (rows.length && !editing) {
-      panel.append(element("h3", "chatpane-schedule-divider", "Scheduled messages"));
+      panel.append(
+        element("h3", "chatpane-schedule-divider", t("page.schedule.scheduled_messages")),
+      );
       for (const row of [...rows].sort((a, b) => a.due - b.due)) {
         const item = element("div", "chatpane-schedule-item");
+        const time = formatScheduleTime(row.due, true);
         const status =
           row.status === "missed" || row.status === "missed_draft"
-            ? "Not sent"
+            ? t("page.schedule.status.not_sent", { time })
             : row.status === "uncertain"
-              ? "Send unconfirmed"
+              ? t("page.schedule.status.unconfirmed", { time })
               : row.status === "sending"
-                ? "Submitting…"
+                ? t("page.schedule.status.submitting", { time })
                 : row.status === "draft"
-                  ? "Not scheduled"
-                  : "Scheduled";
+                  ? t("page.schedule.status.not_scheduled", { time })
+                  : t("page.schedule.status.scheduled", { time });
         item.append(
           element(
             "strong",
             row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain"
               ? "chatpane-schedule-warning"
               : "",
-            `${status} · ${formatScheduleTime(row.due, true)}`,
+            status,
           ),
           element(
             "small",
             "chatpane-schedule-note",
-            row.thread === thread() ? "This conversation" : "Another conversation",
+            row.thread === thread()
+              ? t("page.schedule.this_conversation")
+              : t("page.schedule.another_conversation"),
           ),
           element("p", "chatpane-schedule-preview", row.text),
         );
         const actions = element("div", "chatpane-schedule-item-actions");
         if (row.status !== "sending") {
           actions.append(
-            action(row.status === "scheduled" ? "Edit time" : "Reschedule", () => {
-              editing = row;
-              render();
-            }),
-            action("Cancel", () => {
+            action(
+              row.status === "scheduled"
+                ? t("page.schedule.edit_time")
+                : t("page.schedule.reschedule"),
+              () => {
+                editing = row;
+                render();
+              },
+            ),
+            action(t("page.schedule.cancel"), () => {
               void request({ op: "cancel", id: row.id }).then(render).catch(failed);
             }),
           );
         }
         actions.append(
-          action("Copy text", () => {
+          action(t("page.schedule.copy_text"), () => {
             void navigator.clipboard
               .writeText(row.text)
-              .then(() => toast("Message copied"))
-              .catch(() => toast("Could not copy the message"));
+              .then(() => toast(t("page.schedule.copied")))
+              .catch(() => toast(t("page.schedule.copy_failed")));
           }),
         );
         item.append(actions);
@@ -569,7 +571,7 @@ export function initScheduledSend() {
       return;
     }
     if (window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ === false) {
-      toast("Scheduled sending is unavailable with multiple app instances enabled.");
+      toast(t("page.schedule.unavailable"));
       return;
     }
     const box = findComposer();
@@ -587,7 +589,8 @@ export function initScheduledSend() {
     panel = element("div", "chatpane-schedule-panel");
     panel.id = "chatpane-schedule-panel";
     panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", "Schedule send");
+    panel.setAttribute("aria-label", t("page.schedule.schedule_send"));
+    Object.assign(panel, language());
     document.body.append(panel);
     button?.setAttribute("aria-expanded", "true");
     render();
@@ -649,11 +652,11 @@ export function initScheduledSend() {
         "chatpane-schedule-button",
       );
       button.setAttribute("data-chatpane-schedule", "");
-      button.setAttribute("aria-label", "Schedule send");
+      button.setAttribute("aria-label", t("page.schedule.schedule_send"));
       button.setAttribute("aria-haspopup", "dialog");
       button.setAttribute("aria-expanded", "false");
       button.setAttribute("aria-controls", "chatpane-schedule-panel");
-      button.title = "Schedule send";
+      button.title = t("page.schedule.schedule_send");
       // Even-odd hands punch through the filled clock to the actual composer.
       button.innerHTML =
         '<svg viewBox="2 2 20 20" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 4h2v5.4l3.5 2-.9 1.8L11 12.6Z"/></svg>';
@@ -661,7 +664,9 @@ export function initScheduledSend() {
     if (button.parentElement !== parent || button.nextElementSibling !== before)
       parent.insertBefore(button, before);
     button.dataset.queued = String(rows.length > 0);
-    button.title = rows.length ? `Schedule send · ${rows.length} saved` : "Schedule send";
+    button.title = rows.length
+      ? tn("page.schedule.button_saved", rows.length)
+      : t("page.schedule.schedule_send");
     syncColors();
   }
   const poll = async () => {

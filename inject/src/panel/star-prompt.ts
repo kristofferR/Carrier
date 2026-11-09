@@ -48,7 +48,7 @@ export function installStarPrompt() {
   });
 
   Object.defineProperty(window, "__chatpaneStarPrompt", {
-    // `name` is the app name native code passes in (growth::NAME).
+    // `name` is the app name native code passes in (i18n::APP_NAME).
     value: (name: unknown) => {
       if (shown || typeof name !== "string" || !name) return;
       clearTimeout(pending);

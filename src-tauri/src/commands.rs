@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::custom_css::ensure_custom_css;
 use crate::hotkey::sync_global_hotkey;
+use crate::i18n::{t, tf};
 use crate::install_environment::is_snap;
 use crate::preflight::{MessengerLoadStatus, MessengerPreflightError, messenger_dns_preflight};
 use crate::settings::{
@@ -73,7 +74,7 @@ impl<'a> UpdateInstallGuard<'a> {
             std::sync::atomic::Ordering::Acquire,
         )
         .map(|_| Self(flag))
-        .map_err(|_| "an update install is already in progress".to_string())
+        .map_err(|_| t("update.error.in_progress").to_string())
     }
 }
 
@@ -114,16 +115,16 @@ impl UpdateInstallMode {
     #[cfg(any(target_os = "linux", test))]
     fn aur(has_paru: bool, has_yay: bool) -> Self {
         let instructions = if has_paru {
-            "Run paru -S chatpane to update."
+            tf("update.aur.run", &[("command", &"paru -S chatpane")])
         } else if has_yay {
-            "Run yay -S chatpane to update."
+            tf("update.aur.run", &[("command", &"yay -S chatpane")])
         } else {
-            "Update the chatpane package with your AUR helper."
+            tf("update.aur.helper", &[("package", &"chatpane")])
         };
         Self {
             kind: UpdateInstallKind::Manual,
-            button_label: Some("Open Chatpane on AUR".into()),
-            instructions: Some(instructions.into()),
+            button_label: Some(t("update.aur.button").into()),
+            instructions: Some(instructions),
             manual_url: Some(AUR_PACKAGE_URL),
         }
     }
@@ -132,10 +133,11 @@ impl UpdateInstallMode {
     fn snap() -> Self {
         Self {
             kind: UpdateInstallKind::Manual,
-            button_label: Some("Open Snap update guide".into()),
-            instructions: Some(
-                "Snap keeps Chatpane up to date. To check now, run `sudo snap refresh chatpane` or use your software center.".into(),
-            ),
+            button_label: Some(t("update.snap.button").into()),
+            instructions: Some(tf(
+                "update.snap.instructions",
+                &[("command", &"sudo snap refresh chatpane")],
+            )),
             manual_url: Some("https://snapcraft.io/docs/keeping-snaps-up-to-date"),
         }
     }
@@ -144,10 +146,8 @@ impl UpdateInstallMode {
     fn manual_linux() -> Self {
         Self {
             kind: UpdateInstallKind::Manual,
-            button_label: Some("Open Chatpane downloads".into()),
-            instructions: Some(
-                "Update Chatpane with the package manager or installation method you used.".into(),
-            ),
+            button_label: Some(t("update.linux.button").into()),
+            instructions: Some(t("update.linux.instructions").into()),
             manual_url: Some(RELEASES_URL),
         }
     }
@@ -521,7 +521,7 @@ pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, S
         .update_installing
         .load(std::sync::atomic::Ordering::Acquire)
     {
-        return Err("an update install is already in progress".into());
+        return Err(t("update.error.in_progress").into());
     }
     match available_update(&app).await? {
         Some(update) => {
@@ -551,7 +551,7 @@ pub(crate) async fn update_install_mode() -> Result<UpdateInstallMode, String> {
 pub(crate) async fn open_manual_update() -> Result<(), String> {
     let mode = current_update_install_mode_off_main().await?;
     let Some(manual_url) = mode.manual_url else {
-        return Err("This Chatpane installation supports built-in updates.".into());
+        return Err(t("update.error.built_in").into());
     };
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -562,7 +562,7 @@ pub(crate) async fn open_manual_update() -> Result<(), String> {
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = manual_url;
-        Err("No manual update page is configured for this platform.".into())
+        Err(t("update.error.no_manual_page").into())
     }
 }
 
@@ -621,26 +621,19 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
             let version = update.version.clone();
             if remember_available_update(app, Some(update)) {
                 let body = match current_update_install_mode_off_main().await {
-                    Ok(mode) if mode.is_manual() => format!(
-                        "Chatpane {} is available. Open Settings for package-manager instructions.",
-                        version
-                    ),
-                    Ok(_) => format!(
-                        "Chatpane {} is available. Open Settings to review and install it.",
-                        version
-                    ),
+                    Ok(mode) if mode.is_manual() => {
+                        tf("update.notification.manual", &[("version", &version)])
+                    }
+                    Ok(_) => tf("update.notification.built_in", &[("version", &version)]),
                     Err(error) => {
                         log::warn!("failed to detect the update install mode: {error}");
-                        format!(
-                            "Chatpane {} is available. Open Settings to review it.",
-                            version
-                        )
+                        tf("update.notification.unknown", &[("version", &version)])
                     }
                 };
                 if let Err(error) = app
                     .notification()
                     .builder()
-                    .title("Chatpane update available")
+                    .title(t("update.notification.title"))
                     .body(body)
                     .show()
                 {
@@ -845,7 +838,7 @@ fn schedule_macos_relaunch(installed_app: &std::path::Path) -> Result<(), String
         .stderr(Stdio::null())
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("Could not schedule Chatpane to reopen after the update: {error}"))
+        .map_err(|error| tf("update.error.relaunch", &[("error", &error)]))
 }
 
 #[cfg(target_os = "macos")]
@@ -872,7 +865,7 @@ pub(crate) fn current_app_bundle() -> Result<std::path::PathBuf, String> {
             return Ok(ancestor.to_path_buf());
         }
     }
-    Err("Could not locate the running .app bundle.".into())
+    Err(t("update.error.no_bundle").into())
 }
 
 #[cfg(target_os = "macos")]
@@ -887,7 +880,7 @@ fn find_app_bundle(mountpoint: &std::path::Path) -> Result<std::path::PathBuf, S
             fallback = Some(path);
         }
     }
-    fallback.ok_or_else(|| "The update DMG did not contain an app bundle.".into())
+    fallback.ok_or_else(|| t("update.error.empty_dmg").into())
 }
 
 #[cfg(target_os = "macos")]
@@ -986,12 +979,12 @@ fn navigate_to_messenger(window: &WebviewWindow) -> MessengerLoadStatus {
         Ok(url) => match window.navigate(url) {
             Ok(()) => MessengerLoadStatus::loading(),
             Err(e) => MessengerLoadStatus::unexpected(
-                "Cannot open Messenger",
+                t("page.offline.cannot_open_title"),
                 format!("WebView navigation failed: {e}"),
             ),
         },
         Err(e) => MessengerLoadStatus::unexpected(
-            "Cannot open Messenger",
+            t("page.offline.cannot_open_title"),
             format!("Chatpane has an invalid Messenger URL: {e}"),
         ),
     }
@@ -1029,7 +1022,7 @@ fn classify_messenger_preflight_attempt(
         }
         MessengerPreflightAttempt::TaskFailed(error) => {
             MessengerPreflightDecision::Return(MessengerLoadStatus::unexpected(
-                "Messenger check failed",
+                t("preflight.failed.title"),
                 format!("DNS preflight task failed: {error}"),
             ))
         }
@@ -1038,7 +1031,7 @@ fn classify_messenger_preflight_attempt(
         }
         MessengerPreflightAttempt::TimedOut => {
             MessengerPreflightDecision::Return(MessengerLoadStatus::unexpected(
-                "Messenger check timed out",
+                t("preflight.timed_out.title"),
                 format!("The Messenger DNS preflight did not finish after {attempt} attempts."),
             ))
         }
@@ -1150,6 +1143,13 @@ pub(crate) async fn connect_messenger(
 #[tauri::command]
 pub(crate) fn open_messenger_anyway(window: WebviewWindow) -> MessengerLoadStatus {
     navigate_to_messenger(&window)
+}
+
+/// Restart Chatpane from the Settings window, for settings that apply at
+/// launch, such as the language.
+#[tauri::command]
+pub(crate) fn restart_app(app: tauri::AppHandle) {
+    app.restart();
 }
 
 /// Open the folder holding Chatpane's log file, for attaching to bug reports.

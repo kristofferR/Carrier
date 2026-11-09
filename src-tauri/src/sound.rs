@@ -22,6 +22,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+use crate::i18n::{t, tf};
+
 /// The platform a [`NotificationSound::System`] name belongs to.
 const PLATFORM: &str = if cfg!(target_os = "macos") {
     "macos"
@@ -44,14 +46,18 @@ const EXTENSIONS: &[&str] = &["wav", "ogg", "oga"];
 const MAX_SOUND_BYTES: u64 = 10 * 1024 * 1024;
 
 /// The built-in toast sounds besides `Notification.Default` (System default):
-/// name, toast sound event, label. The looping alarm and call sounds are left
-/// out: a message should not ring for 30 seconds.
+/// name, toast sound event, label's UI string key. The looping alarm and call
+/// sounds are left out: a message should not ring for 30 seconds.
 #[cfg(any(target_os = "windows", test))]
 const WINDOWS_SOUNDS: &[(&str, &str, &str)] = &[
-    ("IM", "Notification.IM", "Instant message"),
-    ("Mail", "Notification.Mail", "Mail"),
-    ("Reminder", "Notification.Reminder", "Reminder"),
-    ("SMS", "Notification.SMS", "Text message"),
+    ("IM", "Notification.IM", "sound.windows.instant_message"),
+    ("Mail", "Notification.Mail", "sound.windows.mail"),
+    (
+        "Reminder",
+        "Notification.Reminder",
+        "sound.windows.reminder",
+    ),
+    ("SMS", "Notification.SMS", "sound.windows.text_message"),
 ];
 
 /// The freedesktop sound-theme name Chatpane's Linux notifications use by default.
@@ -59,15 +65,16 @@ const WINDOWS_SOUNDS: &[(&str, &str, &str)] = &[
 pub(crate) const LINUX_DEFAULT_SOUND: &str = "message-new-instant";
 
 /// Message-like names from the freedesktop sound naming spec, offered when the
-/// active sound theme (or one it inherits) has them.
+/// active sound theme (or one it inherits) has them, with their labels' UI
+/// string keys.
 #[cfg(any(target_os = "linux", test))]
 const LINUX_SOUNDS: &[(&str, &str)] = &[
-    ("message", "Message"),
-    ("message-new-email", "New email"),
-    ("bell", "Bell"),
-    ("complete", "Complete"),
-    ("dialog-information", "Information"),
-    ("window-attention", "Attention"),
+    ("message", "sound.linux.message"),
+    ("message-new-email", "sound.linux.new_email"),
+    ("bell", "sound.linux.bell"),
+    ("complete", "sound.linux.complete"),
+    ("dialog-information", "sound.linux.information"),
+    ("window-attention", "sound.linux.attention"),
 ];
 
 /// The notification sound Settings stores (`notification_sound_choice`).
@@ -210,7 +217,7 @@ fn macos_sound_dirs() -> Vec<PathBuf> {
 fn import_dir(_app: &tauri::AppHandle) -> Result<PathBuf, String> {
     std::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join("Library/Sounds"))
-        .ok_or_else(|| "Couldn't find your home folder.".into())
+        .ok_or_else(|| t("sound.error.no_home").into())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -218,7 +225,7 @@ fn import_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|dir| dir.join("sounds"))
-        .map_err(|error| format!("could not locate Chatpane's config folder: {error}"))
+        .map_err(|error| tf("error.config_folder", &[("error", &error)]))
 }
 
 /// The folders a chosen file may already be in, so it is used where it is.
@@ -287,14 +294,19 @@ fn import_sound(
 ) -> Result<String, String> {
     let file_name = source
         .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "the file".into());
-    let fail = |why: String| format!("Couldn't add {file_name}: {why}");
+        .unwrap_or(source.as_os_str())
+        .to_string_lossy()
+        .into_owned();
+    let io =
+        |error: std::io::Error| tf("sound.error.io", &[("file", &file_name), ("error", &error)]);
     let name = sound_name(source, extensions).ok_or_else(|| {
-        fail(format!(
-            "choose a {} file.",
-            extensions.join(", ").to_uppercase()
-        ))
+        tf(
+            "sound.error.wrong_type",
+            &[
+                ("file", &file_name),
+                ("types", &extensions.join(", ").to_uppercase()),
+            ],
+        )
     })?;
     if source
         .parent()
@@ -302,19 +314,19 @@ fn import_sound(
     {
         return Ok(name);
     }
-    let metadata = std::fs::metadata(source).map_err(|error| fail(error.to_string()))?;
+    let metadata = std::fs::metadata(source).map_err(io)?;
     if !metadata.is_file() {
-        return Err(fail("it isn't a file.".into()));
+        return Err(tf("sound.error.not_a_file", &[("file", &file_name)]));
     }
     if metadata.len() > MAX_SOUND_BYTES {
-        return Err(fail("it is larger than 10 MB.".into()));
+        return Err(tf("sound.error.too_large", &[("file", &file_name)]));
     }
-    let bytes = std::fs::read(source).map_err(|error| fail(error.to_string()))?;
+    let bytes = std::fs::read(source).map_err(io)?;
     let extension = source
         .extension()
         .map(|extension| extension.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
-    std::fs::create_dir_all(dir).map_err(|error| fail(error.to_string()))?;
+    std::fs::create_dir_all(dir).map_err(io)?;
     let mut searched = listed.to_vec();
     if !searched.iter().any(|listed| listed == dir) {
         searched.insert(0, dir.to_path_buf());
@@ -341,11 +353,11 @@ fn import_sound(
                             .map(|()| candidate)
                             .map_err(|error| {
                                 let _ = std::fs::remove_file(&path);
-                                fail(error.to_string())
+                                io(error)
                             });
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                    Err(error) => return Err(fail(error.to_string())),
+                    Err(error) => return Err(io(error)),
                 }
             }
             // Adding the same sound again picks the copy already there.
@@ -355,7 +367,7 @@ fn import_sound(
             Some(_) => {}
         }
     }
-    Err(fail("too many sounds already share its name.".into()))
+    Err(tf("sound.error.name_taken", &[("file", &file_name)]))
 }
 
 /// One entry in the Settings sound list, after Off and System default.
@@ -371,7 +383,7 @@ fn linux_system_sounds(theme_has: impl Fn(&str) -> bool) -> Vec<SoundOption> {
         .iter()
         .filter(|(name, _)| theme_has(name))
         .map(|(name, label)| SoundOption {
-            label: (*label).into(),
+            label: t(label).into(),
             sound: NotificationSound::system(name),
         })
         .collect()
@@ -395,7 +407,7 @@ fn available(app: &tauri::AppHandle) -> Vec<SoundOption> {
         let system = WINDOWS_SOUNDS
             .iter()
             .map(|(name, _, label)| SoundOption {
-                label: (*label).into(),
+                label: t(label).into(),
                 sound: NotificationSound::system(name),
             })
             .collect::<Vec<_>>();
@@ -435,8 +447,8 @@ pub(crate) async fn choose_notification_sound(
     let mut picker = app
         .dialog()
         .file()
-        .set_title("Choose notification sound")
-        .add_filter("Sound", EXTENSIONS);
+        .set_title(t("sound.picker.title"))
+        .add_filter(t("sound.picker.filter"), EXTENSIONS);
     if let Some(settings) = app.get_webview_window("settings") {
         picker = picker.set_parent(&settings);
     }
