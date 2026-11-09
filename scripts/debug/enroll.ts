@@ -61,8 +61,11 @@ for (const name of ["carrier", "chatpane"]) {
     throw new Error(`Remove the AUR ${name} package before enrolling`);
 }
 if (process.argv.includes("--hold-failures")) {
-  const active = Bun.spawnSync(["pgrep", "-u", String(userInfo().uid), "-x", "chatpane"]);
-  if (active.exitCode !== 1) throw new Error("Quit Chatpane before enrolling with --hold-failures");
+  // Also an older build still named carrier, whose settings this may edit.
+  const running = ["chatpane", "carrier"].some(
+    (name) => Bun.spawnSync(["pgrep", "-u", String(userInfo().uid), "-x", name]).exitCode !== 1,
+  );
+  if (running) throw new Error("Quit Chatpane before enrolling with --hold-failures");
   const { original, settings } = await loadSettings();
   await mkdir(dirname(settingsFile), { recursive: true });
   await writeFile(join(root, "settings-before-enrollment.json"), original, {

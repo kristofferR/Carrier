@@ -26,9 +26,11 @@ static REPORT: Mutex<Vec<Result<String, String>>> = Mutex::new(Vec::new());
 /// them; [`log_report`] logs the outcome once logging is set up.
 pub(crate) fn migrate() {
     let folders = folders();
+    // Only when something will move: a Carrier still used beside an already
+    // moved Chatpane keeps running.
     if !folders
         .iter()
-        .any(|(old, _)| old.symlink_metadata().is_ok())
+        .any(|(old, new)| old.symlink_metadata().is_ok() && new.symlink_metadata().is_err())
     {
         return;
     }
