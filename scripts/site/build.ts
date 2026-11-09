@@ -132,6 +132,7 @@ await writeIfChanged("robots.txt", `User-agent: *\nAllow: /\n\nSitemap: ${site}s
 function renderPage(lang: string, locale: Locale): string {
   const title = text(locale, "meta.title");
   const desc = text(locale, "meta.desc");
+  const imageAlt = text(locale, "meta.imageAlt");
   const url = pageUrl(lang);
   const payload = JSON.stringify({ [lang]: locale }).replaceAll("</", "<\\/");
 
@@ -182,6 +183,8 @@ function renderPage(lang: string, locale: Locale): string {
     .on('meta[property="og:description"]', content(desc))
     .on('meta[name="twitter:title"]', content(title))
     .on('meta[name="twitter:description"]', content(desc))
+    .on('meta[property="og:image:alt"]', content(imageAlt))
+    .on('meta[name="twitter:image:alt"]', content(imageAlt))
     .on('meta[property="og:url"]', content(url))
     .on('link[rel="canonical"]', {
       element(el) {
