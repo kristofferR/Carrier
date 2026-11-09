@@ -142,11 +142,41 @@ fn allow_navigation(url: &Url) -> bool {
     }
 }
 
+/// A window for a Facebook page outside Messenger: a call, or Facebook's
+/// language settings. It runs on Messenger's web session, so the page is
+/// signed in. Chatpane's own features stay out of it: it is built without
+/// `init_script`, and a page-opened window skips the scripts it inherits.
+fn facebook_page_window<'a>(
+    app: &'a tauri::AppHandle,
+    label: &str,
+    url: WebviewUrl,
+) -> WebviewWindowBuilder<'a, tauri::Wry, tauri::AppHandle> {
+    let builder = WebviewWindowBuilder::new(app, label, url)
+        .title(APP_TITLE)
+        .on_document_title_changed(|window, title| {
+            let _ = window.set_title(&title);
+        })
+        .on_navigation(allow_navigation)
+        // Deny downloads on per-view engines. WebKitGTK's shared-context
+        // handler applies the main window's download policy.
+        .on_download(|_, _| false)
+        .on_new_window({
+            let app = app.clone();
+            let opener = label.to_string();
+            move |url, features| open_popup(&app, &opener, &url, features)
+        });
+    #[cfg(target_os = "linux")]
+    let builder = builder.on_permission_request(crate::linux::media_permission);
+    match crate::user_agent::messenger_user_agent() {
+        Some(user_agent) => builder.user_agent(user_agent),
+        None => builder,
+    }
+}
+
 /// A window a page opened with `window.open`. Messenger starts a call this way
 /// (Ref #335): it opens a blank window, then loads the call page into it, and
 /// does nothing when no window comes back. The window shares its opener's web
-/// session, so the call runs signed in. Chatpane's own features stay out of it
-/// (see `init_script`).
+/// session, so the call runs signed in.
 fn open_popup(
     app: &tauri::AppHandle,
     opener: &str,
@@ -170,21 +200,7 @@ fn open_popup(
     );
     // The engine loads the requested page itself once the window exists.
     let blank = WebviewUrl::External("about:blank".parse().expect("about:blank parses"));
-    let builder = WebviewWindowBuilder::new(app, &label, blank)
-        .title(APP_TITLE)
-        .window_features(features)
-        .on_document_title_changed(|window, title| {
-            let _ = window.set_title(&title);
-        })
-        .on_navigation(allow_navigation)
-        // Deny popup downloads on per-view engines. WebKitGTK's shared-context
-        // handler applies the main window's download policy.
-        .on_download(|_, _| false)
-        .on_new_window({
-            let app = app.clone();
-            let opener = label.clone();
-            move |url, features| open_popup(&app, &opener, &url, features)
-        });
+    let builder = facebook_page_window(app, &label, blank).window_features(features);
     // Messenger positions the window from window.screenX/Y, which WKWebView
     // reports wrongly (the call window landed below the screen) and Wayland
     // not at all. Centre it on the opener's screen instead.
@@ -197,12 +213,6 @@ fn open_popup(
         None => builder.position(0.0, 0.0),
     }
     .center();
-    #[cfg(target_os = "linux")]
-    let builder = builder.on_permission_request(crate::linux::media_permission);
-    let builder = match crate::user_agent::messenger_user_agent() {
-        Some(user_agent) => builder.user_agent(user_agent),
-        None => builder,
-    };
     match builder.build() {
         Ok(window) => {
             #[cfg(target_os = "macos")]
@@ -238,16 +248,31 @@ pub(crate) fn opening_window_reloads_others() -> bool {
     !SHARED_MESSENGER_ENGINE.load(std::sync::atomic::Ordering::SeqCst)
 }
 
-/// Open another Messenger window (File > New Window).
-pub(crate) async fn open_messenger_window(app: tauri::AppHandle) {
+/// Hold while opening another window on Facebook's session: a Messenger
+/// window, or Facebook's language settings, whose page can start Messenger's
+/// encrypted engine too. On macOS the first one moves the open Messenger
+/// windows to the shared engine. `None` when that failed: open nothing then.
+async fn claim_extra_window(
+    app: &tauri::AppHandle,
+) -> Option<tokio::sync::MutexGuard<'static, ()>> {
     // Serialize so a second request cannot build its window while the first
     // is still moving the open windows to the shared engine.
     static OPENING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let _opening = OPENING.lock().await;
+    let opening = OPENING.lock().await;
     #[cfg(target_os = "macos")]
-    if opening_window_reloads_others() && !move_windows_to_shared_engine(&app).await {
-        return;
+    if opening_window_reloads_others() && !move_windows_to_shared_engine(app).await {
+        return None;
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+    Some(opening)
+}
+
+/// Open another Messenger window (File > New Window).
+pub(crate) async fn open_messenger_window(app: tauri::AppHandle) {
+    let Some(_opening) = claim_extra_window(&app).await else {
+        return;
+    };
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
     let n = app
         .state::<AppState>()
@@ -255,6 +280,63 @@ pub(crate) async fn open_messenger_window(app: tauri::AppHandle) {
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if let Err(error) = build_app_window(&app, &format!("win-{n}"), &settings) {
         log::warn!("failed to open a new Messenger window: {error}");
+    }
+}
+
+/// The window showing Facebook's language settings. The popup prefix keeps it
+/// out of what only Messenger windows get, such as saved geometry.
+const FACEBOOK_LANGUAGE_LABEL: &str = "popup-language";
+const FACEBOOK_LANGUAGE_URL: &str = "https://www.facebook.com/settings/?tab=language";
+
+/// Settings → General: Facebook's language settings, in their own window.
+/// Messenger shows the account's language, and only picks up a change when it
+/// loads, so closing the window reloads the Messenger windows.
+pub(crate) async fn open_facebook_language(app: tauri::AppHandle) {
+    let Some(_opening) = claim_extra_window(&app).await else {
+        return;
+    };
+    if let Some(window) = app.get_webview_window(FACEBOOK_LANGUAGE_LABEL) {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return;
+    }
+    let (theme, always_on_top) = {
+        let state = app.state::<AppState>();
+        let s = state.settings.lock().unwrap();
+        (theme_for(&s), s.always_on_top)
+    };
+    let url = FACEBOOK_LANGUAGE_URL
+        .parse()
+        .expect("language settings URL parses");
+    let built = facebook_page_window(&app, FACEBOOK_LANGUAGE_LABEL, WebviewUrl::External(url))
+        .inner_size(960.0, 760.0)
+        .theme(theme)
+        .always_on_top(always_on_top)
+        .center()
+        .build();
+    match built {
+        Ok(window) => {
+            // Chatpane's menu acts on the Messenger windows (View > Reload
+            // would reload one, not this page). Settings drops it too.
+            #[cfg(not(target_os = "macos"))]
+            let _ = window.remove_menu();
+            window.on_window_event(move |event| {
+                if matches!(event, WindowEvent::Destroyed) {
+                    // Messenger waits out a draft, a send or a call before
+                    // reloading. A page without Chatpane's scripts (login,
+                    // the offline screen) has nothing to lose.
+                    for (label, window) in app.webview_windows() {
+                        if is_messenger_window_label(&label) {
+                            let _ = window.eval(
+                                "window.__chatpaneReloadWhenIdle \
+                                 ? window.__chatpaneReloadWhenIdle() : location.reload()",
+                            );
+                        }
+                    }
+                }
+            });
+        }
+        Err(error) => log::warn!("failed to open Facebook's language settings: {error}"),
     }
 }
 

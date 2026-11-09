@@ -413,7 +413,7 @@
 
       const TABS = [
         { id: "general", label: t("settings.tab.general"), icon: ICONS.general,
-          fields: ["language", "always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "stop_media_autoplay", "focus_composer_on_return", "download_behavior"] },
+          fields: ["language", "messenger_language", "always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "stop_media_autoplay", "focus_composer_on_return", "download_behavior"] },
         // A tab is one card of `fields`, or `cards`: each a list of fields or
         // the key of a section that builds its own card.
         { id: "appearance", label: t("settings.tab.appearance"), icon: ICONS.appearance,
@@ -1181,6 +1181,17 @@
         return row;
       }
 
+      // Messenger's own language is the Facebook account's, changed only in
+      // Facebook's settings. Rust opens them and reloads Messenger after.
+      function messengerLanguageRow() {
+        return buttonRow(
+          t("settings.general.messenger_language.label"),
+          t("settings.general.messenger_language.hint"),
+          t("settings.general.messenger_language.change"),
+          () => invoke("open_facebook_language").catch((e) => setStatus(String(e && e.message ? e.message : e))),
+        );
+      }
+
       function trayIconStyleRow() {
         return selectRow(
           "tray_icon_style", "color",
@@ -1508,6 +1519,7 @@
       // sections (theme, look, app icon, account) build a whole card.
       const CUSTOM_ROWS = {
         language: languageRow,
+        messenger_language: messengerLanguageRow,
         theme_section: themeSection,
         app_icon: appIconSection,
         look_section: lookSection,

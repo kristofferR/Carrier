@@ -276,6 +276,7 @@ interface Window {
   __chatpaneHeartbeat?: (expectedId: number) => void;
   __chatpaneRateLimitRetry?: (expectedId: number, expires: number) => void;
   __chatpaneCaptureRecovery?: () => Promise<void>;
+  __chatpaneReloadWhenIdle?: () => void;
 }
 
 interface XMLHttpRequest {
