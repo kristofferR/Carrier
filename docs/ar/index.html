@@ -136,7 +136,7 @@
   .wt-btn:focus-visible { outline-color: var(--grad-b); } /* white ring is invisible on the toggle's white pill */
 
   .skip-link {
-    position: absolute; left: 1rem; top: -4rem; z-index: 100;
+    position: absolute; inset-inline-start: 1rem; top: -4rem; z-index: 100;
     background: var(--grad-b); color: #fff; font-weight: 700;
     padding: .7rem 1.2rem; border-radius: 999px; text-decoration: none;
     transition: top .2s ease;
@@ -210,10 +210,10 @@
     position: absolute; border-radius: 50%;
     background: rgba(255,255,255,.10);
   }
-  .orb-1 { width: 220px; height: 220px; top: -60px; left: -50px; }
-  .orb-2 { width: 120px; height: 120px; top: 18%; right: 6%; }
-  .orb-3 { width: 70px; height: 70px; top: 52%; left: 7%; }
-  .orb-4 { width: 160px; height: 160px; bottom: 10%; right: -40px; }
+  .orb-1 { width: 220px; height: 220px; top: -60px; inset-inline-start: -50px; }
+  .orb-2 { width: 120px; height: 120px; top: 18%; inset-inline-end: 6%; }
+  .orb-3 { width: 70px; height: 70px; top: 52%; inset-inline-start: 7%; }
+  .orb-4 { width: 160px; height: 160px; bottom: 10%; inset-inline-end: -40px; }
   .mini-bubble {
     position: absolute; background: rgba(255,255,255,.13);
     border-radius: 18px 18px 18px 4px; width: 74px; height: 46px;
@@ -263,7 +263,7 @@
   }
   .btn-primary {
     background: #fff; color: var(--grad-b);
-    border-bottom-right-radius: 6px; /* the bubble tail corner */
+    border-end-end-radius: 6px; /* the bubble tail corner */
     box-shadow: 0 14px 34px -10px rgba(0, 30, 90, .45);
   }
   .btn-primary:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 20px 44px -12px rgba(0, 30, 90, .55); }
@@ -629,7 +629,7 @@
     width: 993px;
     background: var(--w-window); color: var(--w-text);
     border-radius: 16px;
-    text-align: left;
+    text-align: start;
     overflow: hidden;
     box-shadow: 0 34px 90px -22px rgba(0, 35, 110, .5), 0 12px 34px -14px rgba(0, 35, 110, .35);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif; /* the app really uses the system font */
@@ -641,16 +641,16 @@
      starts at the top (messenger.css, data-carrier-title-bar="macos"). */
   .win { position: relative; }
   .win-bar {
-    position: absolute; top: 0; left: 0; z-index: 2;
+    position: absolute; top: 0; inset-inline-start: 0; z-index: 2;
     display: flex; align-items: center; gap: 11px;
-    height: 28px; padding: 0 14px 0 10px;
+    height: 28px; padding-block: 0; padding-inline: 10px 14px;
   }
   .win-bar .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .dot.r { background: #ff5f57; } .dot.y { background: #febc2e; } .dot.g { background: #28c840; }
   .win-title {
     display: none; /* 3.0: no title bar, the window buttons sit over the page */
     font-weight: 600; color: var(--w-text2);
-    font-size: 13px; margin-left: 6px; /* title ink starts at x85, beside the lights */
+    font-size: 13px; margin-inline-start: 6px; /* title ink starts at x85, beside the lights */
   }
   .win-body { display: flex; height: 652px; background: var(--w-window); }
   .win-body .side { padding-top: 28px; }
@@ -702,8 +702,8 @@
   }
   .chat-row .prev .t { font-size: 12px; }
   .chat-row.unread .name, .chat-row.unread .prev { color: var(--w-text); font-weight: 700; }
-  .blue-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--w-badge); flex-shrink: 0; margin-right: 8px; }
-  .chat-row .avatar.seen { width: 16px; height: 16px; margin-right: 8px; font-size: 7px; }
+  .blue-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--w-badge); flex-shrink: 0; margin-inline-end: 8px; }
+  .chat-row .avatar.seen { width: 16px; height: 16px; margin-inline-end: 8px; font-size: 7px; }
 
   .avatar {
     width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0;
@@ -713,9 +713,9 @@
   /* group chats: two overlapping circles inside the 56px box */
   .avatar-group { position: relative; width: 56px; height: 56px; flex-shrink: 0; }
   .avatar-group .avatar { position: absolute; }
-  .avatar-group .ag-b { top: 0; right: 0; width: 37px; height: 37px; font-size: 13px; }
+  .avatar-group .ag-b { top: 0; inset-inline-end: 0; width: 37px; height: 37px; font-size: 13px; }
   .avatar-group .ag-f {
-    bottom: 0; left: 0; width: 41px; height: 41px; font-size: 14px;
+    bottom: 0; inset-inline-start: 0; width: 41px; height: 41px; font-size: 14px;
     box-shadow: 0 0 0 2px var(--w-surface);
   }
   .av-mom   { background: linear-gradient(135deg, #ff7ab2, #ff9d66); }
@@ -740,7 +740,7 @@
   .chat-head {
     height: 58px; flex-shrink: 0;
     display: flex; align-items: center; gap: 12px;
-    padding: 0 14px 0 16px; border-bottom: 1px solid var(--w-hairline);
+    padding-block: 0; padding-inline: 16px 14px; border-bottom: 1px solid var(--w-hairline);
   }
   .chat-head .avatar { width: 36px; height: 36px; font-size: 13px; }
   .chat-head .who { flex: 1; min-width: 0; }
@@ -757,7 +757,7 @@
 
   /* message groups: 50px avatar column, avatar bottom-aligned with the group */
   .mgroup { display: flex; align-items: flex-end; }
-  .mgroup .m-col { width: 50px; flex-shrink: 0; display: flex; align-items: flex-end; padding-left: 8px; }
+  .mgroup .m-col { width: 50px; flex-shrink: 0; display: flex; align-items: flex-end; padding-inline-start: 8px; }
   .mgroup .m-avatar { width: 28px; height: 28px; font-size: 10px; }
   .mgroup .stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .mgroup.out { justify-content: flex-end; }
@@ -773,10 +773,10 @@
   }
   .msg.in { background: var(--w-bubble-in); color: var(--w-bubble-in-text); }
   /* grouped-corner radii, 18px → 4px on the stacked side (sampled: 18/4) */
-  .stack .msg.in:not(:last-child) { border-bottom-left-radius: 4px; }
-  .stack .msg.in:not(:first-child) { border-top-left-radius: 4px; }
-  .stack .msg.out:not(:last-child) { border-bottom-right-radius: 4px; }
-  .stack .msg.out:not(:first-child) { border-top-right-radius: 4px; }
+  .stack .msg.in:not(:last-child) { border-end-start-radius: 4px; }
+  .stack .msg.in:not(:first-child) { border-start-start-radius: 4px; }
+  .stack .msg.out:not(:last-child) { border-end-end-radius: 4px; }
+  .stack .msg.out:not(:first-child) { border-start-end-radius: 4px; }
 
   /* outgoing: ONE window-anchored gradient (#B02BFA → #2470EE); the fit
      script slices it per bubble via background-position, like the real app */
@@ -790,7 +790,7 @@
   /* single-reaction chip: ~17px circle half-overlapping the bottom-right corner */
   .msg.has-react { margin-bottom: 10px; }
   .react-chip {
-    position: absolute; bottom: -8px; right: 2px;
+    position: absolute; bottom: -8px; inset-inline-end: 2px;
     width: 17px; height: 17px;
     display: grid; place-items: center;
     background: var(--w-react-bg);
@@ -810,7 +810,7 @@
   /* --- composer: flush 36px icon buttons, 403px pill, 36px like --- */
   .composer {
     display: flex; align-items: center; flex-shrink: 0;
-    padding: 8px 2px 14px 4px;
+    padding-block: 8px 14px; padding-inline: 4px 2px;
     color: var(--w-composer);
   }
   .composer .c-btn {
@@ -821,11 +821,11 @@
     flex: 1; min-width: 0; position: relative;
     display: flex; align-items: center;
     background: var(--w-composer-pill); color: var(--w-pill-text);
-    border-radius: 20px; height: 36px; padding: 0 44px 0 12px;
-    font-size: 15px; margin-left: 8px;
+    border-radius: 20px; height: 36px; padding-block: 0; padding-inline: 12px 44px;
+    font-size: 15px; margin-inline-start: 8px;
   }
-  .comp-input .c-btn { position: absolute; right: 0; top: 0; color: var(--w-composer); }
-  .comp-like { margin-left: 4px; }
+  .comp-input .c-btn { position: absolute; inset-inline-end: 0; top: 0; color: var(--w-composer); }
+  .comp-like { margin-inline-start: 4px; }
 
   /* --- the theme toggle, centered above the window --- */
   .win-theme-toggle {
@@ -850,7 +850,7 @@
      app icon left, sender avatar thumbnail right. The stack receives live
      simulated messages from Alex (see script). */
   .toast-stack {
-    position: absolute; top: 14px; right: -16px; z-index: 4; /* below the theme switcher, over the window */
+    position: absolute; top: 14px; inset-inline-end: -16px; z-index: 4; /* below the theme switcher, over the window */
     display: flex; flex-direction: column; gap: 8px;
     width: 336px;
     pointer-events: none;
@@ -862,7 +862,7 @@
     padding: 11px 13px;
     border-radius: 22px;
     border: .5px solid rgba(255, 255, 255, .55);
-    text-align: left;
+    text-align: start;
     box-shadow: 0 14px 44px rgba(0, 10, 40, .35);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
@@ -870,7 +870,7 @@
   .toast--initial { animation: toastIn .6s cubic-bezier(.2,.9,.3,1.35) 1.5s both; }
   .toast.leave { animation: toastOut .4s ease both; }
   @keyframes toastOut {
-    to { opacity: 0; transform: translateX(48px); }
+    to { opacity: 0; transform: translateX(var(--toast-exit, 48px)); }
   }
   .toast .t-app { width: 38px; height: 38px; border-radius: 9px; flex-shrink: 0; }
   .toast .t-body { flex: 1; min-width: 0; }
@@ -890,7 +890,7 @@
   /* the whole window scales uniformly via the fit script - only the (1:1)
      notification stack needs responsive help */
   @media (max-width: 760px) {
-    .toast-stack { right: 6px; top: 10px; }
+    .toast-stack { inset-inline-end: 6px; top: 10px; }
   }
   @media (max-width: 420px) {
     .toast-stack { width: 240px; }
@@ -903,7 +903,7 @@
      3.0 on Windows: no title bar. Chatpane draws minimize, maximize and close
      at the top right over a 32px strip above the conversation; the chat list
      starts at the top (messenger.css, data-carrier-title-bar="windows"). */
-  .win-caption { display: none; position: absolute; top: 0; right: 0; z-index: 2; height: 32px; color: var(--w-text); }
+  .win-caption { display: none; position: absolute; top: 0; inset-inline-end: 0; z-index: 2; height: 32px; color: var(--w-text); }
   .win-caption span { width: 46px; height: 32px; display: grid; place-items: center; }
   .win-caption svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
   html[data-os="windows"] .win { border-radius: 8px; }
@@ -924,14 +924,14 @@
     font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   }
   html[data-os="windows"] .toast::before {
-    content: "Chatpane"; position: absolute; top: 10px; left: 38px;
+    content: "Chatpane"; position: absolute; top: 10px; inset-inline-start: 38px;
     font-size: 12px; color: rgba(0, 0, 0, .72);
   }
-  html[data-os="windows"] .toast .t-app { position: absolute; top: 10px; left: 14px; width: 16px; height: 16px; border-radius: 4px; }
+  html[data-os="windows"] .toast .t-app { position: absolute; top: 10px; inset-inline-start: 14px; width: 16px; height: 16px; border-radius: 4px; }
   html[data-os="windows"] .toast .t-avatar { order: -1; width: 44px; height: 44px; }
   html[data-os="windows"] .toast .t-now { display: none; }
   html[data-os="windows"] .toast .t-title b { font-weight: 600; font-size: 14px; }
-  html[data-os="windows"] .toast .t-actions { padding-left: 0; gap: 8px; }
+  html[data-os="windows"] .toast .t-actions { padding-inline-start: 0; gap: 8px; }
   html[data-os="windows"] .toast .t-actions span { flex: 1; text-align: center; border-radius: 4px; padding: 6px 8px; background: rgba(255, 255, 255, .85); }
 
 
@@ -957,19 +957,19 @@
     font-family: "Noto Sans", "Inter", system-ui, sans-serif; color: #232629;
   }
   html[data-os="linux"] .toast::before {
-    content: "Chatpane"; position: absolute; top: 10px; left: 36px;
+    content: "Chatpane"; position: absolute; top: 10px; inset-inline-start: 36px;
     font-size: 12px; color: rgba(35, 38, 41, .7);
   }
   html[data-os="linux"] .toast::after {
-    content: "×"; position: absolute; top: 5px; right: 11px;
+    content: "×"; position: absolute; top: 5px; inset-inline-end: 11px;
     font-size: 17px; line-height: 1; color: rgba(35, 38, 41, .6);
   }
-  html[data-os="linux"] .toast .t-app { position: absolute; top: 10px; left: 13px; width: 16px; height: 16px; border-radius: 4px; }
+  html[data-os="linux"] .toast .t-app { position: absolute; top: 10px; inset-inline-start: 13px; width: 16px; height: 16px; border-radius: 4px; }
   html[data-os="linux"] .toast .t-avatar { width: 44px; height: 44px; }
   html[data-os="linux"] .toast .t-now { display: none; }
   html[data-os="linux"] .toast .t-title b { font-weight: 700; font-size: 14px; }
   html[data-os="linux"] .toast .t-msg { color: #232629; }
-  html[data-os="linux"] .toast .t-actions { padding-left: 0; gap: 6px; margin-top: 10px; }
+  html[data-os="linux"] .toast .t-actions { padding-inline-start: 0; gap: 6px; margin-top: 10px; }
   html[data-os="linux"] .toast .t-actions span {
     flex: 1; text-align: center; border-radius: 4px; padding: 5px 8px;
     background: #fcfcfc; border: 1px solid rgba(35, 38, 41, .25); color: #232629; font-weight: 400;
@@ -999,7 +999,7 @@
 
   /* ---------- Story: told as a chat ---------- */
   .story { padding-top: calc(110px + clamp(1.5rem, 3.5vw, 2.5rem)); padding-bottom: clamp(2rem, 4vw, 3rem); }
-  .story-thread { max-width: 600px; margin: 1.6rem auto 0; display: flex; flex-direction: column; gap: .7rem; text-align: left; }
+  .story-thread { max-width: 600px; margin: 1.6rem auto 0; display: flex; flex-direction: column; gap: .7rem; text-align: start; }
   .sb {
     position: relative;
     max-width: min(430px, 88%);
@@ -1014,13 +1014,13 @@
   }
   /* grouped-corner radii between consecutive same-side bubbles - the real
      Messenger treatment (no protruding tails) */
-  .sb.out:has(+ .sb.out) { border-bottom-right-radius: 4px; }
-  .sb.out + .sb.out { border-top-right-radius: 4px; margin-top: calc(2px - .7rem); }
-  .sb.in:has(+ .sb.in) { border-bottom-left-radius: 4px; }
-  .sb.in + .sb.in { border-top-left-radius: 4px; margin-top: calc(2px - .7rem); }
+  .sb.out:has(+ .sb.out) { border-end-end-radius: 4px; }
+  .sb.out + .sb.out { border-start-end-radius: 4px; margin-top: calc(2px - .7rem); }
+  .sb.in:has(+ .sb.in) { border-end-start-radius: 4px; }
+  .sb.in + .sb.in { border-start-start-radius: 4px; margin-top: calc(2px - .7rem); }
   .delivered {
     align-self: flex-end; color: #64798e;
-    font-size: .8rem; font-weight: 700; padding-right: .4rem;
+    font-size: .8rem; font-weight: 700; padding-inline-end: .4rem;
   }
 
   /* ---------- Features: bubble-tailed cards ---------- */
@@ -1038,25 +1038,25 @@
     position: relative;
     background: var(--bub);
     border-radius: var(--radius-bubble);
-    text-align: left;
+    text-align: start;
     padding: 1.7rem 1.6rem 1.6rem;
     box-shadow: var(--shadow-card);
     transition: transform .25s cubic-bezier(.2,.7,.3,1.3), box-shadow .25s ease;
   }
   .feature:hover { transform: translateY(-5px); box-shadow: 0 22px 50px -18px rgba(15, 60, 130, .3); }
   .feature::before {
-    content: ""; position: absolute; bottom: 0; left: -7px;
+    content: ""; position: absolute; bottom: 0; inset-inline-start: -7px;
     width: 22px; height: 22px; background: var(--bub);
-    border-bottom-right-radius: 16px;
+    border-end-end-radius: 16px;
   }
   .feature::after {
-    content: ""; position: absolute; bottom: 0; left: -13px;
+    content: ""; position: absolute; bottom: 0; inset-inline-start: -13px;
     width: 13px; height: 26px; background: var(--section-tint);
-    border-bottom-right-radius: 12px;
+    border-end-end-radius: 12px;
   }
   .feature:nth-child(even) { --bub: #e4f0ff; }
-  .feature:nth-child(even)::before { left: auto; right: -7px; border-bottom-right-radius: 0; border-bottom-left-radius: 16px; }
-  .feature:nth-child(even)::after  { left: auto; right: -13px; border-bottom-right-radius: 0; border-bottom-left-radius: 12px; }
+  .feature:nth-child(even)::before { inset-inline-start: auto; inset-inline-end: -7px; border-end-end-radius: 0; border-end-start-radius: 16px; }
+  .feature:nth-child(even)::after  { inset-inline-start: auto; inset-inline-end: -13px; border-end-end-radius: 0; border-end-start-radius: 12px; }
 
   .f-icon {
     width: 52px; height: 52px; border-radius: 50%;
@@ -1072,7 +1072,7 @@
 
   /* ---------- Notifications: a live-looking stack ---------- */
   .split { display: grid; grid-template-columns: 1.05fr 1fr; gap: clamp(2rem, 5vw, 4rem); align-items: center; }
-  .split-text { text-align: left; }
+  .split-text { text-align: start; }
   @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
   .notif-demo {
     position: relative;
@@ -1084,7 +1084,7 @@
   }
   .notif-demo .toast { animation: none; }
   .toast.has-actions { flex-wrap: wrap; }
-  .toast .t-actions { flex-basis: 100%; display: flex; gap: 6px; padding-left: 49px; }
+  .toast .t-actions { flex-basis: 100%; display: flex; gap: 6px; padding-inline-start: 49px; }
   .toast .t-actions span {
     background: rgba(255, 255, 255, .7); border: .5px solid rgba(0, 0, 0, .08);
     border-radius: 9px; padding: 4px 10px; font-size: 12.5px; font-weight: 600; color: #1d1d1f;
@@ -1114,15 +1114,15 @@
   .sd-chat {
     --w-surface: #ffffff; --w-hairline: rgba(0, 0, 0, .10); --w-text: #080809; --w-text2: #65686c;
     --w-composer: #0070f6; --w-composer-pill: #f0f2f5; --w-pill-text: #65686c;
-    background: #fff; border-radius: 8px; overflow: hidden; text-align: left; color: #080809;
+    background: #fff; border-radius: 8px; overflow: hidden; text-align: start; color: #080809;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 15px; line-height: 1.34;
     display: flex; flex-direction: column;
   }
   .sd-head .who { font-weight: 600; }
   .sd-body { position: relative; height: 380px; }
-  .sd-input { padding-right: 76px; }
+  .sd-input { padding-inline-end: 76px; }
   .sd-draft { color: #080809; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sd-input .carrier-schedule-button { position: absolute; right: 36px; top: 2px; margin: 0; }
+  .sd-input .carrier-schedule-button { position: absolute; inset-inline-end: 36px; top: 2px; margin: 0; }
   /* Chatpane's scheduling UI, with the rules from src-tauri/inject/messenger.css */
   .carrier-schedule-button {
     appearance: none; border: 0; background: transparent; color: #0070f6;
@@ -1132,7 +1132,7 @@
   .carrier-schedule-button[aria-expanded="true"] { background: color-mix(in srgb, currentColor 13%, transparent); }
   .carrier-schedule-panel {
     --schedule-accent: #0070f6; --schedule-surface: #ffffff; --schedule-text: #080809; --schedule-muted: #65686c;
-    position: absolute; right: 26px; bottom: 6px; width: min(320px, calc(100% - 16px));
+    position: absolute; inset-inline-end: 26px; bottom: 6px; width: min(320px, calc(100% - 16px));
     padding: 12px; border: 1px solid color-mix(in srgb, var(--schedule-text) 16%, transparent);
     border-radius: 14px; background: var(--schedule-surface); color: var(--schedule-text);
     box-shadow: 0 8px 28px #0004; font-size: 15px; font-weight: 400; line-height: 20px;
@@ -1146,7 +1146,7 @@
   .carrier-schedule-time { color: var(--schedule-muted); }
   .carrier-schedule-custom { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 14%, transparent); margin-top: 5px; }
   .sd-summary { display: block; padding: 13px 8px; }
-  .sd-tri { font-size: 10px; display: inline-block; transform: translateY(-1px); margin-right: 2px; }
+  .sd-tri { font-size: 10px; display: inline-block; transform: translateY(-1px); margin-inline-end: 2px; }
   .carrier-schedule-note { color: var(--schedule-muted); font-size: 13px; line-height: 16px; margin: 12px 5px 0; display: block; }
   .carrier-schedule-divider { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 14%, transparent); padding-top: 12px; }
 
@@ -1196,15 +1196,15 @@
     display: inline-flex; align-items: center; gap: 8px; background: #fff; color: #1c1e21;
     padding: 9px 14px; border-radius: 18px; font-size: 15px; white-space: nowrap;
   }
-  .md-row { padding: 6px 14px 6px 6px; border-radius: 999px; }
+  .md-row { padding-block: 6px; padding-inline: 6px 14px; border-radius: 999px; }
   .md-row b { font-weight: 600; }
   .md-av { width: 30px; height: 30px; font-size: 11px; }
   .ctx-menu {
-    margin-left: 18px; width: 196px; padding: 5px;
+    margin-inline-start: 18px; width: 196px; padding: 5px;
     background: rgba(246, 246, 248, .98);
     border: .5px solid rgba(0, 0, 0, .12); border-radius: 10px;
     box-shadow: 0 18px 40px -12px rgba(0, 10, 40, .45);
-    font-size: 13.5px; color: #1d1d1f; text-align: left;
+    font-size: 13.5px; color: #1d1d1f; text-align: start;
     display: flex; flex-direction: column;
   }
   .ctx-menu .mi { padding: 4px 10px; border-radius: 5px; display: flex; justify-content: space-between; white-space: nowrap; }
@@ -1220,28 +1220,28 @@
   /* macOS 3.0: communication notifications. The sender's face (or the group's
      picture) on the left with a small Chatpane badge, actions behind the
      Options button that appears on hover. */
-  html:not([data-os]) .toast { position: relative; align-items: flex-start; padding: 12px 14px 12px 12px; border-radius: 24px; }
+  html:not([data-os]) .toast { position: relative; align-items: flex-start; padding-block: 12px; padding-inline: 12px 14px; border-radius: 24px; }
   html:not([data-os]) .toast .t-avatar { order: -1; width: 38px; height: 38px; }
-  html:not([data-os]) .toast .t-app { position: absolute; left: 34px; top: 34px; width: 18px; height: 18px; border-radius: 5px; z-index: 1; box-shadow: 0 0 0 1.5px rgba(247, 247, 249, .9); }
+  html:not([data-os]) .toast .t-app { position: absolute; inset-inline-start: 34px; top: 34px; width: 18px; height: 18px; border-radius: 5px; z-index: 1; box-shadow: 0 0 0 1.5px rgba(247, 247, 249, .9); }
   html:not([data-os]) .toast .t-body { padding-top: 1px; }
   html:not([data-os]) .toast .t-actions { display: none; }
   .toast .t-close, .toast .t-options, .toast .t-menu { display: none; }
-  html:not([data-os]) .notif-demo .toast.has-actions { padding-right: 112px; }
+  html:not([data-os]) .notif-demo .toast.has-actions { padding-inline-end: 112px; }
   html:not([data-os]) .notif-demo .toast.has-actions .t-now { display: none; }
   html:not([data-os]) .toast .t-close {
-    display: grid; place-items: center; position: absolute; top: -7px; left: -7px;
+    display: grid; place-items: center; position: absolute; top: -7px; inset-inline-start: -7px;
     width: 20px; height: 20px; border-radius: 50%; font-size: 14px; line-height: 1;
     background: rgba(246, 246, 248, .96); color: rgba(0, 0, 0, .6);
     box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
   }
   html:not([data-os]) .toast .t-options {
-    display: inline-flex; align-items: center; gap: 3px; position: absolute; top: 50%; right: 12px; transform: translateY(-50%);
+    display: inline-flex; align-items: center; gap: 3px; position: absolute; top: 50%; inset-inline-end: 12px; transform: translateY(-50%);
     padding: 4px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
     background: rgba(0, 0, 0, .07); color: #1d1d1f;
   }
   html:not([data-os]) .toast .t-options .chev { font-size: 11px; transform: translateY(-2px); }
   html:not([data-os]) .toast .t-menu {
-    display: flex; flex-direction: column; position: absolute; top: calc(50% + 18px); right: 6px; z-index: 3;
+    display: flex; flex-direction: column; position: absolute; top: calc(50% + 18px); inset-inline-end: 6px; z-index: 3;
     min-width: 150px; padding: 5px;
     background: rgba(246, 246, 248, .96); border: .5px solid rgba(0, 0, 0, .12); border-radius: 10px;
     box-shadow: 0 16px 36px -10px rgba(0, 10, 40, .45);
@@ -1262,7 +1262,7 @@
 
   /* ---------- Compare ---------- */
   .cmp-scroll { overflow-x: auto; margin-top: 2.4rem; border-radius: var(--radius-bubble); box-shadow: var(--shadow-card); }
-  table.cmp { width: 100%; min-width: 760px; border-collapse: collapse; background: #fff; text-align: left; font-size: .97rem; }
+  table.cmp { width: 100%; min-width: 760px; border-collapse: collapse; background: #fff; text-align: start; font-size: .97rem; }
   table.cmp th, table.cmp td { padding: .95rem 1.1rem; border-bottom: 1px solid #edf2f9; vertical-align: top; }
   table.cmp thead th { font-family: var(--font-display); font-weight: 800; font-size: 1.02rem; }
   table.cmp tbody th { font-weight: 700; color: var(--muted); white-space: nowrap; }
@@ -1274,7 +1274,7 @@
   /* ---------- Shortcuts ---------- */
   .key-grid {
     display: grid; grid-template-columns: repeat(2, 1fr); gap: .8rem 1.2rem;
-    max-width: 860px; margin: 2.4rem auto 0; text-align: left;
+    max-width: 860px; margin: 2.4rem auto 0; text-align: start;
   }
   @media (max-width: 660px) { .key-grid { grid-template-columns: 1fr; } }
   .key-row {
@@ -1313,7 +1313,7 @@
   .faq-list {
     max-width: 720px; margin: 2.4rem auto 0;
     display: flex; flex-direction: column; gap: .8rem;
-    text-align: left;
+    text-align: start;
   }
   .faq-item {
     background: var(--bubble-grey);
@@ -1368,8 +1368,8 @@
     overflow: hidden;
   }
   .download .orb { position: absolute; border-radius: 50%; background: rgba(255,255,255,.1); pointer-events: none; }
-  .download .orb.d1 { width: 190px; height: 190px; top: -60px; right: -40px; }
-  .download .orb.d2 { width: 120px; height: 120px; bottom: -30px; left: 6%; }
+  .download .orb.d1 { width: 190px; height: 190px; top: -60px; inset-inline-end: -40px; }
+  .download .orb.d2 { width: 120px; height: 120px; bottom: -30px; inset-inline-start: 6%; }
   .download h2 { font-size: clamp(1.9rem, 4.2vw, 2.8rem); font-weight: 800; }
   .download .sec-sub { color: #fff; margin-inline: auto; }
   .version-pill {
@@ -1396,7 +1396,7 @@
     position: relative;
     display: flex; align-items: center; gap: .9rem;
     background: #fff; color: var(--ink);
-    text-decoration: none; text-align: left;
+    text-decoration: none; text-align: start;
     padding: 1rem 1.25rem;
     border-radius: 999px;
     box-shadow: 0 14px 34px -12px rgba(0, 30, 90, .4);
@@ -1405,7 +1405,7 @@
   .dl:hover, .dl:focus-visible { transform: translateY(-4px) scale(1.02); box-shadow: 0 22px 48px -14px rgba(0, 30, 90, .5); }
   .dl::after {
     content: var(--react);
-    position: absolute; top: -4px; right: 14px;
+    position: absolute; top: -4px; inset-inline-end: 14px;
     font-size: 1.5rem; opacity: 0;
     pointer-events: none;
   }
@@ -1471,6 +1471,14 @@
     }
     html { scroll-behavior: auto; }
   }
+
+  /* Arabic and Urdu: the mocks mirror like Messenger and Chatpane do in those
+     languages; logical properties above handle the rest. */
+  [dir="rtl"] .win { transform-origin: top right; }
+  [dir="rtl"] { --toast-exit: -48px; }
+  [dir="rtl"] .tp-side { box-shadow: inset 1px 0 var(--tp-line); }
+  [dir="rtl"] .sd-tri { transform: translateY(-1px) scaleX(-1); }
+  [dir="rtl"] .ctx-menu .chev { display: inline-block; transform: scaleX(-1); }
 </style>
 <!-- Per-language profile pictures; the build script points each page at avatars/<lang>/. -->
 <style id="avatarStyle">
@@ -1585,7 +1593,7 @@
           <button type="button" class="wt-btn" data-skin="slate" aria-pressed="false">Slate</button>
         </div>
       </div>
-      <div class="win-stage" id="winStage" dir="ltr" data-win-theme="light" data-win-skin="default" role="img" aria-label="معاينة لنافذة تطبيق Chatpane تعرض محادثة على Messenger." data-i18n-aria="a11y.winPreview">
+      <div class="win-stage" id="winStage" data-win-theme="light" data-win-skin="default" role="img" aria-label="معاينة لنافذة تطبيق Chatpane تعرض محادثة على Messenger." data-i18n-aria="a11y.winPreview">
         <div class="win" aria-hidden="true">
           <div class="win-bar">
             <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
@@ -1849,7 +1857,7 @@
         <h2 id="notif-title" class="sec-title reveal" style="--d:.08s" data-i18n="notif.title">ردّ أو تفاعل أو ضع علامة كمقروءة من الإشعار نفسه.</h2>
         <p class="sec-sub reveal" style="--d:.14s" data-i18n="notif.sub">تعرض الإشعارات صورة المُرسِل أو صورة المجموعة. يمكنك إيقافها مؤقتًا لمدة ساعة أو حتى صباح الغد. ووضع «عدم الإزعاج» في Messenger يكتمها أيضًا، سواء ضبطته على هاتفك أو في Chatpane. واختر صوت الإشعار أيضًا: بلا صوت، أو الافتراضي للنظام، أو أحد أصوات جهازك، أو ملفًا خاصًا بك.</p>
       </div>
-      <div class="notif-demo reveal" style="--d:.1s" dir="ltr" aria-hidden="true">
+      <div class="notif-demo reveal" style="--d:.1s" aria-hidden="true">
           <div class="toast has-actions">
             <img class="t-app" src="../app-icon.png" alt="" width="38" height="38">
             <span class="t-body">
@@ -1885,7 +1893,7 @@
   <!-- ============ Scheduled messages ============ -->
   <section class="sched" id="schedule" aria-labelledby="sched-title">
     <div class="wrap split">
-      <div class="sched-demo reveal" style="--d:.1s" dir="ltr" aria-hidden="true">
+      <div class="sched-demo reveal" style="--d:.1s" aria-hidden="true">
         <div class="sd-chat">
           <div class="chat-head sd-head"><span class="avatar av-mom"></span><span class="who" data-i18n="win.name.mom">ماما</span></div>
           <div class="sd-body">
@@ -1924,7 +1932,7 @@
   <!-- ============ Appearance ============ -->
   <section class="look" id="appearance" aria-labelledby="look-title">
     <div class="wrap split">
-      <div class="look-demo reveal" style="--d:.1s" dir="ltr" aria-hidden="true">
+      <div class="look-demo reveal" style="--d:.1s" aria-hidden="true">
         <div class="tp-grid">
           <div class="tp">
             <div class="tp-win" style="--tp-side:#ffffff;--tp-chat:#f0f2f5;--tp-in:#e4e6eb;--tp-out:linear-gradient(135deg, #b02bfa, #2470ee);--tp-line:rgba(0,0,0,.1)">
@@ -2106,8 +2114,8 @@
           <thead><tr><th></th><th class="us" scope="col">Chatpane</th><th scope="col">Messenger Next</th><th scope="col">Caprine</th><th scope="col">Ferdium</th><th scope="col" data-i18n="cmp.c.tab">تبويب في المتصفح</th></tr></thead>
           <tbody>
           <tr><th scope="row" data-i18n="cmp.r.made">مخصص لـ</th><td class="us" data-i18n="cmp.v.messenger">Messenger</td><td data-i18n="cmp.v.messenger">Messenger</td><td data-i18n="cmp.v.messenger">Messenger</td><td data-i18n="cmp.v.many">خدمات كثيرة في تطبيق واحد</td><td data-i18n="cmp.v.allfb">كل Facebook، بما في ذلك الخلاصة</td></tr>
-          <tr><th scope="row" data-i18n="cmp.r.mac">تنزيل لنظام Mac</th><td class="us">4.1 MB</td><td>10.1 MB</td><td>102.9 MB</td><td>167.6 MB</td><td>–</td></tr>
-          <tr><th scope="row" data-i18n="cmp.r.win">مثبّت Windows</th><td class="us">3.0 MB</td><td>4.1 MB</td><td>82.3 MB</td><td>135.6 MB</td><td>–</td></tr>
+          <tr><th scope="row" data-i18n="cmp.r.mac">تنزيل لنظام Mac</th><td class="us"><span dir="ltr">4.1 MB</span></td><td><span dir="ltr">10.1 MB</span></td><td><span dir="ltr">102.9 MB</span></td><td><span dir="ltr">167.6 MB</span></td><td>–</td></tr>
+          <tr><th scope="row" data-i18n="cmp.r.win">مثبّت Windows</th><td class="us"><span dir="ltr">3.0 MB</span></td><td><span dir="ltr">4.1 MB</span></td><td><span dir="ltr">82.3 MB</span></td><td><span dir="ltr">135.6 MB</span></td><td>–</td></tr>
           <tr><th scope="row" data-i18n="cmp.r.engine">مبني على</th><td class="us" data-i18n="cmp.v.webview">محرك الويب في نظامك</td><td data-i18n="cmp.v.webview">محرك الويب في نظامك</td><td data-i18n="cmp.v.electron">Electron (متصفح Chromium كامل بداخله)</td><td data-i18n="cmp.v.electron">Electron (متصفح Chromium كامل بداخله)</td><td data-i18n="cmp.v.browser">متصفحك</td></tr>
           <tr><th scope="row" data-i18n="cmp.r.src">الشيفرة المصدرية</th><td class="us" data-i18n="cmp.v.openMit">مفتوح (MIT)</td><td data-i18n="cmp.v.closed">مغلق</td><td data-i18n="cmp.v.openMit">مفتوح (MIT)</td><td data-i18n="cmp.v.openApache">مفتوح (Apache 2.0)</td><td>–</td></tr>
           <tr><th scope="row" data-i18n="cmp.r.latest">آخر إصدار</th><td class="us" data-i18n="cmp.v.d.nov">نوفمبر 2026</td><td data-i18n="cmp.v.d.sep">سبتمبر 2026</td><td data-i18n="cmp.v.d.jan">يناير 2026</td><td data-i18n="cmp.v.d.sep">سبتمبر 2026</td><td>–</td></tr>
@@ -2611,13 +2619,13 @@
     function fit() {
       var scale = Math.min(1, stage.clientWidth / NATIVE_W);
       win.style.transform = scale < 1 ? 'scale(' + scale + ')' : '';
-      win.style.marginLeft = scale < 1 ? '0' : '';
+      win.style.marginInlineStart = scale < 1 ? '0' : '';
       stage.style.height = Math.round(NATIVE_H * scale) + 'px';
       // the notification stack lives outside the window (it's OS chrome) but
       // must shrink with it, pinned to its top-right anchor
       var stack = stage.querySelector('.toast-stack');
       if (stack) {
-        stack.style.transformOrigin = 'top right';
+        stack.style.transformOrigin = getComputedStyle(stage).direction === 'rtl' ? 'top left' : 'top right';
         stack.style.transform = scale < 1 ? 'scale(' + scale + ')' : '';
       }
     }
