@@ -1,6 +1,6 @@
 {
     "version": "3.1.0",
-    "description": "Chatpane (formerly Carrier): unofficial desktop app for Facebook Messenger, without the rest of Facebook. Not affiliated with or endorsed by Meta.",
+    "description": "Chatpane: unofficial desktop app for Facebook Messenger, without the rest of Facebook. Not affiliated with or endorsed by Meta.",
     "homepage": "https://chatpane.app/",
     "license": "MIT",
     "architecture": {

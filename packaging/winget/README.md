@@ -18,9 +18,9 @@ The package uses the per-user NSIS installers (`Chatpane_<ver>_win_{x64,arm}_set
   rewrites the same key. winget and the updater therefore share one install:
   after a self-update, `winget upgrade` sees the new version and offers nothing.
 - A silent install or upgrade closes the running app and does not relaunch it.
-- Installing over Carrier (3.0.x and older) migrates it: the installer runs
-  Carrier's uninstaller without deleting app data and removes the old `Carrier`
-  uninstall entry, so only `Chatpane` remains, with settings and login kept.
+- Installing over a version older than 3.1 migrates it: the installer runs the
+  old uninstaller without deleting app data and removes the old uninstall
+  entry, so only `Chatpane` remains, with settings and login kept.
 - The installer is not Authenticode-signed. winget marks downloaded installers as
   coming from the internet, so users get a SmartScreen "Windows protected your
   PC" prompt (More info, then Run anyway) on install and on every
@@ -30,7 +30,7 @@ The package uses the per-user NSIS installers (`Chatpane_<ver>_win_{x64,arm}_set
   reputation builds up over the first releases.
 
 Checked in the Windows VM with winget 1.29: `winget validate` passes for 3.1.0,
-and `winget install --manifest` over a running Carrier 3.0.1 left a single
+and `winget install --manifest` over a running 3.0.1 install left a single
 `Chatpane` 3.1.0 uninstall entry, Chatpane shortcuts and the existing login.
 
 ## First submission (manual)
