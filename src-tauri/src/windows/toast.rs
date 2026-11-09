@@ -185,8 +185,16 @@ fn dedicated_toast_app_id(identifier: &str) -> String {
     format!("{identifier}.notifications")
 }
 
-fn toast_history_app_ids(identifier: &str) -> [String; 2] {
-    [dedicated_toast_app_id(identifier), identifier.to_string()]
+/// Every identity Chatpane's toasts can sit under, Carrier's included, so
+/// reading a chat or logging out also clears previews shown before the update.
+fn toast_history_app_ids(identifier: &str) -> [String; 4] {
+    let previous = crate::identity::PREVIOUS;
+    [
+        dedicated_toast_app_id(identifier),
+        identifier.to_string(),
+        dedicated_toast_app_id(previous),
+        previous.to_string(),
+    ]
 }
 
 /// Everything [`deliver_notification_windows`] needs. Owned so the WinRT handlers
@@ -841,6 +849,8 @@ mod tests {
             [
                 "app.chatpane.Chatpane.notifications".to_string(),
                 "app.chatpane.Chatpane".to_string(),
+                "io.github.kristofferr.carrier.notifications".to_string(),
+                "io.github.kristofferr.carrier".to_string(),
             ]
         );
     }
