@@ -15,7 +15,7 @@
   (function () {
     if (I18N_PAGE !== 'en') return;
     var has = function (l) { return I18N_LOCALES.indexOf(l) >= 0; }, pick = null;
-    try { var st = localStorage.getItem('carrier-lang'); if (st && has(st)) pick = st; } catch (_) {}
+    try { var st = localStorage.getItem('chatpane-lang'); if (st && has(st)) pick = st; } catch (_) {}
     var navs = navigator.languages || [navigator.language || 'en'];
     for (var i = 0; i < navs.length && !pick; i++) {
       var n = String(navs[i]);
@@ -638,7 +638,7 @@
   }
   /* 3.0 on macOS: no title bar. The window buttons float over the chat
      list, which keeps a 28px strip free under them; the chat pane beside it
-     starts at the top (messenger.css, data-carrier-title-bar="macos"). */
+     starts at the top (messenger.css, macos title bar). */
   .win { position: relative; }
   .win-bar {
     position: absolute; top: 0; inset-inline-start: 0; z-index: 2;
@@ -902,7 +902,7 @@
   /* ---------- Windows 11 (html[data-os="windows"]) ----------
      3.0 on Windows: no title bar. Chatpane draws minimize, maximize and close
      at the top right over a 32px strip above the conversation; the chat list
-     starts at the top (messenger.css, data-carrier-title-bar="windows"). */
+     starts at the top (messenger.css, windows title bar). */
   .win-caption { display: none; position: absolute; top: 0; inset-inline-end: 0; z-index: 2; height: 32px; color: var(--w-text); }
   .win-caption span { width: 46px; height: 32px; display: grid; place-items: center; }
   .win-caption svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
@@ -938,7 +938,7 @@
   /* ---------- Linux (html[data-os="linux"]) ----------
      3.0 on floating Linux desktops (KDE Plasma, GNOME): no title bar, Chatpane
      draws round minimize, maximize and close buttons at the top right over a
-     32px strip above the conversation (messenger.css, data-carrier-title-bar="linux"). */
+     32px strip above the conversation (messenger.css, linux title bar). */
   html[data-os="linux"] .win { border-radius: 8px; }
   html[data-os="linux"] .win-bar { display: none; }
   html[data-os="linux"] .win-caption { display: flex; align-items: center; gap: 10px; padding: 0 8px; }
@@ -1122,33 +1122,33 @@
   .sd-body { position: relative; height: 380px; }
   .sd-input { padding-inline-end: 76px; }
   .sd-draft { color: #080809; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sd-input .carrier-schedule-button { position: absolute; inset-inline-end: 36px; top: 2px; margin: 0; }
+  .sd-input .chatpane-schedule-button { position: absolute; inset-inline-end: 36px; top: 2px; margin: 0; }
   /* Chatpane's scheduling UI, with the rules from src-tauri/inject/messenger.css */
-  .carrier-schedule-button {
+  .chatpane-schedule-button {
     appearance: none; border: 0; background: transparent; color: #0070f6;
     width: 32px; height: 32px; padding: 6px; border-radius: 50%; cursor: default;
   }
-  .carrier-schedule-button svg { display: block; width: 20px; height: 20px; }
-  .carrier-schedule-button[aria-expanded="true"] { background: color-mix(in srgb, currentColor 13%, transparent); }
-  .carrier-schedule-panel {
+  .chatpane-schedule-button svg { display: block; width: 20px; height: 20px; }
+  .chatpane-schedule-button[aria-expanded="true"] { background: color-mix(in srgb, currentColor 13%, transparent); }
+  .chatpane-schedule-panel {
     --schedule-accent: #0070f6; --schedule-surface: #ffffff; --schedule-text: #080809; --schedule-muted: #65686c;
     position: absolute; inset-inline-end: 26px; bottom: 6px; width: min(320px, calc(100% - 16px));
     padding: 12px; border: 1px solid color-mix(in srgb, var(--schedule-text) 16%, transparent);
     border-radius: 14px; background: var(--schedule-surface); color: var(--schedule-text);
     box-shadow: 0 8px 28px #0004; font-size: 15px; font-weight: 400; line-height: 20px;
   }
-  .carrier-schedule-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 8px; }
-  .carrier-schedule-heading h3 { font: inherit; font-weight: 600; font-size: 17px; margin: 0; letter-spacing: 0; color: var(--schedule-text); }
-  .carrier-schedule-close { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--schedule-muted); }
-  .carrier-schedule-close svg { width: 18px; height: 18px; }
-  .carrier-schedule-preset { display: flex; justify-content: space-between; gap: 10px; padding: 12px 8px; border-radius: 8px; }
-  .carrier-schedule-preset:nth-of-type(4) { background: color-mix(in srgb, var(--schedule-text) 8%, transparent); }
-  .carrier-schedule-time { color: var(--schedule-muted); }
-  .carrier-schedule-custom { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 14%, transparent); margin-top: 5px; }
+  .chatpane-schedule-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 8px; }
+  .chatpane-schedule-heading h3 { font: inherit; font-weight: 600; font-size: 17px; margin: 0; letter-spacing: 0; color: var(--schedule-text); }
+  .chatpane-schedule-close { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--schedule-muted); }
+  .chatpane-schedule-close svg { width: 18px; height: 18px; }
+  .chatpane-schedule-preset { display: flex; justify-content: space-between; gap: 10px; padding: 12px 8px; border-radius: 8px; }
+  .chatpane-schedule-preset:nth-of-type(4) { background: color-mix(in srgb, var(--schedule-text) 8%, transparent); }
+  .chatpane-schedule-time { color: var(--schedule-muted); }
+  .chatpane-schedule-custom { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 14%, transparent); margin-top: 5px; }
   .sd-summary { display: block; padding: 13px 8px; }
   .sd-tri { font-size: 10px; display: inline-block; transform: translateY(-1px); margin-inline-end: 2px; }
-  .carrier-schedule-note { color: var(--schedule-muted); font-size: 13px; line-height: 16px; margin: 12px 5px 0; display: block; }
-  .carrier-schedule-divider { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 14%, transparent); padding-top: 12px; }
+  .chatpane-schedule-note { color: var(--schedule-muted); font-size: 13px; line-height: 16px; margin: 12px 5px 0; display: block; }
+  .chatpane-schedule-divider { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 14%, transparent); padding-top: 12px; }
 
   /* ---------- Appearance ---------- */
   .look-demo {
@@ -1897,15 +1897,15 @@
         <div class="sd-chat">
           <div class="chat-head sd-head"><span class="avatar av-mom"></span><span class="who" data-i18n="win.name.mom">Мама</span></div>
           <div class="sd-body">
-          <div class="carrier-schedule-panel sd-panel">
-            <div class="carrier-schedule-heading"><h3 data-i18n="sched.panel">Запланувати надсилання</h3><span class="carrier-schedule-close"><svg viewBox="0 0 20 20"><path d="m4 4 12 12M16 4 4 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></div>
-            <span class="carrier-schedule-preset"><span data-i18n="sched.p1">Через 15 хвилин</span><span class="carrier-schedule-time">14:52</span></span>
-            <span class="carrier-schedule-preset"><span data-i18n="sched.p2">Через 1 годину</span><span class="carrier-schedule-time">15:37</span></span>
-            <span class="carrier-schedule-preset"><span data-i18n="sched.p3">Сьогодні ввечері</span><span class="carrier-schedule-time">18:00</span></span>
-            <span class="carrier-schedule-preset"><span data-i18n="sched.p4">Завтра вранці</span><span class="carrier-schedule-time">09:00</span></span>
-            <div class="carrier-schedule-custom"><span class="sd-summary"><span class="sd-tri">▶</span> <span data-i18n="sched.p5">Вибрати дату й час</span></span></div>
-            <p class="carrier-schedule-note"><span class="sd-tz" data-i18n="sched.zone">Europe/Kyiv</span> · <span data-i18n="sched.tz">24-годинний формат</span></p>
-            <p class="carrier-schedule-note carrier-schedule-divider" data-i18n="sched.note">Надсилається автоматично, поки Chatpane працює і має з’єднання.</p>
+          <div class="chatpane-schedule-panel sd-panel">
+            <div class="chatpane-schedule-heading"><h3 data-i18n="sched.panel">Запланувати надсилання</h3><span class="chatpane-schedule-close"><svg viewBox="0 0 20 20"><path d="m4 4 12 12M16 4 4 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></div>
+            <span class="chatpane-schedule-preset"><span data-i18n="sched.p1">Через 15 хвилин</span><span class="chatpane-schedule-time">14:52</span></span>
+            <span class="chatpane-schedule-preset"><span data-i18n="sched.p2">Через 1 годину</span><span class="chatpane-schedule-time">15:37</span></span>
+            <span class="chatpane-schedule-preset"><span data-i18n="sched.p3">Сьогодні ввечері</span><span class="chatpane-schedule-time">18:00</span></span>
+            <span class="chatpane-schedule-preset"><span data-i18n="sched.p4">Завтра вранці</span><span class="chatpane-schedule-time">09:00</span></span>
+            <div class="chatpane-schedule-custom"><span class="sd-summary"><span class="sd-tri">▶</span> <span data-i18n="sched.p5">Вибрати дату й час</span></span></div>
+            <p class="chatpane-schedule-note"><span class="sd-tz" data-i18n="sched.zone">Europe/Kyiv</span> · <span data-i18n="sched.tz">24-годинний формат</span></p>
+            <p class="chatpane-schedule-note chatpane-schedule-divider" data-i18n="sched.note">Надсилається автоматично, поки Chatpane працює і має з’єднання.</p>
           </div>
           </div>
           <div class="composer">
@@ -1915,7 +1915,7 @@
                 <span class="c-btn"><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor"><path d="M7.695 1h.61c1.367 0 2.47 0 3.337.117.9.12 1.658.38 2.26.981.602.602.86 1.36.982 2.26.116.867.116 1.97.116 3.337v.61c0 1.367 0 2.47-.117 3.337-.12.9-.38 1.658-.981 2.26-.602.602-1.36.86-2.26.982-.867.116-1.97.116-3.337.116h-.61c-1.367 0-2.47 0-3.337-.117-.9-.12-1.658-.38-2.26-.981-.602-.602-.86-1.36-.981-2.26C1 10.775 1 9.672 1 8.305v-.61c0-1.367 0-2.47.117-3.337.12-.9.38-1.658.981-2.26.602-.602 1.36-.86 2.26-.981C5.225 1 6.328 1 7.695 1zM4.812 5.008A2.062 2.062 0 0 0 2.75 7.07v1.942a1.995 1.995 0 0 0 3.99 0v-.727a.75.75 0 0 0-1.5 0v.727a.495.495 0 0 1-.99 0V7.07c0-.31.252-.562.562-.562H5a.75.75 0 1 0 0-1.5h-.188zm3.438 0a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75zm2.5 0a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-1.5h.5a.75.75 0 0 0 0-1.5h-.5v-.75h1a.75.75 0 0 0 0-1.5h-1.75z"></path></svg></span>
                 <span class="comp-input sd-input">
                   <span class="sd-draft" data-i18n="sched.draft">З днем народження! 🎂 Гарного дня</span>
-                  <button type="button" tabindex="-1" class="carrier-schedule-button" aria-expanded="true"><svg viewBox="2 2 20 20" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 4h2v5.4l3.5 2-.9 1.8L11 12.6Z"/></svg></button><span class="c-btn"><svg viewBox="0 0 38 38" width="20" height="20"><g fill="none" fill-rule="evenodd"><g transform="translate(-893.000000, -701.000000)"><g transform="translate(709.000000, 314.000000)"><g><path d="M210.5,405 C209.121,405 208,403.879 208,402.5 C208,401.121 209.121,400 210.5,400 C211.879,400 213,401.121 213,402.5 C213,403.879 211.879,405 210.5,405 M212.572,411.549 C210.428,413.742 206.938,415 203,415 C199.062,415 195.572,413.742 193.428,411.549 C192.849,410.956 192.859,410.007 193.451,409.428 C194.045,408.85 194.993,408.859 195.572,409.451 C197.133,411.047 199.909,412 203,412 C206.091,412 208.867,411.047 210.428,409.451 C211.007,408.859 211.956,408.85 212.549,409.428 C213.141,410.007 213.151,410.956 212.572,411.549 M195.5,400 C196.879,400 198,401.121 198,402.5 C198,403.879 196.879,405 195.5,405 C194.121,405 193,403.879 193,402.5 C193,401.121 194.121,400 195.5,400 M203,387 C192.523,387 184,395.523 184,406 C184,416.477 192.523,425 203,425 C213.477,425 222,416.477 222,406 C222,395.523 213.477,387 203,387" fill="currentColor"></path></g></g></g></g></svg></span>
+                  <button type="button" tabindex="-1" class="chatpane-schedule-button" aria-expanded="true"><svg viewBox="2 2 20 20" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 4h2v5.4l3.5 2-.9 1.8L11 12.6Z"/></svg></button><span class="c-btn"><svg viewBox="0 0 38 38" width="20" height="20"><g fill="none" fill-rule="evenodd"><g transform="translate(-893.000000, -701.000000)"><g transform="translate(709.000000, 314.000000)"><g><path d="M210.5,405 C209.121,405 208,403.879 208,402.5 C208,401.121 209.121,400 210.5,400 C211.879,400 213,401.121 213,402.5 C213,403.879 211.879,405 210.5,405 M212.572,411.549 C210.428,413.742 206.938,415 203,415 C199.062,415 195.572,413.742 193.428,411.549 C192.849,410.956 192.859,410.007 193.451,409.428 C194.045,408.85 194.993,408.859 195.572,409.451 C197.133,411.047 199.909,412 203,412 C206.091,412 208.867,411.047 210.428,409.451 C211.007,408.859 211.956,408.85 212.549,409.428 C213.141,410.007 213.151,410.956 212.572,411.549 M195.5,400 C196.879,400 198,401.121 198,402.5 C198,403.879 196.879,405 195.5,405 C194.121,405 193,403.879 193,402.5 C193,401.121 194.121,400 195.5,400 M203,387 C192.523,387 184,395.523 184,406 C184,416.477 192.523,425 203,425 C213.477,425 222,416.477 222,406 C222,395.523 213.477,387 203,387" fill="currentColor"></path></g></g></g></g></svg></span>
                 </span>
                 <span class="c-btn comp-like"><svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor"><path d="M1.5 7.3h1.4c.6 0 1 .45 1 1v5.2c0 .55-.44 1-1 1H1.5c-.55 0-1-.45-1-1V8.3c0-.55.45-1 1-1z"/><path d="M5 8.55c0-.5.14-1 .4-1.43l2.06-3.4c.23-.37.63-.6 1.06-.6.98 0 1.78.8 1.78 1.79 0 .68-.16 1.5-.36 2.19h2.72c1.16 0 2.02 1.08 1.76 2.21l-.85 3.7a2.2 2.2 0 0 1-2.14 1.71H6.4c-.77 0-1.4-.63-1.4-1.4v-4.77z"/></svg></span>
               </div>
@@ -2487,7 +2487,7 @@
     var sel = document.getElementById('langSel');
     if (sel) sel.addEventListener('change', function () {
       var lang = sel.value;
-      try { localStorage.setItem('carrier-lang', lang); } catch (_) {}
+      try { localStorage.setItem('chatpane-lang', lang); } catch (_) {}
       location.href = I18N_ROOT + (lang === 'en' ? '' : lang + '/') + location.hash;
     });
   };
