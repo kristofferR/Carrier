@@ -51,6 +51,7 @@ import {
   notificationLinkImage,
 } from "../lib/notification-links";
 import {
+  addressedGroupSender,
   type ConversationNotificationNames,
   communicationSender,
   type NativeSender,
@@ -58,7 +59,7 @@ import {
   notificationSender,
   readConversationNotificationNames,
 } from "../lib/notification-names";
-import { pageMessages } from "../lib/page-notifications";
+import { groupTitleTemplates, pageMessages } from "../lib/page-notifications";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { readThreadIsGroup, suppressGroupChat, ThreadKindCache } from "../lib/thread-kind";
@@ -504,6 +505,13 @@ export function initNotificationBridge() {
     options: { icon?: string; image?: string; body?: string; tag?: string } | null = {},
   ) {
     const opts = options || {};
+    this.title = title;
+    this.onclick = null;
+    this.close = () => {};
+    // Messenger can notify twice about one message. The repeat would only be a
+    // native duplicate, and a second identical page signal leaves the row
+    // unable to pick one to pair with, so its fallback would notify as well.
+    if (pageMessages.repeats(opts.tag)) return;
     const s = window.__CHATPANE_SETTINGS__ || {};
     // Content-free breadcrumb: proves Facebook fired a Notification at all
     // (the unread badge rides a separate path, so "badge but no banner"
@@ -613,13 +621,20 @@ export function initNotificationBridge() {
           threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || null,
         ),
       );
+      // A named group's title is "<sender> to <group>", and its icon is the
+      // group's picture when it has one. Find that member and their own face.
+      const addressedSender = names.then(async (group) => {
+        const person = addressedGroupSender(originalTitle, group, groupTitleTemplates);
+        return person && { person, photo: await avatarToDataUrl(person.avatar) };
+      });
       Promise.all([
         avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
         kindWait,
         thumbnail,
         names,
         groupPicture(names),
-      ]).then(([icon, , image, group, picture]) => {
+        addressedSender,
+      ]).then(([icon, , image, group, picture, addressed]) => {
         const signal = pageMatch.signal;
         const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
         const deliverySettings = window.__CHATPANE_SETTINGS__ || {};
@@ -705,13 +720,18 @@ export function initNotificationBridge() {
           }
         }
         const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
-        const named = notificationNames(
-          originalTitle,
-          originalBody,
-          group,
-          showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-          group?.isGroup && displayTitle ? "group" : "unknown",
-        );
+        const nicknames = showNicknames(nicknameMode(deliverySettings), group?.isGroup);
+        // Present an addressed group message as the row path does: the sender,
+        // their face, and the group as the subtitle.
+        const senderTitle = addressed?.person.name ?? originalTitle;
+        const subtitle =
+          addressed && group ? nativeThreadTitles.displayed(threadId || "", group.title) : "";
+        const titleKind = addressed
+          ? "sender"
+          : group?.isGroup && displayTitle
+            ? "group"
+            : "unknown";
+        const named = notificationNames(senderTitle, originalBody, group, nicknames, titleKind);
         const text = notificationPhotoText(
           displayTitle || named.title,
           richMessageBody(named.body, threadPath),
@@ -721,13 +741,14 @@ export function initNotificationBridge() {
           ? undefined
           : withGroupPicture(
               communicationSender(
-                originalTitle,
+                senderTitle,
                 originalBody,
                 group,
                 accountId(document.cookie),
-                showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-                group?.isGroup && displayTitle ? "group" : "unknown",
+                nicknames,
+                titleKind,
                 displayTitle,
+                Boolean(addressed?.photo),
               ),
               picture,
             );
@@ -735,7 +756,7 @@ export function initNotificationBridge() {
           id,
           hidePreview ? "Messenger" : text.title,
           hidePreview ? t("page.notification.hidden_body") : text.body,
-          hidePreview ? "" : icon,
+          hidePreview ? "" : addressed?.photo || icon,
           pageMatch.dedupeKey ??
             pageMatch.signal?.dedupeKey ??
             notificationDedupeKey(originalTitle, originalBody),
@@ -755,7 +776,7 @@ export function initNotificationBridge() {
                 handler?.(delivery);
               }
             : undefined,
-          "",
+          hidePreview ? "" : subtitle,
           hidePreview ? "" : image,
           // Messenger tags its notification with the message's id.
           taggedThread && typeof opts.tag === "string" ? opts.tag : "",
@@ -812,9 +833,6 @@ export function initNotificationBridge() {
     // against the current list as soon as this constructor returns so an
     // already-rendered row can supply its route and mute state immediately.
     queueMicrotask(scanUnreadConversations);
-    this.title = title;
-    this.onclick = null;
-    this.close = () => {};
   }
   ChatpaneNotification.permission = "granted";
   ChatpaneNotification.requestPermission = (cb?: (permission: string) => void) => {

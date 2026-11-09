@@ -5805,6 +5805,19 @@ ${button.innerHTML}`)
     const [person, end] = matches.entries().next().value;
     return { person, end };
   }
+  function addressedGroupSender(title, group, templates) {
+    if (!group?.isGroup || !group.title) return void 0;
+    for (const template of templates) {
+      const [before, after, ...extra] = template.split("{threadName}").join(group.title).split("{senderName}");
+      if (before === void 0 || after === void 0 || extra.length) continue;
+      if (title.length <= before.length + after.length) continue;
+      if (!title.startsWith(before) || !title.endsWith(after)) continue;
+      const sender = title.slice(before.length, title.length - after.length);
+      const person = namedParticipant(sender, group);
+      if (person) return person;
+    }
+    return void 0;
+  }
   function notificationSender(body, group) {
     if (!group?.isGroup) return void 0;
     return notificationSenderPrefix(body, group)?.person;
@@ -6902,6 +6915,7 @@ ${button.innerHTML}`)
     constructor() {
       __publicField(this, "threads", /* @__PURE__ */ new Map());
       __publicField(this, "stale", /* @__PURE__ */ new Set());
+      __publicField(this, "raised", /* @__PURE__ */ new Set());
     }
     record(messageId, threadId) {
       this.threads.delete(messageId);
@@ -6920,8 +6934,32 @@ ${button.innerHTML}`)
     isStale(tag) {
       return typeof tag === "string" && this.stale.has(tag);
     }
+    /**
+     * Whether a Notification with this tag was already raised; records it if
+     * not. Messenger can notify twice about one message, and a web notification
+     * reusing a shown tag replaces it rather than adding another.
+     */
+    repeats(tag) {
+      if (typeof tag !== "string" || !tag) return false;
+      if (this.raised.has(tag)) return true;
+      this.raised.add(tag);
+      if (this.raised.size > MESSAGE_LIMIT) this.raised.delete(this.raised.values().next().value);
+      return false;
+    }
   };
   var pageMessages = new PageMessageIndex();
+  var groupTitleTemplates = [];
+  function readGroupTitleTemplates(source) {
+    const templates = /* @__PURE__ */ new Set();
+    for (const [, literal = ""] of source.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)) {
+      if (!literal.includes("{senderName}") || !literal.includes("{threadName}")) continue;
+      try {
+        templates.add(JSON.parse(`"${literal}"`));
+      } catch {
+      }
+    }
+    return [...templates];
+  }
   function recordNotifiedMessage(message, load) {
     if (!message || typeof message !== "object") return;
     const row = message;
@@ -7017,6 +7055,8 @@ ${button.innerHTML}`)
     }, factory);
   }
   function wrapDesktopNotificationsFactory(factory, load) {
+    const templates = readGroupTitleTemplates(Function.prototype.toString.call(factory));
+    groupTitleTemplates.splice(0, groupTitleTemplates.length, ...templates);
     return wrapFactoryExports(factory, (exports) => {
       const trigger = exports.triggerLocalNotification;
       if (typeof trigger !== "function") return false;
@@ -7326,6 +7366,9 @@ ${button.innerHTML}`)
             );
           } else if (name === DESKTOP_NOTIFICATIONS_MODULE) {
             args[2] = wrapDesktopNotificationsFactory(factory, load);
+            if (!groupTitleTemplates.length) {
+              diag("notify.page-title", "Messenger's group title format was not found");
+            }
           }
         }
         return Reflect.apply(target, thisArg, args);
@@ -9623,6 +9666,7 @@ ${button.innerHTML}`)
     const sendersCompatible = left.sender === null || right.sender === null || left.sender === right.sender;
     return sendersCompatible && opaqueTextMatches(left.message, right.message);
   };
+  var receiptMatches = (receipt, identity) => receipt.thread || receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) || opaqueTextMatches(receipt.identity.body, identity.message) : opaqueNotificationMatches(receipt.identity, identity);
   var validOpaqueTextIdentity = (value, prefixLimit) => {
     if (!value || typeof value !== "object") return false;
     const identity = value;
@@ -9710,7 +9754,7 @@ ${button.innerHTML}`)
         let ambiguous = false;
         for (const [key, identity] of identities) {
           if (receipt.thread && receipt.thread !== hashText(key)) continue;
-          if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+          if (!receiptMatches(receipt, identity)) continue;
           if (match !== null && match !== key) {
             ambiguous = true;
             break;
@@ -9739,7 +9783,7 @@ ${button.innerHTML}`)
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
         if (!read.some(
-          ({ key, identity }) => (!receipt.thread || receipt.thread === key) && opaqueNotificationMatches(receipt.identity, identity)
+          ({ key, identity }) => (!receipt.thread || receipt.thread === key) && receiptMatches(receipt, identity)
         )) {
           continue;
         }
@@ -9872,8 +9916,7 @@ ${button.innerHTML}`)
         const receipt = this.receipts[index];
         if (receipt.draftThread && receipt.draftThread !== hashText(row.key || "")) continue;
         if (receipt.thread && receipt.thread !== hashText(row.key || "")) continue;
-        if (!(receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity)))
-          continue;
+        if (!receiptMatches(receipt, identity)) continue;
         this.receipts.splice(index, 1);
         this.persist();
         return receiptMatch(receipt);
@@ -9909,10 +9952,7 @@ ${button.innerHTML}`)
         for (const [key, candidates] of identities) {
           if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
           if (receipt.thread && receipt.thread !== hashText(key)) continue;
-          if (!candidates.some(
-            (identity) => receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity)
-          ))
-            continue;
+          if (!candidates.some((identity) => receiptMatches(receipt, identity))) continue;
           if (candidates.some((identity) => identity.body.full !== candidates[0].body.full)) {
             if (receipt.draftThread) defer = true;
             else ambiguous = true;
@@ -9954,7 +9994,7 @@ ${button.innerHTML}`)
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
         if (!read.some(
-          ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && (!receipt.thread || receipt.thread === key) && (receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity))
+          ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && (!receipt.thread || receipt.thread === key) && receiptMatches(receipt, identity)
         )) {
           continue;
         }
@@ -9997,9 +10037,7 @@ ${button.innerHTML}`)
         const age = rowChangeAt - signal2.at;
         if (signal2.thread !== void 0 && row.key !== void 0 && row.key !== signal2.thread)
           continue;
-        if (age >= 0 && notificationTextMatches(signal2.title, signal2.body, row.title, row.body)) {
-          matches.push(index2);
-        }
+        if (age >= 0 && pageNotificationMatchesRow(signal2, row)) matches.push(index2);
       }
       if (matches.length !== 1) {
         for (const index2 of matches) this.signals.splice(index2, 1);
@@ -10011,9 +10049,7 @@ ${button.innerHTML}`)
         const candidateKeys = /* @__PURE__ */ new Set();
         for (const candidate of candidateRows) {
           if (signal.thread !== void 0 && candidate.key !== signal.thread) continue;
-          if (notificationTextMatches(signal.title, signal.body, candidate.title, candidate.body)) {
-            candidateKeys.add(candidate.key);
-          }
+          if (pageNotificationMatchesRow(signal, candidate)) candidateKeys.add(candidate.key);
         }
         if (candidateKeys.size !== 1 || row.key !== void 0 && !candidateKeys.has(row.key)) {
           this.signals.splice(index, 1);
@@ -10117,18 +10153,17 @@ ${button.innerHTML}`)
       return row;
     }
     consumeRowForPage(title, body, at, matchWindowMs, candidateRows, thread2) {
+      const page = { title, body, thread: thread2 };
       const matches = [...this.rows.values()].filter((row) => {
         const age = at - row.at;
-        return (thread2 === void 0 || row.key === thread2) && age >= 0 && age <= matchWindowMs && notificationTextMatches(title, body, row.title, row.body);
+        return (thread2 === void 0 || row.key === thread2) && age >= 0 && age <= matchWindowMs && pageNotificationMatchesRow(page, row);
       });
       if (matches.length !== 1) return null;
       if (candidateRows) {
         const candidateKeys = /* @__PURE__ */ new Set();
         for (const candidate of candidateRows) {
           if (thread2 !== void 0 && candidate.key !== thread2) continue;
-          if (notificationTextMatches(title, body, candidate.title, candidate.body)) {
-            candidateKeys.add(candidate.key);
-          }
+          if (pageNotificationMatchesRow(page, candidate)) candidateKeys.add(candidate.key);
         }
         if (candidateKeys.size !== 1 || !candidateKeys.has(matches[0].key)) return null;
       }
@@ -10284,6 +10319,15 @@ ${button.innerHTML}`)
     const row = splitGroupSender(normalizedRowBody);
     const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
+  }
+  function pageNotificationMatchesRow(page, row) {
+    if (page.thread === void 0 || page.thread !== row.key) {
+      return notificationTextMatches(page.title, page.body, row.title, row.body);
+    }
+    return notificationTextMatches("", page.body, "", row.body) || matchesExactOrTruncated(
+      normalizeNotificationText(page.body),
+      splitGroupSender(normalizeNotificationText(row.body)).message
+    );
   }
   function uniqueNotificationTitleMatch(title, rows) {
     let match = null;
@@ -10928,6 +10972,11 @@ ${button.innerHTML}`)
     };
     function ChatpaneNotification(title, options = {}) {
       const opts = options || {};
+      this.title = title;
+      this.onclick = null;
+      this.close = () => {
+      };
+      if (pageMessages.repeats(opts.tag)) return;
       const s = window.__CHATPANE_SETTINGS__ || {};
       diag(
         "notify.fired",
@@ -10996,13 +11045,18 @@ ${button.innerHTML}`)
             threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || null
           )
         );
+        const addressedSender = names.then(async (group) => {
+          const person = addressedGroupSender(originalTitle, group, groupTitleTemplates);
+          return person && { person, photo: await avatarToDataUrl(person.avatar) };
+        });
         Promise.all([
           avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
           kindWait,
           thumbnail,
           names,
-          groupPicture2(names)
-        ]).then(([icon3, , image, group, picture]) => {
+          groupPicture2(names),
+          addressedSender
+        ]).then(([icon3, , image, group, picture, addressed]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
           const deliverySettings = window.__CHATPANE_SETTINGS__ || {};
@@ -11062,13 +11116,11 @@ ${button.innerHTML}`)
             }
           }
           const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
-          const named = notificationNames(
-            originalTitle,
-            originalBody,
-            group,
-            showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-            group?.isGroup && displayTitle ? "group" : "unknown"
-          );
+          const nicknames = showNicknames(nicknameMode(deliverySettings), group?.isGroup);
+          const senderTitle = addressed?.person.name ?? originalTitle;
+          const subtitle = addressed && group ? nativeThreadTitles.displayed(threadId || "", group.title) : "";
+          const titleKind = addressed ? "sender" : group?.isGroup && displayTitle ? "group" : "unknown";
+          const named = notificationNames(senderTitle, originalBody, group, nicknames, titleKind);
           const text2 = notificationPhotoText(
             displayTitle || named.title,
             richMessageBody(named.body, threadPath),
@@ -11076,13 +11128,14 @@ ${button.innerHTML}`)
           );
           const sender = hidePreview ? void 0 : withGroupPicture(
             communicationSender(
-              originalTitle,
+              senderTitle,
               originalBody,
               group,
               accountId(document.cookie),
-              showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-              group?.isGroup && displayTitle ? "group" : "unknown",
-              displayTitle
+              nicknames,
+              titleKind,
+              displayTitle,
+              Boolean(addressed?.photo)
             ),
             picture
           );
@@ -11090,7 +11143,7 @@ ${button.innerHTML}`)
             id,
             hidePreview ? "Messenger" : text2.title,
             hidePreview ? t("page.notification.hidden_body") : text2.body,
-            hidePreview ? "" : icon3,
+            hidePreview ? "" : addressed?.photo || icon3,
             pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
             () => {
               this.onclick?.(new Event("click"));
@@ -11102,7 +11155,7 @@ ${button.innerHTML}`)
               pageMatch.signal.onNativeDelivery = void 0;
               handler?.(delivery);
             } : void 0,
-            "",
+            hidePreview ? "" : subtitle,
             hidePreview ? "" : image,
             // Messenger tags its notification with the message's id.
             taggedThread && typeof opts.tag === "string" ? opts.tag : "",
@@ -11139,10 +11192,6 @@ ${button.innerHTML}`)
       } catch (_) {
       }
       queueMicrotask(scanUnreadConversations);
-      this.title = title;
-      this.onclick = null;
-      this.close = () => {
-      };
     }
     ChatpaneNotification.permission = "granted";
     ChatpaneNotification.requestPermission = (cb) => {

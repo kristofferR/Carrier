@@ -657,6 +657,21 @@ describe("PageNotificationReceiptStore", () => {
     });
   });
 
+  test("a tagged receipt matches its conversation's row by message, whatever its title", () => {
+    const storage = memoryStorage();
+    new PageNotificationReceiptStore(storage, undefined, undefined, 1_000).add(
+      "Jane Doe to Book club",
+      "FYI: practice is off",
+      5,
+      1_000,
+      undefined,
+      "7",
+    );
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 2_000);
+    const row = { key: "7", title: "Book club", body: "Jane: FYI: practice is off" };
+    expect(reloaded.consumeMatching(row, 2_000)).toEqual({ nativeId: 5 });
+  });
+
   test("bounds unresolved draft receipts across reloads", () => {
     const storage = memoryStorage();
     const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
@@ -1135,6 +1150,20 @@ describe("PageNotificationQueue", () => {
     ).toBe(signal);
   });
 
+  test("a tagged group signal pairs with its row by message, whatever its title", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({
+      at: 1_000,
+      title: "Jane Doe to Book club",
+      body: "FYI: practice is off",
+      thread: "7",
+    });
+    const later = { key: "7", title: "Book club", body: "Jane: Later" };
+    expect(queue.consumeMatching(later, 1_100, 2_000, [later])).toBeNull();
+    const row = { key: "7", title: "Book club", body: "Jane: FYI: practice is off" };
+    expect(queue.consumeMatching(row, 1_200, 2_000, [row])).toBe(signal);
+  });
+
   test("a tagged signal survives a same-title draft in another conversation", () => {
     const queue = new PageNotificationQueue();
     const signal = queue.add({ at: 1_000, title: "Jane", body: "Hi", thread: "7" });
@@ -1370,6 +1399,17 @@ describe("NotificationCorrelationQueue", () => {
     ]);
     expect(matched).toMatchObject({ key: "1", threadPath: "/t/1/", muted: true });
     expect(queue.getRow("1")).toBeUndefined();
+  });
+
+  test("pairs a waiting row with its tagged group notification by message", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const row = { key: "7", title: "Book club", body: "Jane: FYI: practice is off" };
+    queue.addRow({ ...row, at: 1_000, threadPath: "/t/7/", muted: false });
+    const title = "Jane Doe to Book club";
+    expect(queue.consumeRowForPage(title, "FYI: practice is off", 1_500, 3_000, [row])).toBe(null);
+    expect(
+      queue.consumeRowForPage(title, "FYI: practice is off", 1_500, 3_000, [row], "7"),
+    ).toMatchObject({ key: "7" });
   });
 
   test("leaves an out-of-window row for its owning fallback timer", () => {

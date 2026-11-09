@@ -5,6 +5,7 @@ import { diag } from "../bridge";
 import {
   CHAT_POPPER_MODULE,
   DESKTOP_NOTIFICATIONS_MODULE,
+  groupTitleTemplates,
   loadRewrittenScript,
   wrapChatPopperFactory,
   wrapDesktopNotificationsFactory,
@@ -41,6 +42,9 @@ export function interceptNotificationModules(define: Define): Define {
           );
         } else if (name === DESKTOP_NOTIFICATIONS_MODULE) {
           args[2] = wrapDesktopNotificationsFactory(factory as Factory, load);
+          if (!groupTitleTemplates.length) {
+            diag("notify.page-title", "Messenger's group title format was not found");
+          }
         }
       }
       return Reflect.apply(target, thisArg, args);

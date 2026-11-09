@@ -6,6 +6,7 @@ import {
   messengerId,
   PageMessageIndex,
   pageMessages,
+  readGroupTitleTemplates,
   readOldNews,
   rewriteChatPopperSource,
   wrapChatPopperFactory,
@@ -52,6 +53,27 @@ describe("PageMessageIndex", () => {
     expect(index.threadFor(undefined)).toBeUndefined();
     for (let i = 0; i < 100; i++) index.record(`m${i}`, "20");
     expect(index.threadFor("mid.1")).toBeUndefined();
+  });
+
+  test("a notification tag repeats only after it was raised", () => {
+    const index = new PageMessageIndex();
+    expect(index.repeats("mid.1")).toBe(false);
+    expect(index.repeats("mid.1")).toBe(true);
+    expect(index.repeats("mid.2")).toBe(false);
+    expect(index.repeats(undefined)).toBe(false);
+    expect(index.repeats(undefined)).toBe(false);
+  });
+});
+
+describe("readGroupTitleTemplates", () => {
+  test("finds the group title in Messenger's module, whatever the language", () => {
+    // Messenger's title function as shipped in English.
+    const english =
+      'function d(e,t,n,r){var o=n!=null?n:r;return e&&t!=null?s._(/*BTDS*/"{senderName} to {threadName}",[s._param("senderName",o),s._param("threadName",t)]).toString():e?s._(/*BTDS*/"{senderName} to your group",[s._param("senderName",o)]).toString():o}';
+    expect(readGroupTitleTemplates(english)).toEqual(["{senderName} to {threadName}"]);
+    const escaped = 's._(/*BTDS*/"\\u00ab{threadName}\\u00bb \\"{senderName}\\"",[])';
+    expect(readGroupTitleTemplates(escaped)).toEqual(['«{threadName}» "{senderName}"']);
+    expect(readGroupTitleTemplates("function d(){}")).toEqual([]);
   });
 });
 
