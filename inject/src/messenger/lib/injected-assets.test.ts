@@ -323,7 +323,7 @@ describe("hand-maintained injected assets", () => {
       expect(updateAnswer).toContain(conditionalPhrase);
       expect(repairAnswer).toContain(conditionalPhrase);
       expect(trustAnswer).toContain("SmartScreen");
-      expect(repairAnswer).toMatch(/https:\/\/github\.com\/kristofferR\/\w+\/issues/);
+      expect(repairAnswer).toContain("https://github.com/kristofferR/Chatpane/issues");
       expect(staleQuietHours.some((phrase) => notificationCopy.includes(phrase))).toBe(false);
     }
   });
