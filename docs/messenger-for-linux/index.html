@@ -36,7 +36,7 @@
     </a>
     <nav class="site-nav" aria-label="Main">
       <a class="nav-hide-sm" href="../#features">Features</a>
-      <a class="nav-hide-sm" href="https://github.com/kristofferR/Carrier" target="_blank" rel="noopener">GitHub</a>
+      <a class="nav-hide-sm" href="https://github.com/kristofferR/Chatpane" target="_blank" rel="noopener">GitHub</a>
       <a class="nav-cta" href="#download">Download</a>
     </nav>
   </div>
@@ -64,7 +64,7 @@
       <div class="answer">
         <p class="eyebrow">The short answer</p>
         <p>On Linux, Messenger has only ever been a website, and that website is now <strong>facebook.com/messages</strong>, inside Facebook. Clients built around messenger.com have had to change or have stopped working well.</p>
-        <p>Chatpane for Messenger (formerly Carrier) is a free, open-source desktop app that opens your chats in their own window with WebKitGTK, hides the rest of Facebook, and adds native notifications, a tray icon and an unread badge. It is unofficial and not made by Meta.</p>
+        <p>Chatpane for Messenger is a free, open-source desktop app that opens your chats in their own window with WebKitGTK, hides the rest of Facebook, and adds native notifications, a tray icon and an unread badge. It is unofficial and not made by Meta.</p>
       </div>
 
       <h2>What changed for Linux users</h2>
@@ -135,12 +135,12 @@
     <div class="wrap narrow prose">
       <h2>Which Chatpane package to pick</h2>
       <ul>
-        <li><strong>Debian, Ubuntu, Mint, Pop!_OS:</strong> the <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.deb">.deb</a>, about 5 MB, which uses your system's WebKitGTK.</li>
-        <li><strong>Fedora, openSUSE:</strong> the <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.rpm">.rpm</a>, also about 5 MB.</li>
+        <li><strong>Debian, Ubuntu, Mint, Pop!_OS:</strong> the <a href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.deb">.deb</a>, about 5 MB, which uses your system's WebKitGTK.</li>
+        <li><strong>Fedora, openSUSE:</strong> the <a href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.rpm">.rpm</a>, also about 5 MB.</li>
         <li><strong>Arch and Arch-based:</strong> the <a href="https://aur.archlinux.org/packages/chatpane" rel="noopener">chatpane</a> AUR package, for example <code>yay -S chatpane</code>.</li>
-        <li><strong>Any distribution:</strong> the <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.AppImage">AppImage</a>, around 93 MB because it bundles WebKitGTK. Make it executable and run it.</li>
+        <li><strong>Any distribution:</strong> the <a href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.AppImage">AppImage</a>, around 93 MB because it bundles WebKitGTK. Make it executable and run it.</li>
         <li><strong>Homebrew on Linux:</strong> <code>brew install --cask kristofferR/tap/chatpane</code>.</li>
-        <li><strong>ARM64</strong> builds of the .deb, .rpm and AppImage are on the <a href="https://github.com/kristofferR/Carrier/releases/latest" rel="noopener">releases page</a>.</li>
+        <li><strong>ARM64</strong> builds of the .deb, .rpm and AppImage are on the <a href="https://github.com/kristofferR/Chatpane/releases/latest" rel="noopener">releases page</a>.</li>
       </ul>
       <p>If you can use your package manager, prefer it: the package is far smaller and follows your system's WebKitGTK updates. There is no Flatpak or Snap package at the moment.</p>
 
@@ -171,7 +171,7 @@
         </details>
         <details class="faq-item">
           <summary><h3>The window is blank. What can I do?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
-          <p class="faq-a">Start Chatpane with <code>CHATPANE_LINUX_WEBKIT_SAFE_MODE=1 chatpane</code>. That turns on WebKitGTK's rendering fallbacks, which fix blank or unstable windows on some GPU and compositor combinations. If it still happens, please <a href="https://github.com/kristofferR/Carrier/issues" rel="noopener">open an issue</a> with your distribution and desktop.</p>
+          <p class="faq-a">Start Chatpane with <code>CHATPANE_LINUX_WEBKIT_SAFE_MODE=1 chatpane</code>. That turns on WebKitGTK's rendering fallbacks, which fix blank or unstable windows on some GPU and compositor combinations. If it still happens, please <a href="https://github.com/kristofferR/Chatpane/issues" rel="noopener">open an issue</a> with your distribution and desktop.</p>
         </details>
         <details class="faq-item">
           <summary><h3>Is there a Flatpak or Snap?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
@@ -180,10 +180,6 @@
         <details class="faq-item">
           <summary><h3>Can I sign in with a Messenger-only account?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
           <p class="faq-a">Not on any desktop app. Chatpane loads facebook.com/messages, and since April 2026 Meta only lets Messenger-only accounts chat in the mobile app.</p>
-        </details>
-        <details class="faq-item">
-          <summary><h3>I used Carrier. Do I need to do anything?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
-          <p class="faq-a">No. Chatpane is the new name for Carrier. The <code>chatpane</code> .deb, .rpm and AUR packages replace <code>carrier</code>, and your settings and login carry over.</p>
         </details>
         <details class="faq-item">
           <summary><h3>Is Chatpane made by Meta?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
@@ -201,11 +197,11 @@
       <p class="dl-sub">Free and open source, for x64 and ARM64.</p>
       <div class="dl-grid solo">
         <div class="dl-col">
-          <a class="dl" href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.AppImage">
+          <a class="dl" href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.AppImage">
             <span class="dl-ico" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24"><ellipse cx="12" cy="15" rx="6.6" ry="7.2" fill="#1d2129"/><circle cx="12" cy="7" r="4.4" fill="#1d2129"/><ellipse cx="12" cy="16.6" rx="3.7" ry="4.6" fill="#fff"/><circle cx="10.4" cy="6.3" r=".75" fill="#fff"/><circle cx="13.6" cy="6.3" r=".75" fill="#fff"/><path d="M12 7.2 10.6 8.9h2.8z" fill="#f6a623"/><ellipse cx="9.2" cy="21.4" rx="1.9" ry="1.1" fill="#f6a623"/><ellipse cx="14.8" cy="21.4" rx="1.9" ry="1.1" fill="#f6a623"/></svg></span>
             <span><b>Download for Linux</b><small>AppImage · x64</small></span>
           </a>
-          <p class="dl-alts">Also: <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.deb">.deb</a> · <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.rpm">.rpm</a> · <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_arm.AppImage">ARM64</a></p>
+          <p class="dl-alts">Also: <a href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.deb">.deb</a> · <a href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.rpm">.rpm</a> · <a href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_lin_arm.AppImage">ARM64</a></p>
         </div>
       </div>
       <p class="other-versions">Or <code>yay -S chatpane</code> · <a href="../#download">Mac and Windows</a></p>
@@ -230,8 +226,8 @@
     <div class="foot-top">
       <a class="foot-brand" href="../"><img src="../app-icon.png" alt="" width="30" height="30">Chatpane for Messenger</a>
       <nav class="foot-links" aria-label="Footer">
-        <a href="https://github.com/kristofferR/Carrier" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/kristofferR/Carrier/releases/latest" target="_blank" rel="noopener">All releases</a>
+        <a href="https://github.com/kristofferR/Chatpane" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/kristofferR/Chatpane/releases/latest" target="_blank" rel="noopener">All releases</a>
       </nav>
     </div>
     <nav class="foot-guides" aria-label="Guides">
@@ -242,7 +238,7 @@
       <a href="../messenger-desktop-app-discontinued/">What happened to the desktop app</a>
     </nav>
     <p class="foot-note"><strong>Free &amp; open source · MIT license.</strong></p>
-    <p class="foot-note">Chatpane (formerly Carrier) is an independent open-source project, not affiliated with or endorsed by Meta. "Facebook" and "Messenger" are trademarks of Meta Platforms, Inc.</p>
+    <p class="foot-note">Chatpane is an independent open-source project, not affiliated with or endorsed by Meta. "Facebook" and "Messenger" are trademarks of Meta Platforms, Inc.</p>
     <p class="foot-heart">Made by Kristoffer Risanger (<a href="https://github.com/kristofferR" target="_blank" rel="noopener">@kristofferR</a>) ❤️</p>
   </div>
 </footer>
