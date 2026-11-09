@@ -23,14 +23,8 @@ const STAR_PROMPT_DAYS_USED: u32 = 14;
 const STAR_PROMPT_MIN_AGE_DAYS: i32 = 21;
 const EVENT: &str = "chatpane:star-prompt";
 
-/// The confirmation shown after the share message is copied.
-pub(crate) const SHARE_COPIED: &str = "Copied. Paste it to anyone you like.";
-
 pub(crate) fn share_message() -> String {
-    format!(
-        "I use {} for Messenger on my computer. It's free and open source: {SITE_URL}",
-        crate::i18n::APP_NAME
-    )
+    crate::i18n::tf("growth.share_message", &[("url", &SITE_URL)])
 }
 
 /// Days the main window was used and whether the star prompt has run.
@@ -94,12 +88,7 @@ pub(crate) fn main_focused(app: &tauri::AppHandle) {
     if usage.star_prompt_due(today)
         && let Some(main) = app.get_webview_window("main")
     {
-        let Ok(name) = serde_json::to_string(crate::i18n::APP_NAME) else {
-            return;
-        };
-        let _ = main.eval(format!(
-            "window.__chatpaneStarPrompt && window.__chatpaneStarPrompt({name})"
-        ));
+        let _ = main.eval("window.__chatpaneStarPrompt && window.__chatpaneStarPrompt()");
     }
 }
 

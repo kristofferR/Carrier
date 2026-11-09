@@ -27,6 +27,8 @@ const byId = (id: string) => document.getElementById(id)!;
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 byId("tabs").setAttribute("aria-label", t("settings.tab.list_label"));
+byId("share").textContent = t("settings.footer.share");
+byId("star").textContent = t("shared.growth.star");
 byId("reset").textContent = t("settings.footer.reset");
 byId("check").textContent = t("settings.update.check");
 byId("version").textContent = t("settings.footer.version", { version: BOOT.version }).trim();
@@ -338,7 +340,16 @@ try {
 } catch (_) {}
 
 let settings: Settings = BOOT.settings;
-const setStatus = (m: string) => (byId("status").textContent = m || "");
+// The footer line shows the update state's message (an offered update, the
+// debug build's instructions). Other messages replace it, and with
+// `clearAfter` they give way to it again.
+let updateStatus = "";
+let statusTimer: ReturnType<typeof setTimeout> | undefined;
+function setStatus(message: string, clearAfter?: number) {
+  clearTimeout(statusTimer);
+  byId("status").textContent = message || updateStatus;
+  if (message && clearAfter) statusTimer = setTimeout(() => setStatus(""), clearAfter);
+}
 
 function svgIcon(inner: string) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -395,8 +406,7 @@ async function saveSetting(change: SettingsChange) {
       settings = await invoke("get_settings");
     }
     render();
-    setStatus(t("settings.status.saved"));
-    setTimeout(() => setStatus(""), 1200);
+    setStatus(t("settings.status.saved"), 1200);
   } catch (error) {
     setStatus(errorMessage(error));
     console.error(error);
@@ -1543,11 +1553,7 @@ byId("share").onclick = async (e) => {
   e.preventDefault();
   try {
     await invoke("copy_share_message");
-    const confirmation = "Copied. Paste it to anyone you like.";
-    setStatus(confirmation);
-    setTimeout(() => {
-      if (byId("status").textContent === confirmation) setStatus("");
-    }, 3000);
+    setStatus(t("shared.growth.copied"), 3000);
   } catch (err) {
     setStatus(errorMessage(err));
   }
@@ -1562,8 +1568,7 @@ byId("reset").onclick = (event) => {
     try {
       settings = await invoke("reset_settings");
       render();
-      setStatus(t("settings.status.reset"));
-      setTimeout(() => setStatus(""), 1200);
+      setStatus(t("settings.status.reset"), 1200);
     } catch (error) {
       setStatus(errorMessage(error));
       console.error(error);
@@ -1616,6 +1621,7 @@ const updateController = new UpdateConsentController(
   (state) => {
     updateButton.textContent = state.buttonLabel;
     updateButton.disabled = state.busy;
+    updateStatus = state.status;
     setStatus(state.status);
     showReleaseNotes(state);
   },

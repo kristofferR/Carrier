@@ -110,16 +110,15 @@
       ].reduce((length, box) => length + (box.textContent?.trim().length ?? 0), 0)
     });
     Object.defineProperty(window, "__chatpaneStarPrompt", {
-      // `name` is the app name native code passes in (i18n::APP_NAME).
-      value: (name) => {
-        if (shown || typeof name !== "string" || !name) return;
+      value: () => {
+        if (shown) return;
         clearTimeout(pending);
         pending = setTimeout(() => {
           if (shown || !isQuietMoment(moment())) return;
           shown = true;
           window.__chatpaneToast?.(
-            `Enjoying ${name}? A star on GitHub helps other people find it.`,
-            { label: "Star on GitHub", kind: "star-github" },
+            t("page.growth.star_prompt"),
+            { label: t("shared.growth.star"), kind: "star-github" },
             { duration: VISIBLE_MS, closable: true, bottom: 88 }
           );
           chatpaneStarPrompt("shown")?.catch?.(() => {

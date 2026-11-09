@@ -824,7 +824,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         }
         "share_chatpane" => {
             let toast = match crate::growth::copy_share_message(app) {
-                Ok(()) => crate::growth::SHARE_COPIED.to_string(),
+                Ok(()) => crate::i18n::t("shared.growth.copied").to_string(),
                 Err(error) => error,
             };
             if let (Some(window), Ok(toast)) = (target_window(app), serde_json::to_string(&toast)) {

@@ -240,6 +240,8 @@
   var byId = (id) => document.getElementById(id);
   var errorMessage = (error) => error instanceof Error ? error.message : String(error);
   byId("tabs").setAttribute("aria-label", settingsText("settings.tab.list_label"));
+  byId("share").textContent = settingsText("settings.footer.share");
+  byId("star").textContent = settingsText("shared.growth.star");
   byId("reset").textContent = settingsText("settings.footer.reset");
   byId("check").textContent = settingsText("settings.update.check");
   byId("version").textContent = settingsText("settings.footer.version", { version: BOOT.version }).trim();
@@ -519,7 +521,13 @@
   } catch (_) {
   }
   var settings = BOOT.settings;
-  var setStatus = (m) => byId("status").textContent = m || "";
+  var updateStatus = "";
+  var statusTimer;
+  function setStatus(message, clearAfter) {
+    clearTimeout(statusTimer);
+    byId("status").textContent = message || updateStatus;
+    if (message && clearAfter) statusTimer = setTimeout(() => setStatus(""), clearAfter);
+  }
   function svgIcon(inner) {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
@@ -566,8 +574,7 @@
         settings = await invoke("get_settings");
       }
       render();
-      setStatus(settingsText("settings.status.saved"));
-      setTimeout(() => setStatus(""), 1200);
+      setStatus(settingsText("settings.status.saved"), 1200);
     } catch (error) {
       setStatus(errorMessage(error));
       console.error(error);
@@ -1541,11 +1548,7 @@
     e.preventDefault();
     try {
       await invoke("copy_share_message");
-      const confirmation = "Copied. Paste it to anyone you like.";
-      setStatus(confirmation);
-      setTimeout(() => {
-        if (byId("status").textContent === confirmation) setStatus("");
-      }, 3e3);
+      setStatus(settingsText("shared.growth.copied"), 3e3);
     } catch (err) {
       setStatus(errorMessage(err));
     }
@@ -1560,8 +1563,7 @@
       try {
         settings = await invoke("reset_settings");
         render();
-        setStatus(settingsText("settings.status.reset"));
-        setTimeout(() => setStatus(""), 1200);
+        setStatus(settingsText("settings.status.reset"), 1200);
       } catch (error) {
         setStatus(errorMessage(error));
         console.error(error);
@@ -1609,6 +1611,7 @@
     (state) => {
       updateButton.textContent = state.buttonLabel;
       updateButton.disabled = state.busy;
+      updateStatus = state.status;
       setStatus(state.status);
       showReleaseNotes(state);
     }

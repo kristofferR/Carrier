@@ -150,7 +150,7 @@ interface Window {
   __chatpaneToggleSettings?: () => void;
   __chatpaneToggleShortcuts?: () => void;
   /** Called by native code when the one-time star toast is due. */
-  __chatpaneStarPrompt?: (productName: string) => void;
+  __chatpaneStarPrompt?: () => void;
 
   // messenger.js — driven by the native menus (View ▸ Zoom, File ▸ New
   // Conversation, Dock/tray thread menus) and the dev-only mcp-bridge.
