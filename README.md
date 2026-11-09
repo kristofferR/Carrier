@@ -287,10 +287,7 @@ always preserved.
 On Wayland, Chatpane disables WebKit's DMABUF renderer only with NVIDIA's
 proprietary driver older than 555, which lacks explicit sync. Elsewhere the
 renderer stays on: without it WebKit paints on the CPU, which costs far more
-CPU and makes hovering lag. On Niri Wayland sessions, Chatpane disables the
-DMABUF renderer and compositing to work around blank or unstable rendering.
-Niri is detected through `NIRI_SOCKET` or a `niri` desktop identifier in
-`XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP`, or `DESKTOP_SESSION`.
+CPU and makes hovering lag.
 
 If the window is blank or rendering is unstable, try launching with:
 
@@ -298,13 +295,11 @@ If the window is blank or rendering is unstable, try launching with:
 CHATPANE_LINUX_WEBKIT_SAFE_MODE=1 chatpane
 ```
 
-`1` requests both rendering fallbacks on any Linux desktop. `0` disables the
-automatic Niri fallbacks; the NVIDIA driver check still applies. Unset, empty, `auto`, and unrecognized values use desktop detection.
-Explicit `WEBKIT_DISABLE_DMABUF_RENDERER` and
-`WEBKIT_DISABLE_COMPOSITING_MODE` values always take precedence, including when
-safe mode is forced on. Restart Chatpane for changes to take effect. Disabling
-compositing may reduce rendering performance; other desktops keep their normal
-compositing unless safe mode is requested.
+`1` disables both the DMABUF renderer and compositing on any Linux desktop.
+Without it, only the NVIDIA driver check above applies. Explicit
+`WEBKIT_DISABLE_DMABUF_RENDERER` and `WEBKIT_DISABLE_COMPOSITING_MODE` values
+always take precedence, including in safe mode. Restart Chatpane for changes to
+take effect. Safe mode paints on the CPU, so it costs rendering performance.
 
 ## Non-goals
 

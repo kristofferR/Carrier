@@ -25,26 +25,10 @@ fn environment_defaults(
 ) -> Vec<(&'static str, &'static str)> {
     let nonempty = |key| env(key).is_some_and(|value| !value.is_empty());
     let wayland = nonempty("WAYLAND_DISPLAY");
-    let niri = nonempty("NIRI_SOCKET")
-        || [
-            "XDG_CURRENT_DESKTOP",
-            "XDG_SESSION_DESKTOP",
-            "DESKTOP_SESSION",
-        ]
-        .iter()
-        .filter_map(|key| env(key))
-        .any(|value| {
-            value.to_str().is_some_and(|value| {
-                value
-                    .split(':')
-                    .any(|desktop| desktop.trim().eq_ignore_ascii_case("niri"))
-            })
-        });
-    let safe_mode = match env("CHATPANE_LINUX_WEBKIT_SAFE_MODE").as_deref() {
-        Some(value) if value == "1" => true,
-        Some(value) if value == "0" => false,
-        _ => wayland && niri,
-    };
+    // Safe mode is opt-in on every desktop: it paints on the CPU with
+    // compositing off, and no compositor is known to need that.
+    let safe_mode =
+        env("CHATPANE_LINUX_WEBKIT_SAFE_MODE").as_deref() == Some(std::ffi::OsStr::new("1"));
 
     let mut defaults = Vec::new();
     if wayland && !nonempty("DISPLAY") && !nonempty("GDK_BACKEND") {
@@ -220,7 +204,6 @@ mod tests {
         assert!(defaults(&[]).is_empty());
         assert!(defaults(&[("DISPLAY", ":0")]).is_empty());
         assert!(defaults(&[("WAYLAND_DISPLAY", "")]).is_empty());
-        assert!(defaults(&[("DISPLAY", ":0"), ("XDG_CURRENT_DESKTOP", "niri")]).is_empty());
         assert!(defaults(&[WAYLAND, ("DISPLAY", ":0")]).is_empty());
         for backend in ["x11", "wayland", "wayland,x11,*"] {
             assert!(defaults(&[WAYLAND, ("GDK_BACKEND", backend)]).is_empty());
@@ -228,68 +211,21 @@ mod tests {
     }
 
     #[test]
-    fn niri_socket_and_desktop_identifiers_enable_safe_mode() {
-        for identity in [
-            ("NIRI_SOCKET", "/run/user/1000/niri.sock"),
-            ("XDG_CURRENT_DESKTOP", "niri"),
-            ("XDG_CURRENT_DESKTOP", "GNOME: Niri :Wayland"),
-            ("XDG_SESSION_DESKTOP", "niri"),
-            ("DESKTOP_SESSION", "niri"),
-        ] {
-            assert_eq!(
-                defaults(&[WAYLAND, identity]),
-                [("GDK_BACKEND", "wayland"), DMABUF, COMPOSITING],
-                "{identity:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn other_desktops_keep_their_normal_renderer() {
-        for desktop in ["GNOME", "KDE", "Hyprland", "sway", "niri-like", ""] {
-            assert!(
-                defaults(&[
-                    WAYLAND,
-                    ("DISPLAY", ":0"),
-                    ("NIRI_SOCKET", ""),
-                    ("XDG_CURRENT_DESKTOP", desktop)
-                ])
-                .is_empty(),
-                "{desktop}"
-            );
-        }
-    }
-
-    #[test]
-    fn safe_mode_can_be_forced_on_or_disabled_independently_of_backend_selection() {
+    fn only_safe_mode_1_requests_both_fallbacks_independently_of_backend_selection() {
         assert_eq!(
             defaults(&[("DISPLAY", ":0"), ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "1")]),
             [DMABUF, COMPOSITING]
         );
         assert_eq!(
-            defaults(&[
-                WAYLAND,
-                ("XDG_CURRENT_DESKTOP", "niri"),
-                ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "0")
-            ]),
-            [("GDK_BACKEND", "wayland")]
+            defaults(&[WAYLAND, ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "1")]),
+            [("GDK_BACKEND", "wayland"), DMABUF, COMPOSITING]
         );
-        assert!(defaults(&[("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "0")]).is_empty());
-    }
-
-    #[test]
-    fn empty_auto_and_unrecognized_safe_mode_values_use_desktop_detection() {
-        for value in ["", "auto", "invalid"] {
+        for value in ["0", "", "auto", "invalid"] {
             assert_eq!(
-                defaults(&[
-                    WAYLAND,
-                    ("DISPLAY", ":0"),
-                    ("XDG_CURRENT_DESKTOP", "niri"),
-                    ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", value)
-                ]),
-                [DMABUF, COMPOSITING]
+                defaults(&[WAYLAND, ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", value)]),
+                [("GDK_BACKEND", "wayland")],
+                "{value:?}"
             );
-            assert!(defaults(&[("CHATPANE_LINUX_WEBKIT_SAFE_MODE", value)]).is_empty());
         }
     }
 
