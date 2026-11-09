@@ -28,7 +28,8 @@ use crate::window::is_dark;
 use crate::window::splash_background;
 use crate::window::theme_for;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum NicknameScope {
     All,
@@ -64,6 +65,7 @@ where
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(default)]
 pub(crate) struct Settings {
     pub(crate) always_on_top: bool,
@@ -111,8 +113,10 @@ pub(crate) struct Settings {
     /// Before `app_icon`, a style ("color" or "monochrome") and a variant
     /// ("light", "dark" or "auto"). Read once, migrated by `sanitized`.
     #[serde(skip_serializing)]
+    #[cfg_attr(test, ts(skip))]
     pub(crate) app_icon_style: Option<String>,
     #[serde(skip_serializing)]
+    #[cfg_attr(test, ts(skip))]
     pub(crate) app_icon_variant: Option<String>,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
     pub(crate) menu_bar_only: bool,

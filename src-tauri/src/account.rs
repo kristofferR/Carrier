@@ -91,6 +91,7 @@ pub(crate) async fn page_request(
 /// Messenger's own settings for the signed-in account. Each is null when
 /// Messenger did not report it.
 #[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MessengerAccountState {
     active_status: Option<bool>,
@@ -101,6 +102,7 @@ pub(crate) struct MessengerAccountState {
 
 /// One change Settings asks for.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "setting", content = "value", rename_all = "camelCase")]
 pub(crate) enum MessengerAccountChange {
     ActiveStatus(bool),

@@ -58,6 +58,9 @@ mod render_recovery;
 mod renderer_memory;
 mod scheduled_send;
 mod settings;
+mod settings_change;
+#[cfg(test)]
+mod settings_types;
 mod sound;
 mod themes;
 mod title_bar;
@@ -1200,7 +1203,7 @@ pub fn run() {
             commands::runtime_capabilities,
             commands::autostart_status,
             commands::open_login_items,
-            commands::set_settings,
+            commands::update_setting,
             commands::reset_settings,
             commands::check_for_updates,
             commands::update_install_mode,
@@ -2279,9 +2282,9 @@ mod tests {
             }
             assert!(!allowed(command, "settings", &local), "{command}");
         }
-        assert!(!allowed("set_settings", "main", &messenger));
-        assert!(!allowed("set_settings", "main", &local));
-        assert!(allowed("set_settings", "settings", &local));
+        assert!(!allowed("update_setting", "main", &messenger));
+        assert!(!allowed("update_setting", "main", &local));
+        assert!(allowed("update_setting", "settings", &local));
         assert!(allowed("connect_messenger", "main", &local));
         assert!(!allowed("connect_messenger", "main", &messenger));
     }

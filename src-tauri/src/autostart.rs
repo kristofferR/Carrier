@@ -21,6 +21,7 @@ use crate::install_environment::is_snap;
 use crate::settings::{AppState, save_settings};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Status {
     On,

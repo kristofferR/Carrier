@@ -127,6 +127,7 @@ const PALETTE: &[(&str, &[&str])] = &[
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ThemeMode {
     Light,
@@ -144,6 +145,7 @@ pub(crate) struct ThemeHeader {
 
 /// A theme as the Settings gallery shows it.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ThemeInfo {
     pub(crate) id: String,

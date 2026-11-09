@@ -16,7 +16,14 @@ export interface UpdateUiState {
   version?: string;
 }
 
-type UpdateInvoke = (command: string) => Promise<unknown>;
+type UpdateInvoke = (
+  command:
+    | "update_install_mode"
+    | "discovered_update"
+    | "open_manual_update"
+    | "check_for_updates"
+    | "install_update",
+) => Promise<unknown>;
 type StateListener = (state: UpdateUiState) => void;
 
 type UpdateInstallMode =

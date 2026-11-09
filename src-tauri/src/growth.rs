@@ -36,6 +36,7 @@ pub(crate) fn share_message() -> String {
 /// Days the main window was used and whether the star prompt has run.
 /// Owned by the native side: Settings saves and resets keep it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(default)]
 pub(crate) struct Usage {
     /// Local calendar days (days since 0001-01-01) of the first and latest use.

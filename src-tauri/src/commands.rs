@@ -85,6 +85,7 @@ impl Drop for UpdateInstallGuard<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateInstallMode {
     kind: UpdateInstallKind,
@@ -95,8 +96,9 @@ pub(crate) struct UpdateInstallMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
-enum UpdateInstallKind {
+pub(crate) enum UpdateInstallKind {
     BuiltIn,
     Manual,
     Debug,
@@ -319,6 +321,7 @@ pub(crate) fn get_settings(state: State<AppState>) -> Settings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeCapabilities {
     snap: bool,
@@ -436,26 +439,31 @@ fn store_settings(
     }
 }
 
-/// `reset` also drops the page's pane widths, which an ordinary save keeps.
+/// None resets preferences; changes are applied only after acquiring the worker.
 async fn store_settings_off_main(
     app: tauri::AppHandle,
-    new: Settings,
-    reset: bool,
+    change: Option<crate::settings_change::SettingsChange>,
 ) -> Result<Settings, String> {
     let worker_app = app.clone();
     let state = app.state::<AppState>();
     let _settings_worker = state.settings_worker.lock().await;
     tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<AppState>();
-        store_settings(&worker_app, &state, new, reset)
+        let current = state.settings.lock().unwrap().clone();
+        let reset = change.is_none();
+        let next = change.map_or_else(Settings::default, |change| change.apply(current));
+        store_settings(&worker_app, &state, next, reset)
     })
     .await
     .map_err(|e| format!("settings worker failed: {e}"))?
 }
 
 #[tauri::command]
-pub(crate) async fn set_settings(app: tauri::AppHandle, new: Settings) -> Result<Settings, String> {
-    store_settings_off_main(app, new, false).await
+pub(crate) async fn update_setting(
+    app: tauri::AppHandle,
+    change: crate::settings_change::SettingsChange,
+) -> Result<Settings, String> {
+    store_settings_off_main(app, Some(change)).await
 }
 
 /// Copy the "Share Chatpane" message (Settings footer).
@@ -473,7 +481,7 @@ pub(crate) fn open_github(app: tauri::AppHandle) {
 /// Reset all settings to their defaults.
 #[tauri::command]
 pub(crate) async fn reset_settings(app: tauri::AppHandle) -> Result<Settings, String> {
-    store_settings_off_main(app, Settings::default(), true).await
+    store_settings_off_main(app, None).await
 }
 
 async fn available_update_unlocked(

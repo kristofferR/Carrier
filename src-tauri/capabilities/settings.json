@@ -11,7 +11,7 @@
     "allow-runtime-capabilities",
     "allow-autostart-status",
     "allow-open-login-items",
-    "allow-set-settings",
+    "allow-update-setting",
     "allow-reset-settings",
     "allow-check-for-updates",
     "allow-update-install-mode",

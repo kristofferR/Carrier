@@ -26,6 +26,8 @@ interface Strings {
   lang: string;
   dir: "ltr" | "rtl";
   strings: Record<string, string>;
+  languages?: { code: string; name: string }[];
+  system?: string;
 }
 
 declare global {

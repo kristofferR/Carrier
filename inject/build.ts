@@ -39,34 +39,14 @@ for (const [entry, out, source] of [
   });
 }
 
-await build({
-  bundle: true,
-  format: "iife",
-  globalName: "ChatpaneSettingsUpdate",
-  target: "es2020",
-  charset: "utf8",
-  legalComments: "none",
-  entryPoints: ["inject/src/settings/update-consent.ts"],
-  outfile: "dist/settings-update.js",
-  banner: {
-    js: banner("inject/src/settings/update-consent.ts"),
-  },
-});
-
-// The Settings window's own scripts are classic scripts that share globals,
-// so they are only stripped of types, not bundled.
-for (const [entry, outfile] of [
-  ["inject/src/settings/early.ts", "dist/settings-early.js"],
-  ["inject/src/settings/index.ts", "dist/settings.js"],
+for (const [entry, name] of [
+  ["inject/src/settings/early.ts", "settings-early"],
+  ["inject/src/settings/index.ts", "settings"],
 ] as const) {
   await build({
-    entryPoints: [entry],
-    outfile,
-    bundle: false,
-    // As inline scripts they ran in sloppy mode; keep it.
-    tsconfigRaw: { compilerOptions: { alwaysStrict: false } },
-    target: "es2020",
-    charset: "utf8",
+    ...common,
+    entryPoints: { [name]: entry },
+    outdir: "dist",
     banner: { js: banner(entry) },
   });
 }

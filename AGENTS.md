@@ -86,7 +86,10 @@ The injected scripts are TypeScript now: **edit `inject/src/`, never
 `src-tauri/inject/*.js`** (generated; `messenger.css` and the dev-only
 `mcp-bridge.js` are still hand-maintained). After changing `inject/src/`, run
 `bun run build:inject` and commit the regenerated bundles alongside the source
-— CI fails if they drift. Pure logic lives in `inject/src/messenger/lib/` with
+— CI fails if they drift. Settings scripts also live in `inject/src/settings/`
+and bundle to `dist/settings.js` and `dist/settings-early.js`. Settings wire
+types come from Rust via `bun run build:settings-types`; `cargo test --lib`
+checks the committed types for drift. Pure logic lives in `inject/src/messenger/lib/` with
 `bun test` coverage; add tests there when extending it.
 
 Releases use curated notes, not a generator. Before pushing a `v*` tag, inspect

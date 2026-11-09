@@ -16,9 +16,7 @@
       "scripts/i18n/**",
       "scripts/site/**",
       "!scripts/site/guides/**",
-      // Moved verbatim from settings.html; typed in the next change.
-      "!inject/src/settings/early.ts",
-      "!inject/src/settings/index.ts"
+      "!inject/src/settings/native-types.ts"
     ]
   },
   "formatter": {
