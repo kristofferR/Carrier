@@ -92,11 +92,10 @@
       this.onState(state);
       return state;
     }
-    async initialize() {
-      const [rawInstallMode, discovered] = await Promise.all([
-        this.invoke("update_install_mode"),
-        this.invoke("discovered_update")
-      ]);
+    /** `known` is what native code already had when the window was built; with
+     * it, the state is published before this returns its promise. */
+    async initialize(known) {
+      const [rawInstallMode, discovered] = known ? [known.installMode, known.discovered] : await Promise.all([this.invoke("update_install_mode"), this.invoke("discovered_update")]);
       this.installMode = parseInstallMode(rawInstallMode);
       if (this.installMode.kind === "debug") {
         return this.publish({
@@ -1626,7 +1625,9 @@
   };
   render();
   refresh();
-  updateController.initialize().catch((e) => {
+  updateController.initialize(
+    BOOT.install_mode ? { installMode: BOOT.install_mode, discovered: BOOT.discovered_update } : void 0
+  ).catch((e) => {
     updateController.fail(e);
     console.error(e);
   });

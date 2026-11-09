@@ -270,7 +270,22 @@ fn linux_update_install_mode(
     }
 }
 
+/// How this installation updates, found once: it can't change while Chatpane
+/// runs, and on Linux finding out runs pacman and the AUR helpers.
+static UPDATE_INSTALL_MODE: std::sync::OnceLock<UpdateInstallMode> = std::sync::OnceLock::new();
+
 fn current_update_install_mode() -> UpdateInstallMode {
+    UPDATE_INSTALL_MODE
+        .get_or_init(detect_update_install_mode)
+        .clone()
+}
+
+/// Find the install mode at startup, so Settings opens with it.
+pub(crate) async fn prepare_update_install_mode() {
+    let _ = current_update_install_mode_off_main().await;
+}
+
+fn detect_update_install_mode() -> UpdateInstallMode {
     if cfg!(debug_assertions) {
         return UpdateInstallMode {
             kind: UpdateInstallKind::Debug,
@@ -352,13 +367,20 @@ pub(crate) struct SettingsBoot {
     settings: Settings,
     capabilities: RuntimeCapabilities,
     version: String,
+    /// None until startup has found it; the page then asks.
+    install_mode: Option<UpdateInstallMode>,
+    discovered_update: Option<String>,
 }
 
-pub(crate) fn settings_boot_script(app: &tauri::AppHandle, settings: &Settings) -> String {
+pub(crate) fn settings_boot_script(app: &tauri::AppHandle) -> String {
+    let state = app.state::<AppState>();
+    let discovered_update = discovered_version(&state);
     let boot = SettingsBoot {
-        settings: settings.clone(),
+        settings: state.settings.lock().unwrap().clone(),
         capabilities: runtime_capabilities(),
         version: app.package_info().version.to_string(),
+        install_mode: UPDATE_INSTALL_MODE.get().cloned(),
+        discovered_update,
     };
     format!(
         "\n  window.__CHATPANE_SETTINGS_BOOT__ = {};",
@@ -617,6 +639,10 @@ pub(crate) fn update_release_notes(state: State<AppState>, version: String) -> O
 /// button as soon as it opens.
 #[tauri::command]
 pub(crate) fn discovered_update(state: State<AppState>) -> Option<String> {
+    discovered_version(&state)
+}
+
+fn discovered_version(state: &AppState) -> Option<String> {
     state
         .update_available
         .lock()

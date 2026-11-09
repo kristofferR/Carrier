@@ -1310,6 +1310,7 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         .hidden_title(true);
     // Windows and Linux: Chatpane's title bar, as in the Messenger windows
     // (crate::title_bar): the page draws the close button.
+    let boot = crate::commands::settings_boot_script(app);
     let builder = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
@@ -1318,7 +1319,7 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         builder
             .initialization_script(crate::title_bar::initial_script(&s, false))
             .initialization_script(crate::i18n::script(crate::i18n::Audience::Settings))
-            .initialization_script(crate::commands::settings_boot_script(app, &s))
+            .initialization_script(boot)
             // The page draws the controls once it's loaded: restate them then.
             .on_page_load(|window, payload| {
                 if payload.event() == tauri::webview::PageLoadEvent::Finished {

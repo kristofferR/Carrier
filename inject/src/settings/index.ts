@@ -1638,7 +1638,13 @@ updateButton.onclick = async () => {
 render();
 // The OS's Start on System Startup state, which may also correct the setting.
 refresh();
-updateController.initialize().catch((e) => {
-  updateController.fail(e);
-  console.error(e);
-});
+updateController
+  .initialize(
+    BOOT.install_mode
+      ? { installMode: BOOT.install_mode, discovered: BOOT.discovered_update }
+      : undefined,
+  )
+  .catch((e) => {
+    updateController.fail(e);
+    console.error(e);
+  });

@@ -1304,6 +1304,7 @@ pub fn run() {
             // Show whether Chatpane will really start at login: the user can
             // switch it off in the OS (Ref #443).
             tauri::async_runtime::spawn(autostart::reconcile(app.handle().clone()));
+            tauri::async_runtime::spawn(commands::prepare_update_install_mode());
 
             // Start hidden only when a tray was actually created to reopen from.
             let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();

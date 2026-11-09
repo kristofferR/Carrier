@@ -114,6 +114,8 @@ function installBridge(platform: string, strings: typeof globalThis.__CHATPANE_I
       debug: false,
     },
     version: "3.1.0",
+    install_mode: { kind: "built-in", buttonLabel: null, instructions: null },
+    discovered_update: null,
   };
   window.__TAURI_INTERNALS__ = {
     invoke: async (command, args) => {
@@ -178,6 +180,7 @@ async function exerciseSettings() {
     // The first frame comes from the boot data, before any native reply.
     assert(document.getElementById("rows")!.children.length > 0, "first frame is complete");
     assert(document.getElementById("version")!.textContent!.includes("3.1.0"), "version");
+    assert(!(document.getElementById("check") as HTMLButtonElement).disabled, "update button");
     fixture.release();
     await settle();
     assert(document.title === "Chatpane Settings", "early localization");

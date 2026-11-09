@@ -252,7 +252,11 @@ export type SettingsChange = { "key": "always_on_top", "value": boolean } | { "k
 
 export type RuntimeCapabilities = { snap: boolean, autostart: boolean, automaticUpdateChecks: boolean, multiInstance: boolean, debug: boolean, };
 
-export type SettingsBoot = { settings: Settings, capabilities: RuntimeCapabilities, version: string, };
+export type SettingsBoot = { settings: Settings, capabilities: RuntimeCapabilities, version: string, 
+/**
+ * None until startup has found it; the page then asks.
+ */
+install_mode: UpdateInstallMode | null, discovered_update: string | null, };
 
 export type Status = "on" | "off" | "needs-approval";
 
