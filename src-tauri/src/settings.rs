@@ -153,6 +153,8 @@ pub(crate) struct Settings {
     /// Notify for messages in group chats. Off leaves group messages to the
     /// unread badge. On by default.
     pub(crate) notify_group_chats: bool,
+    /// Notify when someone reacts to a message you sent. On by default.
+    pub(crate) notify_reactions: bool,
     /// The reaction a notification's React button adds: one of Messenger's
     /// six default reactions (`notifications::REACTIONS`). 👍 by default.
     pub(crate) notification_reaction: String,
@@ -357,6 +359,7 @@ impl Default for Settings {
             notification_sound_choice: None,
             hide_notification_preview: false,
             notify_group_chats: true,
+            notify_reactions: true,
             notification_reaction: "👍".into(),
             group_notifications_by_conversation: true,
             clear_notifications_on_view: true,
@@ -1375,10 +1378,11 @@ mod tests {
     }
 
     #[test]
-    fn settings_json_missing_notify_group_chats_defaults_to_true() {
-        // Existing installs keep notifying for group chats.
+    fn settings_json_missing_notify_group_chats_and_reactions_defaults_to_true() {
+        // Existing installs keep notifying for group chats, and start
+        // notifying for reactions.
         let s: Settings = serde_json::from_str("{}").unwrap();
-        assert!(s.notify_group_chats);
+        assert!(s.notify_group_chats && s.notify_reactions);
     }
 
     #[test]
@@ -1514,6 +1518,7 @@ mod tests {
         assert_eq!(s.color_theme, new.color_theme);
         assert_eq!(s.notification_reaction, new.notification_reaction);
         assert_eq!(s.notify_group_chats, new.notify_group_chats);
+        assert_eq!(s.notify_reactions, new.notify_reactions);
         assert_eq!(s.focus_composer_on_return, new.focus_composer_on_return);
         assert_eq!(s.notifications_paused_until, None);
         assert_eq!(

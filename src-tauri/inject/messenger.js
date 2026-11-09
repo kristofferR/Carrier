@@ -6969,6 +6969,9 @@ ${button.innerHTML}`)
   }
   function messageThreadId(message, load) {
     if (!message || typeof message !== "object") return null;
+    return pageId(message.threadKey, load);
+  }
+  function pageId(value, load) {
     let i64ToString;
     try {
       const i64 = typeof load === "function" ? load("I64") : null;
@@ -6977,7 +6980,7 @@ ${button.innerHTML}`)
       }
     } catch {
     }
-    return messengerId(message.threadKey, i64ToString);
+    return messengerId(value, i64ToString);
   }
   var LATE_NOTIFICATION_MS = 2 * 6e4;
   function isOldNews(sentMs, nowMs, readUpToMs) {
@@ -10462,6 +10465,50 @@ ${button.innerHTML}`)
     return title ? t("page.notification.sent_link", { title, host: target.host }).slice(0, 240) : body;
   }
 
+  // inject/src/messenger/lib/reaction-notifications.ts
+  function changedReaction(change, load) {
+    if (!change || typeof change !== "object") return null;
+    const { operation, value } = change;
+    if (operation !== "add" && operation !== "put" || !value || typeof value !== "object") {
+      return null;
+    }
+    const row = value;
+    const thread2 = pageId(row.threadKey, load);
+    const actor = pageId(row.actorId, load);
+    const message = typeof row.messageId === "string" ? row.messageId : "";
+    const emoji = typeof row.reaction === "string" ? row.reaction.trim() : "";
+    if (!thread2 || !actor || !message || !emoji) return null;
+    const at = messengerMillis(row.reactionCreationTimestampMs, load) || messengerMillis(row.timestampMs, load) || null;
+    return { thread: thread2, message, actor, emoji, at };
+  }
+  var reactionKey = (reaction) => `${reaction.thread}:${reaction.message}:${reaction.actor}:${reaction.emoji}:${reaction.at}`;
+  var ANNOUNCED_LIMIT = 200;
+  var ReactionAnnouncements = class {
+    /** `since`: when watching began, on Facebook's clock. */
+    constructor(since) {
+      __publicField(this, "since", since);
+      __publicField(this, "announced", /* @__PURE__ */ new Set());
+    }
+    /**
+     * Whether `reaction` is news to `account`: someone else's, made since
+     * watching began and not caught up late (after sleep), and not announced
+     * already. Whose message it reacts to is for the caller to check.
+     */
+    first(reaction, account2, now) {
+      if (reaction.actor === account2 || reaction.at === null || reaction.at < this.since) {
+        return false;
+      }
+      if (isOldNews(reaction.at, now, null)) return false;
+      const key = reactionKey(reaction);
+      if (this.announced.has(key)) return false;
+      this.announced.add(key);
+      if (this.announced.size > ANNOUNCED_LIMIT) {
+        this.announced.delete(this.announced.values().next().value);
+      }
+      return true;
+    }
+  };
+
   // inject/src/messenger/lib/reload-safe-storage.ts
   function reloadSafeStorage(local, session) {
     if (!local && !session) return null;
@@ -10696,6 +10743,59 @@ ${button.innerHTML}`)
   }
   function reconcileUnreadConversationCount(unreadConversations, conversationListTrustworthy, ignoresMuted, previousFilteredCount) {
     return ignoresMuted && !conversationListTrustworthy ? previousFilteredCount : unreadConversations;
+  }
+
+  // inject/src/messenger/features/reaction-notifications.ts
+  var TRACE2 = "ChatpaneReactionNotifications";
+  function watchReactions(announce) {
+    if (window.opener) return;
+    const start = window.setInterval(() => {
+      if (!chatRows().length) return;
+      window.clearInterval(start);
+      loadFacebookModules(pageRequire(), ["ReQL", "LSDatabaseSingleton", "I64"]).then(async ([q, singleton]) => {
+        const load = pageRequire();
+        const db = await singleton?.LSDatabaseSingleton;
+        const table = db?.tables?.reactions;
+        const reactions = table ? q.fromTableAscending(table) : void 0;
+        if (typeof reactions?.subscribe !== "function" || typeof db?.runInTransaction !== "function") {
+          diag("notify.reactions", "Messenger's reaction APIs changed");
+          return;
+        }
+        const now = () => serverNowMs(load) ?? Date.now();
+        const announcements = new ReactionAnnouncements(now());
+        reactions.subscribe((_event, change) => {
+          const reaction = changedReaction(change, load);
+          const account2 = accountId(document.cookie);
+          if (!reaction || !account2 || !announcements.first(reaction, account2, now())) return;
+          ownMessageText(db, load, reaction, account2).then((text2) => {
+            if (text2 !== void 0) announce(reaction, text2);
+          }).catch(() => {
+          });
+        });
+      }).catch(() => diag("notify.reactions", "Messenger's reaction APIs did not load"));
+    }, 1e3);
+  }
+  async function ownMessageText(db, load, reaction, account2) {
+    const message = await db.runInTransaction?.(
+      (tx) => tx.messages.index("messageId").get(reaction.message),
+      "readonly",
+      void 0,
+      void 0,
+      TRACE2
+    );
+    if (!message || typeof message !== "object") return void 0;
+    const row = message;
+    if (messageThreadId(row, load) !== reaction.thread) return void 0;
+    if (pageId(row.senderId, load) !== account2) return void 0;
+    let unvault;
+    try {
+      const vault = load("MAWVault");
+      if (typeof vault?.unvault === "function") {
+        unvault = (value) => vault.unvault(value);
+      }
+    } catch {
+    }
+    return revealText(row.text, unvault).text;
   }
 
   // inject/src/messenger/features/notifications.ts
@@ -12111,6 +12211,50 @@ ${button.innerHTML}`)
     });
     attachHarvestObserver();
     startPoll();
+    watchReactions(async (reaction, text2) => {
+      const deliverable = () => {
+        const current2 = window.__CHATPANE_SETTINGS__ || {};
+        return (document.hidden || !document.hasFocus()) && current2.notify_reactions !== false && !suppressNotificationDelivery(mutedThreads.isMuted(reaction.thread), current2) && !groupSuppressed(reaction.thread);
+      };
+      await threadKinds.ensure(reaction.thread);
+      if (!deliverable()) return;
+      const settings = window.__CHATPANE_SETTINGS__ || {};
+      const hidePreview = settings.hide_notification_preview === true;
+      const names = hidePreview ? Promise.resolve(null) : conversationNames(reaction.thread);
+      const group = await names;
+      const actor = group?.participants.find((person) => person.id === reaction.actor);
+      const name = actor && (showNicknames(nicknameMode(settings), group?.isGroup) && actor.nickname || actor.name) || "";
+      const groupName = group?.isGroup ? group.title : "";
+      const subtitle = groupName ? nativeThreadTitles.displayed(reaction.thread, groupName) : "";
+      const [icon3, picture] = await Promise.all([
+        avatarToDataUrl(actor?.avatar),
+        groupPicture2(names)
+      ]);
+      if (!deliverable()) return;
+      const threadPath = `/t/${reaction.thread}/`;
+      const emoji = reactionLabel(reaction.emoji);
+      const body = text2 ? t("page.notification.reacted_to", { emoji, message: text2 }) : t("page.notification.reacted", { emoji });
+      emitNotification(
+        ++notifySeq,
+        hidePreview ? "Messenger" : name || subtitle || "Messenger",
+        hidePreview ? t("page.notification.hidden_body") : body,
+        hidePreview ? "" : icon3,
+        notificationDedupeKey("reaction", reactionKey(reaction)),
+        () => {
+          window.__chatpaneOpenThread?.(threadPath);
+        },
+        threadPath,
+        void 0,
+        hidePreview || !name ? "" : subtitle,
+        "",
+        "",
+        void 0,
+        hidePreview || !name ? void 0 : withGroupPicture(
+          { id: reaction.actor, name, group: groupName, photo: Boolean(icon3) },
+          picture
+        )
+      );
+    });
   }
 
   // inject/src/messenger/lib/pane-resize.ts

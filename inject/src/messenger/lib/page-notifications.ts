@@ -139,6 +139,11 @@ export function recordNotifiedMessage(message: unknown, load: unknown): void {
 /** The conversation id of a Messenger message row, or null. */
 export function messageThreadId(message: unknown, load: unknown): string | null {
   if (!message || typeof message !== "object") return null;
+  return pageId((message as { threadKey?: unknown }).threadKey, load);
+}
+
+/** A decimal id from a Messenger value, reading I64s with the page's own module. */
+export function pageId(value: unknown, load: unknown): string | null {
   let i64ToString: ((value: unknown) => unknown) | undefined;
   try {
     const i64 =
@@ -147,7 +152,7 @@ export function messageThreadId(message: unknown, load: unknown): string | null 
       i64ToString = i64.to_string.bind(i64) as (value: unknown) => unknown;
     }
   } catch {}
-  return messengerId((message as { threadKey?: unknown }).threadKey, i64ToString);
+  return messengerId(value, i64ToString);
 }
 
 /** A message notified this late is old news: a computer back from sleep catching up. */

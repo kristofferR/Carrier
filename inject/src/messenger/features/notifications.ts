@@ -12,6 +12,7 @@ import {
   isUnreadConversationText,
 } from "../lib/conversation-row";
 import { EMOJI_SOURCE_RE } from "../lib/emoji";
+import { reactionLabel } from "../lib/message-menu";
 import {
   ignoresMutedConversations,
   mutedThreads,
@@ -60,6 +61,7 @@ import {
   readConversationNotificationNames,
 } from "../lib/notification-names";
 import { groupTitleTemplates, pageMessages } from "../lib/page-notifications";
+import { reactionKey } from "../lib/reaction-notifications";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { readThreadIsGroup, suppressGroupChat, ThreadKindCache } from "../lib/thread-kind";
@@ -67,6 +69,7 @@ import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } fr
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
 import { messengerMessageSoundJustPlayed } from "./messenger-sounds";
+import { watchReactions } from "./reaction-notifications";
 
 interface ChatpaneNotificationInstance {
   title?: string;
@@ -2153,4 +2156,68 @@ export function initNotificationBridge() {
   });
   attachHarvestObserver();
   startPoll();
+
+  // Someone else's reaction to one of your messages, presented like a message
+  // from them: their name and face, the group as subtitle, and what they did.
+  watchReactions(async (reaction, text) => {
+    // Like Messenger's own message notifications: only while not in view.
+    // Checked again once the names and faces have loaded.
+    const deliverable = () => {
+      const current = window.__CHATPANE_SETTINGS__ || {};
+      return (
+        (document.hidden || !document.hasFocus()) &&
+        current.notify_reactions !== false &&
+        !suppressNotificationDelivery(mutedThreads.isMuted(reaction.thread), current) &&
+        !groupSuppressed(reaction.thread)
+      );
+    };
+    // Known before loading, so turning group chats off meanwhile still applies.
+    await threadKinds.ensure(reaction.thread);
+    if (!deliverable()) return;
+    const settings = window.__CHATPANE_SETTINGS__ || {};
+    const hidePreview = settings.hide_notification_preview === true;
+    const names = hidePreview ? Promise.resolve(null) : conversationNames(reaction.thread);
+    const group = await names;
+    const actor = group?.participants.find((person) => person.id === reaction.actor);
+    const name =
+      (actor &&
+        ((showNicknames(nicknameMode(settings), group?.isGroup) && actor.nickname) ||
+          actor.name)) ||
+      "";
+    const groupName = group?.isGroup ? group.title : "";
+    const subtitle = groupName ? nativeThreadTitles.displayed(reaction.thread, groupName) : "";
+    const [icon, picture] = await Promise.all([
+      avatarToDataUrl(actor?.avatar),
+      groupPicture(names),
+    ]);
+    if (!deliverable()) return;
+    const threadPath = `/t/${reaction.thread}/`;
+    // Messenger stores the heart as a text-style "❤"; show it as the emoji.
+    const emoji = reactionLabel(reaction.emoji);
+    const body = text
+      ? t("page.notification.reacted_to", { emoji, message: text })
+      : t("page.notification.reacted", { emoji });
+    emitNotification(
+      ++notifySeq,
+      hidePreview ? "Messenger" : name || subtitle || "Messenger",
+      hidePreview ? t("page.notification.hidden_body") : body,
+      hidePreview ? "" : icon,
+      notificationDedupeKey("reaction", reactionKey(reaction)),
+      () => {
+        window.__chatpaneOpenThread?.(threadPath);
+      },
+      threadPath,
+      undefined,
+      hidePreview || !name ? "" : subtitle,
+      "",
+      "",
+      undefined,
+      hidePreview || !name
+        ? undefined
+        : withGroupPicture(
+            { id: reaction.actor, name, group: groupName, photo: Boolean(icon) },
+            picture,
+          ),
+    );
+  });
 }
