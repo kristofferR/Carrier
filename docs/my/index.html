@@ -2593,6 +2593,11 @@
       heroCta.firstChild.textContent = i18nT('js.ctaOs').replace('{os}', names[os]);
     };
     window.__applyOsCta();
+    // Windows gets winget's command in place of Homebrew's.
+    if (os === 'win') {
+      var pkg = document.querySelector('.other-versions code');
+      if (pkg) pkg.textContent = 'winget install kristofferR.Chatpane';
+    }
 
     // Architecture-aware build selection: only swap the spotlighted download
     // on a POSITIVE architecture match (Chromium's high-entropy hints).
