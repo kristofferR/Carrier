@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "由你添加",
   "settings.appearance.theme.add": "添加主题文件…",
   "settings.appearance.theme.open_folder": "打开主题文件夹",
+  "settings.appearance.theme.guide": "如何制作主题",
   "settings.appearance.theme.remove": "移除 {name}",
   "settings.appearance.theme.custom_css_note": "custom.css（高级）仍会最后应用。",
   "settings.appearance.theme.added": "已添加 {name}。在主题文件夹中编辑它的文件，然后重新加载（Cmd/Ctrl+R）即可看到更改。",

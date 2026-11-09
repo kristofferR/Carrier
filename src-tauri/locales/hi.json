@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "आपके द्वारा जोड़ी गई",
   "settings.appearance.theme.add": "थीम फ़ाइल जोड़ें…",
   "settings.appearance.theme.open_folder": "थीम फ़ोल्डर खोलें",
+  "settings.appearance.theme.guide": "थीम कैसे बनाएँ",
   "settings.appearance.theme.remove": "{name} हटाएँ",
   "settings.appearance.theme.custom_css_note": "custom.css (उन्नत) अब भी सबसे आख़िर में लागू होता है।",
   "settings.appearance.theme.added": "{name} जोड़ दी गई। बदलाव देखने के लिए थीम फ़ोल्डर में इसकी फ़ाइल एडिट करें और रीलोड करें (Cmd/Ctrl+R)।",

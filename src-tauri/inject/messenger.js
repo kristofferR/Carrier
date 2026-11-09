@@ -7525,26 +7525,35 @@ ${button.innerHTML}`)
   // inject/src/messenger/features/force-theme.ts
   function initForceTheme() {
     const html = document.documentElement;
+    const system = window.matchMedia("(prefers-color-scheme: dark)");
     let forcedClass = null;
-    const apply2 = () => {
-      const forced = window.__CHATPANE_SETTINGS__?.theme;
-      if (forced !== "light" && forced !== "dark") {
-        if (forcedClass) {
-          html.classList.remove(forcedClass);
-          forcedClass = null;
-        }
-        return;
-      }
-      const want = forced === "dark" ? "__fb-dark-mode" : "__fb-light-mode";
-      const other = forced === "dark" ? "__fb-light-mode" : "__fb-dark-mode";
+    let followSystem = false;
+    const show = (dark) => {
+      const want = dark ? "__fb-dark-mode" : "__fb-light-mode";
+      const other = dark ? "__fb-light-mode" : "__fb-dark-mode";
       if (!html.classList.contains(want) || html.classList.contains(other)) {
         html.classList.remove(other);
         html.classList.add(want);
       }
-      forcedClass = want;
+      return want;
+    };
+    const apply2 = () => {
+      const forced = window.__CHATPANE_SETTINGS__?.theme;
+      if (forced !== "light" && forced !== "dark") {
+        if (forcedClass) {
+          forcedClass = null;
+          followSystem = true;
+          show(system.matches);
+        }
+        return;
+      }
+      forcedClass = show(forced === "dark");
     };
     apply2();
     window.addEventListener("chatpane:settings", apply2);
+    system.addEventListener("change", () => {
+      if (followSystem && !forcedClass) show(system.matches);
+    });
     new MutationObserver(apply2).observe(html, { attributes: true, attributeFilter: ["class"] });
   }
   var DARK_MARKERS = ["data-chatpane-dark", "data-fmess-dark"];

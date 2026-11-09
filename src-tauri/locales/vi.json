@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Do bạn thêm",
   "settings.appearance.theme.add": "Thêm tệp chủ đề…",
   "settings.appearance.theme.open_folder": "Mở thư mục chủ đề",
+  "settings.appearance.theme.guide": "Cách tạo chủ đề",
   "settings.appearance.theme.remove": "Xóa {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (Nâng cao) vẫn được áp dụng sau cùng.",
   "settings.appearance.theme.added": "Đã thêm {name}. Chỉnh sửa tệp của chủ đề trong thư mục chủ đề rồi tải lại (Cmd/Ctrl+R) để xem thay đổi.",

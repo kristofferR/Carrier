@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "آپ کی شامل کردہ",
   "settings.appearance.theme.add": "تھیم فائل شامل کریں…",
   "settings.appearance.theme.open_folder": "تھیمز کا فولڈر کھولیں",
+  "settings.appearance.theme.guide": "تھیم بنانے کا طریقہ",
   "settings.appearance.theme.remove": "{name} ہٹائیں",
   "settings.appearance.theme.custom_css_note": "custom.css (ایڈوانسڈ) پھر بھی سب سے آخر میں لاگو ہوتی ہے۔",
   "settings.appearance.theme.added": "{name} شامل ہو گئی۔ تبدیلیاں دیکھنے کے لیے تھیمز کے فولڈر میں اس کی فائل ایڈٹ کریں اور دوبارہ لوڈ کریں (Cmd/Ctrl+R)۔",

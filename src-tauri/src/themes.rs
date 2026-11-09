@@ -594,11 +594,16 @@ pub(crate) fn apply_appearance(window: &WebviewWindow, s: &Settings) {
         return;
     }
     let app = window.app_handle();
+    #[cfg(all(feature = "mcp", debug_assertions))]
+    let theme = preview::theme_css(app).unwrap_or_else(|| theme_css(app, &s.color_theme));
+    #[cfg(not(all(feature = "mcp", debug_assertions)))]
     let theme = theme_css(app, &s.color_theme);
     let payload = appearance_payload(theme.as_deref(), s);
     if let Err(error) = window.eval(appearance_script(&payload)) {
         log::warn!("could not apply the theme: {error}");
     }
+    #[cfg(all(feature = "mcp", debug_assertions))]
+    preview::page_loaded(window);
 }
 
 /// Re-apply the appearance to every Messenger window (when a theme file
@@ -763,6 +768,129 @@ pub(crate) fn open_themes_folder(app: tauri::AppHandle) -> Result<(), String> {
     std::fs::create_dir_all(&dir)
         .map_err(|error| tf("theme.error.create_folder", &[("error", &error)]))?;
     open::that_detached(dir).map_err(|error| error.to_string())
+}
+
+/// Settings → Appearance → "How to make a theme".
+#[tauri::command]
+pub(crate) fn open_theme_guide(app: tauri::AppHandle) {
+    use tauri_plugin_opener::OpenerExt;
+    let url = format!("{}/blob/main/themes/README.md", crate::growth::REPO_URL);
+    if let Err(error) = app.opener().open_url(url, None::<&str>) {
+        log::warn!("failed to open the theme guide: {error}");
+    }
+}
+
+/// Debug builds only: try a theme in the running app without saving anything
+/// (skills/chatpane-theme/testing.md). The MCP bridge's
+/// `__chatpane_mcp_theme_preview__:<command>` emits `chatpane:mcp-theme-preview`:
+///
+/// - `on`: show `theme-preview.css` from the config folder instead of the
+///   chosen theme. Send it again after editing the file.
+/// - `light` / `dark`: render the Messenger windows in that mode.
+/// - `off`: back to the saved theme and mode.
+///
+/// The page only names a command; the file is always the same one, so a page
+/// script can't make Chatpane read anything else.
+#[cfg(all(feature = "mcp", debug_assertions))]
+pub(crate) mod preview {
+    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
+    use tauri::{Listener, Manager, WebviewWindow};
+
+    use super::{apply_appearance_everywhere, check_css, parse_header, read_user_theme};
+    use crate::settings::AppState;
+
+    const FILE: &str = "theme-preview.css";
+    static ACTIVE: AtomicBool = AtomicBool::new(false);
+    /// 0: the saved mode, 1: light, 2: dark.
+    static MODE: AtomicU8 = AtomicU8::new(0);
+
+    /// The preview's CSS while it is on: `Some(None)` shows Messenger's own
+    /// look when the file is missing or broken (the reason goes to the log).
+    pub(super) fn theme_css(app: &tauri::AppHandle) -> Option<Option<String>> {
+        if !ACTIVE.load(Ordering::Relaxed) {
+            return None;
+        }
+        let path = app.path().app_config_dir().ok()?.join(FILE);
+        let Some(css) = read_user_theme(&path) else {
+            log::warn!("theme preview: no readable {}", path.display());
+            return Some(None);
+        };
+        match parse_header(&css).and_then(|_| check_css(&css)) {
+            Ok(()) => Some(Some(css)),
+            Err(error) => {
+                log::warn!("theme preview: {}", error.message(FILE));
+                Some(None)
+            }
+        }
+    }
+
+    /// The page forces Facebook's light/dark class from its settings copy
+    /// (force-theme.ts), so the previewed mode goes there too, in memory only.
+    /// Runs again on every page load while a mode is previewed.
+    pub(super) fn page_loaded(window: &WebviewWindow) {
+        let mode = match MODE.load(Ordering::Relaxed) {
+            1 => "light",
+            2 => "dark",
+            _ => return,
+        };
+        let _ = window.eval(format!(
+            "(window.__CHATPANE_SETTINGS__ = window.__CHATPANE_SETTINGS__ || {{}}).theme = '{mode}'; \
+             window.dispatchEvent(new Event('chatpane:settings'));"
+        ));
+    }
+
+    fn set_mode(app: &tauri::AppHandle, theme: tauri::Theme) {
+        MODE.store(
+            if theme == tauri::Theme::Dark { 2 } else { 1 },
+            Ordering::Relaxed,
+        );
+        for (label, window) in app.webview_windows() {
+            if crate::window::is_messenger_window_label(&label) {
+                let _ = window.set_theme(Some(theme));
+                page_loaded(&window);
+            }
+        }
+    }
+
+    pub(crate) fn install(app: &tauri::AppHandle) {
+        let handle = app.clone();
+        app.listen_any("chatpane:mcp-theme-preview", move |event| {
+            let command = serde_json::from_str::<String>(event.payload()).unwrap_or_default();
+            log::info!("theme preview: {command}");
+            match command.as_str() {
+                "on" => {
+                    ACTIVE.store(true, Ordering::Relaxed);
+                    apply_appearance_everywhere(&handle);
+                }
+                "light" => set_mode(&handle, tauri::Theme::Light),
+                "dark" => set_mode(&handle, tauri::Theme::Dark),
+                "off" => {
+                    ACTIVE.store(false, Ordering::Relaxed);
+                    MODE.store(0, Ordering::Relaxed);
+                    let settings = handle.state::<AppState>().settings.lock().unwrap().clone();
+                    crate::settings::apply_settings(&handle, &settings);
+                    // `set_theme(None)` leaves WebKitGTK in the previewed mode;
+                    // an explicit theme makes it follow the desktop again, as
+                    // linux.rs does on a desktop change.
+                    #[cfg(target_os = "linux")]
+                    if crate::window::theme_for(&settings).is_none() {
+                        let theme = if crate::window::is_dark(&settings) {
+                            tauri::Theme::Dark
+                        } else {
+                            tauri::Theme::Light
+                        };
+                        for (label, window) in handle.webview_windows() {
+                            if crate::window::is_messenger_window_label(&label) {
+                                let _ = window.set_theme(Some(theme));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        });
+    }
 }
 
 /// Installed font families for the Message font list, sorted A to Z.

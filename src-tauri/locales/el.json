@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Το πρόσθεσες εσύ",
   "settings.appearance.theme.add": "Προσθήκη αρχείου θέματος…",
   "settings.appearance.theme.open_folder": "Άνοιγμα φακέλου θεμάτων",
+  "settings.appearance.theme.guide": "Πώς να φτιάξετε ένα θέμα",
   "settings.appearance.theme.remove": "Αφαίρεση θέματος {name}",
   "settings.appearance.theme.custom_css_note": "Το custom.css (Για προχωρημένους) εφαρμόζεται πάντα τελευταίο.",
   "settings.appearance.theme.added": "Το θέμα {name} προστέθηκε. Επεξεργάσου το αρχείο του στον φάκελο θεμάτων και κάνε επαναφόρτωση (Cmd/Ctrl+R) για να δεις τις αλλαγές.",

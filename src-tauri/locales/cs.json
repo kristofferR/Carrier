@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Přidáno tebou",
   "settings.appearance.theme.add": "Přidat soubor s motivem…",
   "settings.appearance.theme.open_folder": "Otevřít složku motivů",
+  "settings.appearance.theme.guide": "Jak vytvořit motiv",
   "settings.appearance.theme.remove": "Odebrat motiv {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (Pokročilé) se stále použije jako poslední.",
   "settings.appearance.theme.added": "Motiv {name} přidán. Uprav jeho soubor ve složce motivů a znovu načti stránku (Cmd/Ctrl+R), aby se změny projevily.",

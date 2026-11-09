@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "သင် ထည့်ထားသည်",
   "settings.appearance.theme.add": "Theme ဖိုင် ထည့်ရန်…",
   "settings.appearance.theme.open_folder": "Theme ဖိုင်တွဲကို ဖွင့်ရန်",
+  "settings.appearance.theme.guide": "Theme ပြုလုပ်နည်း",
   "settings.appearance.theme.remove": "{name} ကို ဖယ်ရှားရန်",
   "settings.appearance.theme.custom_css_note": "custom.css (အဆင့်မြင့်) ကို နောက်ဆုံးမှ ဆက်သက်ရောက်စေပါတယ်။",
   "settings.appearance.theme.added": "{name} ကို ထည့်ပြီးပါပြီ။ ပြောင်းလဲမှုတွေ မြင်ဖို့ theme ဖိုင်တွဲထဲက ဖိုင်ကို ပြင်ပြီး ပြန်တင်ပါ (Cmd/Ctrl+R)။",

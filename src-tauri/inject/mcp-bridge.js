@@ -966,6 +966,30 @@
           reply(persistThemeAndReload(themePersist[1]));
           return;
         }
+        // Try a theme without saving it (themes.rs `preview`): ":on" shows
+        // theme-preview.css from the config folder (send again after editing
+        // it), ":light"/":dark" render the window in that mode, ":off" goes
+        // back to the saved theme and mode.
+        var themePreview = /^__chatpane_mcp_theme_preview__:(on|light|dark|off)$/.exec(code);
+        if (themePreview) {
+          emit("chatpane:mcp-theme-preview", themePreview[1]).then(
+            function () {
+              reply({ sent: themePreview[1] });
+            },
+            function (e) {
+              reply({ error: String(e) });
+            },
+          );
+          return;
+        }
+        // Scroll the open chat up and back for two seconds and count frames
+        // (theme performance checks). Puts the scroll position back.
+        if (code === "__chatpane_mcp_scroll_fps__") {
+          scrollFpsProbe().then(reply, function (e) {
+            reply({ error: String(e) });
+          });
+          return;
+        }
         // CSP-safe end-to-end notification test: constructs a Notification
         // through the (shimmed) constructor so the full page → Rust →
         // Notification Center pipeline runs without waiting for a real
@@ -3924,6 +3948,65 @@
         dialogs: document.querySelectorAll('[role="dialog"]').length,
         banners: document.querySelectorAll('[role="banner"]').length,
       };
+    }
+
+    // Frames while the open chat scrolls by up to 1200px and back over two
+    // seconds. A hidden window throttles frames, so it refuses to run then.
+    function scrollFpsProbe() {
+      if (document.hidden) {
+        return Promise.resolve({ error: "the window is hidden; show it first" });
+      }
+      var scroller = document.querySelector('[role="main"] [role="log"]');
+      while (scroller && !(scroller.scrollHeight > scroller.clientHeight + 1 &&
+          /auto|scroll/.test(getComputedStyle(scroller).overflowY))) {
+        scroller = scroller.parentElement;
+      }
+      if (!scroller) return Promise.resolve({ error: "no scrolling chat is open" });
+      // Scroll up if the chat has room above, else down; measure the room
+      // by trying, since a reversed log counts its scrollTop the other way.
+      var start = scroller.scrollTop;
+      function room(direction) {
+        scroller.scrollTop = start + direction * 1200;
+        var moved = Math.abs(scroller.scrollTop - start);
+        scroller.scrollTop = start;
+        return moved;
+      }
+      var up = room(-1);
+      var direction = up >= 200 ? -1 : 1;
+      var distance = direction < 0 ? up : room(1);
+      if (distance < 200) return Promise.resolve({ error: "the open chat is too short to scroll" });
+      var duration = 2000;
+      return new Promise(function (resolve) {
+        var intervals = [];
+        var first = 0;
+        var last = 0;
+        function frame(now) {
+          if (!first) first = now;
+          else intervals.push(now - last);
+          last = now;
+          var t = (now - first) / duration;
+          if (t < 1) {
+            scroller.scrollTop = start + direction * distance * Math.sin(Math.PI * t);
+            requestAnimationFrame(frame);
+            return;
+          }
+          scroller.scrollTop = start;
+          var sorted = intervals.slice().sort(function (a, b) {
+            return a - b;
+          });
+          var total = intervals.reduce(function (sum, ms) {
+            return sum + ms;
+          }, 0);
+          resolve({
+            fps: total ? Math.round((intervals.length * 10000) / total) / 10 : 0,
+            p95Ms: Math.round(sorted[Math.floor(sorted.length * 0.95)] || 0),
+            longestMs: Math.round(sorted[sorted.length - 1] || 0),
+            frames: intervals.length,
+            scrolledPx: Math.round(distance),
+          });
+        }
+        requestAnimationFrame(frame);
+      });
     }
 
     // Force the page theme through force-theme's own settings path (in-memory

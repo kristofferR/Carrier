@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Added by you",
   "settings.appearance.theme.add": "Add theme file…",
   "settings.appearance.theme.open_folder": "Open themes folder",
+  "settings.appearance.theme.guide": "How to make a theme",
   "settings.appearance.theme.remove": "Remove {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (Advanced) still applies last.",
   "settings.appearance.theme.added": "Added {name}. Edit its file in the themes folder and reload (Cmd/Ctrl+R) to see changes.",

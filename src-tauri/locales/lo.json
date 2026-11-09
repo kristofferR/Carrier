@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "ເຈົ້າເພີ່ມເອງ",
   "settings.appearance.theme.add": "ເພີ່ມໄຟລ໌ຊຸດຮູບແບບ…",
   "settings.appearance.theme.open_folder": "ເປີດໂຟນເດີຊຸດຮູບແບບ",
+  "settings.appearance.theme.guide": "ວິທີສ້າງຊຸດຮູບແບບ",
   "settings.appearance.theme.remove": "ລຶບ {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (ຂັ້ນສູງ) ຍັງຖືກນຳໃຊ້ເປັນອັນສຸດທ້າຍ.",
   "settings.appearance.theme.added": "ເພີ່ມ {name} ແລ້ວ. ແກ້ໄຂໄຟລ໌ຂອງມັນໃນໂຟນເດີຊຸດຮູບແບບ ແລ້ວໂຫຼດຄືນໃໝ່ (Cmd/Ctrl+R) ເພື່ອເບິ່ງການປ່ຽນແປງ.",

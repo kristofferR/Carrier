@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Von dir hinzugefügt",
   "settings.appearance.theme.add": "Designdatei hinzufügen …",
   "settings.appearance.theme.open_folder": "Designs-Ordner öffnen",
+  "settings.appearance.theme.guide": "Eigenes Design erstellen",
   "settings.appearance.theme.remove": "{name} entfernen",
   "settings.appearance.theme.custom_css_note": "custom.css (Erweitert) wird weiterhin zuletzt angewendet.",
   "settings.appearance.theme.added": "{name} hinzugefügt. Bearbeite die Datei im Designs-Ordner und lade neu (Cmd/Ctrl+R), um Änderungen zu sehen.",

@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "আপনার যোগ করা",
   "settings.appearance.theme.add": "থিম ফাইল যোগ করুন…",
   "settings.appearance.theme.open_folder": "থিম ফোল্ডার খুলুন",
+  "settings.appearance.theme.guide": "কীভাবে থিম বানাবেন",
   "settings.appearance.theme.remove": "{name} সরান",
   "settings.appearance.theme.custom_css_note": "custom.css (অ্যাডভান্সড) এখনো সবার শেষে প্রয়োগ হয়।",
   "settings.appearance.theme.added": "{name} যোগ করা হয়েছে। পরিবর্তন দেখতে থিম ফোল্ডারে এর ফাইল এডিট করে রিলোড করুন (Cmd/Ctrl+R)।",

@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "បន្ថែមដោយអ្នក",
   "settings.appearance.theme.add": "បន្ថែមឯកសាររចនាប័ទ្ម…",
   "settings.appearance.theme.open_folder": "បើកថតរចនាប័ទ្ម",
+  "settings.appearance.theme.guide": "របៀបបង្កើតរចនាប័ទ្ម",
   "settings.appearance.theme.remove": "លុប {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (កម្រិតខ្ពស់) នៅតែត្រូវបានអនុវត្តចុងក្រោយគេ។",
   "settings.appearance.theme.added": "បានបន្ថែម {name}។ កែឯកសាររបស់វានៅក្នុងថតរចនាប័ទ្ម ហើយផ្ទុកឡើងវិញ (Cmd/Ctrl+R) ដើម្បីមើលការផ្លាស់ប្តូរ។",

@@ -191,6 +191,15 @@ On `main` (committed `d8a25a6`).
 
 ---
 
+## Themes
+
+Theme work (making, porting, testing or fixing a theme in `themes/` or
+`src-tauri/themes/`) follows the `chatpane-theme` skill in
+[skills/chatpane-theme/SKILL.md](skills/chatpane-theme/SKILL.md). The user
+guide is [themes/README.md](themes/README.md).
+
+---
+
 ## Translations
 
 Chatpane's own text ships in the landing page's 30 languages; Messenger's UI

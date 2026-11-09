@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Adăugată de tine",
   "settings.appearance.theme.add": "Adaugă un fișier de temă…",
   "settings.appearance.theme.open_folder": "Deschide folderul de teme",
+  "settings.appearance.theme.guide": "Cum creezi o temă",
   "settings.appearance.theme.remove": "Elimină {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (Avansat) se aplică în continuare ultimul.",
   "settings.appearance.theme.added": "Tema {name} a fost adăugată. Editează-i fișierul în folderul de teme și reîncarcă (Cmd/Ctrl+R) ca să vezi modificările.",
