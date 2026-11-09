@@ -12547,6 +12547,98 @@ ${button.innerHTML}`)
     document.addEventListener("visibilitychange", sync);
   }
 
+  // inject/src/messenger/lib/passkey-login.ts
+  function passkeysCanWork(platform, hasPublicKeyCredential) {
+    return platform !== "macos" && hasPublicKeyCredential;
+  }
+  function isTwoStepVerificationPath(pathname) {
+    return /^\/two_step_verification(?:\/|$)/i.test(pathname);
+  }
+  function isPasskeyAssertFrame(src) {
+    try {
+      const url = new URL(src);
+      return url.protocol === "https:" && url.hostname === "accounts.meta.com" && /^\/passkey\/iframe\/assert(?:\/|$)/.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+
+  // inject/src/messenger/features/passkey-login-notice.ts
+  var ACCOUNTS_CENTER_URL = "https://accountscenter.facebook.com/password_and_security/two_factor";
+  var onPasskeyStep = () => isTwoStepVerificationPath(location.pathname) && [...document.querySelectorAll("iframe")].some((frame) => isPasskeyAssertFrame(frame.src));
+  function initPasskeyLoginNotice() {
+    if (!onFacebookHost()) return;
+    if (passkeysCanWork(chatpaneMediaPlatform, typeof PublicKeyCredential !== "undefined")) return;
+    const host = document.createElement("chatpane-passkey-notice");
+    Object.assign(host, language());
+    const root = host.attachShadow({ mode: "closed" });
+    root.innerHTML = `<style>
+    :host { all: initial; display: block; position: relative; z-index: 2147483646;
+      box-sizing: border-box; width: min(440px, calc(100% - 24px)); margin: 12px auto;
+      color-scheme: light dark; --surface: #fff; --text: #1c1e21; --muted: #65676b;
+      --border: #dddfe2; --link: #0866ff; }
+    @media (prefers-color-scheme: dark) { :host { --surface: #242526; --text: #f3f4f5;
+      --muted: #a1a4a8; --border: #525456; --link: #58a7ff; } }
+    :host([data-theme="dark"]) { --surface: #242526; --text: #f3f4f5; --muted: #a1a4a8;
+      --border: #525456; --link: #58a7ff; }
+    :host([data-theme="light"]) { --surface: #fff; --text: #1c1e21; --muted: #65676b;
+      --border: #dddfe2; --link: #0866ff; }
+    section { position: relative; padding: 14px 40px 14px 16px; border: 1px solid var(--border);
+      border-radius: 12px; background: var(--surface); color: var(--text);
+      box-shadow: 0 4px 16px #0002; font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    :host([dir="rtl"]) section { padding: 14px 16px 14px 40px; }
+    strong { display: block; margin-bottom: 4px; font-size: 15px; font-weight: 600; }
+    p { margin: 0 0 8px; color: var(--muted); }
+    button { all: unset; cursor: pointer; }
+    button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 4px; }
+    .open { color: var(--link); font-weight: 600; }
+    .open:hover { text-decoration: underline; }
+    .close { position: absolute; top: 8px; inset-inline-end: 8px; width: 24px; height: 24px;
+      border-radius: 50%; text-align: center; font-size: 18px; line-height: 24px; color: var(--muted); }
+    .close:hover { background: color-mix(in srgb, var(--muted) 18%, transparent); }
+  </style><section role="note"><strong></strong><p></p>
+    <button class="open" type="button"></button><button class="close" type="button">×</button></section>`;
+    root.querySelector("strong").textContent = t("page.passkey_login.title");
+    root.querySelector("p").textContent = t("page.passkey_login.body");
+    const open = root.querySelector(".open");
+    open.textContent = t("page.passkey_login.open");
+    open.addEventListener("click", () => openUrl(ACCOUNTS_CENTER_URL));
+    const close = root.querySelector(".close");
+    close.setAttribute("aria-label", t("page.media.dismiss"));
+    let dismissed = false;
+    close.addEventListener("click", () => {
+      dismissed = true;
+      host.remove();
+    });
+    let scheduled = false;
+    const scan = () => {
+      scheduled = false;
+      if (!onPasskeyStep()) {
+        dismissed = false;
+        host.remove();
+        if (/\bc_user=/.test(document.cookie) && !isTwoStepVerificationPath(location.pathname)) {
+          observer.disconnect();
+        }
+        return;
+      }
+      if (dismissed || host.isConnected || !document.body) return;
+      host.dataset.theme = window.__CHATPANE_SETTINGS__?.theme ?? "system";
+      document.body.prepend(host);
+      diag("passkey-login", "showed the passkey two-factor notice");
+    };
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(scan);
+    };
+    const observer = new MutationObserver(schedule);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    window.addEventListener("chatpane:settings", () => {
+      if (host.isConnected) host.dataset.theme = window.__CHATPANE_SETTINGS__?.theme ?? "system";
+    });
+    schedule();
+  }
+
   // inject/src/messenger/lib/quick-mute.ts
   var QUICK_MUTE_DURATION_MS = "28800000";
   function decideQuickMute(phase, snapshot, expired) {
@@ -16221,6 +16313,7 @@ ${text2}`)) {
     initFeature("linux-call-notice", initLinuxCallNotice);
     initFeature("cookie-consent", initCookieAutoDecline);
     initFeature("login-tidy", initLoginTidy);
+    initFeature("passkey-login-notice", initPasskeyLoginNotice);
     initFeature("media-viewer", initMediaViewer);
     initFeature("viewer-controls", initViewerControls);
     initFeature("fullscreen", initFullscreenPolyfill);
