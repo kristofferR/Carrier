@@ -178,23 +178,33 @@ On `main` (committed `d8a25a6`).
   section order — capture-phase listeners on the same event fire in
   registration order, so keep it.
 - **`dist/settings.html`** — the standalone Settings window.
-- **IPC model (important):** the FB page is a **remote origin**. Chatpane grants
-  it only plugin permissions (`src-tauri/capabilities/default.json`, limited to
-  facebook.com and messenger.com; never the user-content hosts fbcdn.net and
-  fbsbx.com, which denies top-level pages there; on Linux, Wry's postMessage
-  fallback attributes subframe IPC to the top-level page, so this is not
-  subframe isolation), so it **cannot call Chatpane's own commands**. Tauri could expose
-  an app command to a remote origin if it were declared in
-  `tauri_build::AppManifest::commands` and granted per origin; Chatpane does not.
-  Any script on a granted origin can emit any `chatpane:*` event, so treat event
-  payloads as untrusted. Page→backend goes through Tauri **plugins**
-  (`plugin:opener|open_url`, `plugin:window|set_badge_count`,
-  `plugin:event|emit`) and **core events** the Rust side handles via
-  `app.listen_any` (`chatpane:open-settings`, which also serves update checks,
-  `chatpane:unread`, and `chatpane:notify` — the
-  new-message notification bridge, emitted via `plugin:event|emit` and rendered
-  natively). Settings are pushed to the page as `window.__CHATPANE_SETTINGS__` +
-  a `chatpane:settings` event.
+- **IPC model (important):** the FB page is a **remote origin**. Its grants
+  live in `src-tauri/capabilities/default.json`, limited to facebook.com and
+  messenger.com; never the user-content hosts fbcdn.net and fbsbx.com, which
+  denies top-level pages there (on Linux, Wry's postMessage fallback
+  attributes subframe IPC to the top-level page, so this is not subframe
+  isolation). Any script on a granted origin can use those grants, not only
+  Chatpane's injection.
+  - **App commands are ACL-checked everywhere.** `build.rs` declares every
+    command in `generate_handler!` through `AppManifest::commands`, so each
+    one needs an `allow-<command>` grant: `settings.json` for the Settings
+    window, `connectivity.json` for the local connectivity screen. A new
+    command needs both the `build.rs` entry and a grant.
+  - The page calls only the file-touching commands in `page_commands.rs`
+    (`choose_download`, `prepare_download`, `share_download`, `copy_image`),
+    with serde-typed arguments.
+  - Everything else goes through Tauri **plugins** (`plugin:opener|open_url`,
+    `plugin:window|set_badge_count`, `plugin:event|emit`) and **core events**
+    the Rust side handles via `app.listen_any` (`chatpane:open-settings`,
+    which also serves update checks, `chatpane:unread`, and `chatpane:notify`,
+    the new-message notification bridge). Any granted script can emit any
+    `chatpane:*` event, so treat event payloads as untrusted.
+  - Privileged requests, commands and events alike, are HMAC-signed with the
+    window's secret by `chatpaneAuthorizedEmit` (`window.rs`) and checked with
+    `signed_action_window`; results return as signed `<event>-result` page
+    events.
+  - Settings are pushed to the page as `window.__CHATPANE_SETTINGS__` + a
+    `chatpane:settings` event.
 
 ---
 

@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "connectivity",
+  "description": "Chatpane's local connectivity screen (dist/index.html), shown in a Messenger window when Messenger cannot load. It retries the connection, opens Messenger anyway, and draws its window controls.",
+  "windows": ["main", "win-*"],
+  "permissions": [
+    "allow-connect-messenger",
+    "allow-open-messenger-anyway",
+    "allow-window-control"
+  ]
+}
