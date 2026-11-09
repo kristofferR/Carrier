@@ -59,10 +59,9 @@ A store that needs real app captures can use this process instead.
    D-Bus session keep captures independent of the signed-in test desktop. Use
    `GSETTINGS_BACKEND=keyfile` with the empty capture configuration directory so
    theme changes cannot affect the test account's dconf settings. In Chatpane,
-   set zoom to 100, the desired light/dark theme, `title_bar` to `auto`, and disable
-   autostart, updates, tray, and global hotkey. Keep the window unmaximized and
-   resize until its WebKit viewport is exactly 993 × 620 (993 × 646 client area
-   with the current Ubuntu menu).
+   set zoom to 100 and the desired light/dark theme, and disable autostart,
+   updates, tray, and global hotkey. Keep the window unmaximized and resize
+   until its WebKit viewport is exactly 993 × 620.
 4. Run `bun packaging/screenshots/inject-demo.ts <dedicated-socket> light`
    (or `dark`). The script takes no content from the original page, embeds only
    English portraits, blocks external resources, and stops existing page timers.

@@ -90,27 +90,6 @@ fn system_prefers_dark() -> bool {
 #[cfg(target_os = "linux")]
 use crate::linux::system_prefers_dark;
 
-/// Linux: whether windows keep their title bar. "show"/"hide" are explicit;
-/// "auto" hides it under a tiling window manager (where the compositor
-/// moves/closes windows and the GTK header bar is dead weight) and keeps it
-/// on floating desktops.
-#[cfg(target_os = "linux")]
-pub(crate) fn show_title_bar(s: &Settings) -> bool {
-    match s.title_bar.as_str() {
-        "show" => true,
-        "hide" => false,
-        _ => !crate::linux::is_tiling_wm(),
-    }
-}
-
-/// Linux: whether a Messenger or Settings window keeps the GTK header bar. Only "show"
-/// does: "auto" draws Chatpane's own controls instead, in windows the
-/// compositor doesn't tile (crate::title_bar).
-#[cfg(target_os = "linux")]
-pub(crate) fn native_decorations(s: &Settings) -> bool {
-    show_title_bar(s) && crate::title_bar::controls(s).is_none()
-}
-
 /// A theme-appropriate window background so there's no white flash before the
 /// remote page paints (Facebook glares white in dark mode while loading).
 pub(crate) fn splash_background(s: &Settings) -> Color {
@@ -165,8 +144,12 @@ fn facebook_page_window<'a>(
             let opener = label.to_string();
             move |url, features| open_popup(&app, &opener, &url, features)
         });
+    // Linux: a tiling window manager moves and closes the window itself, so
+    // the GTK header bar would be dead weight.
     #[cfg(target_os = "linux")]
-    let builder = builder.on_permission_request(crate::linux::media_permission);
+    let builder = builder
+        .decorations(!crate::linux::is_tiling_wm())
+        .on_permission_request(crate::linux::media_permission);
     match crate::user_agent::messenger_user_agent() {
         Some(user_agent) => builder.user_agent(user_agent),
         None => builder,
@@ -782,14 +765,12 @@ fn build_app_window_with_render_budget(
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
-    // Windows: Chatpane draws the window controls (see crate::title_bar).
-    #[cfg(target_os = "windows")]
+    // Windows and Linux: Chatpane draws the window controls (see
+    // crate::title_bar).
+    #[cfg(not(target_os = "macos"))]
     let builder = builder.decorations(false);
-    // Linux: drop the GTK header bar on tiling WMs (or by explicit setting).
     #[cfg(target_os = "linux")]
-    let builder = builder
-        .decorations(native_decorations(settings))
-        .on_permission_request(crate::linux::media_permission);
+    let builder = builder.on_permission_request(crate::linux::media_permission);
     let builder = match crate::user_agent::messenger_user_agent() {
         Some(user_agent) => builder.user_agent(user_agent),
         None => builder,
@@ -820,9 +801,10 @@ fn build_app_window_with_render_budget(
         let _ = window.set_always_on_top(settings.always_on_top);
         apply_page_zoom(window, settings.zoom);
         #[cfg(not(target_os = "macos"))]
-        if settings.hide_menu_bar {
-            let _ = window.hide_menu();
-        }
+        crate::title_bar::sync_menu(window);
+        // The menu's shortcuts must outlive a hidden menu bar.
+        #[cfg(target_os = "linux")]
+        crate::linux::keep_menu_shortcuts(window);
         // macOS: let the themed window background show through the title bar.
         #[cfg(target_os = "macos")]
         {
@@ -905,15 +887,20 @@ fn should_auto_hide_windows_main(
 /// Reassert runtime-only window preferences after native state transitions.
 ///
 /// Windows can restore an app-wide native menu while activating/resizing a
-/// window, so hiding the top menu only when settings are first applied is not
-/// durable enough. This handler also implements the Windows tray-oriented
-/// minimize/focus-loss options, but only for `main` and only while a tray icon
-/// actually exists; secondary windows would otherwise be impossible to reopen.
+/// window, so hiding the top menu (crate::title_bar::shows_menu) only when
+/// settings are first applied is not durable enough. This handler also
+/// implements the Windows tray-oriented minimize/focus-loss options, but only
+/// for `main` and only while a tray icon actually exists; secondary windows
+/// would otherwise be impossible to reopen.
 #[cfg(target_os = "macos")]
 fn install_app_window_runtime_handler(_app: &tauri::AppHandle, _window: &WebviewWindow) {}
 
 #[cfg(not(target_os = "macos"))]
-fn install_app_window_runtime_handler(app: &tauri::AppHandle, window: &WebviewWindow) {
+fn install_app_window_runtime_handler(
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))] app: &tauri::AppHandle,
+    window: &WebviewWindow,
+) {
+    #[cfg(target_os = "windows")]
     let handle = app.clone();
     let event_window = window.clone();
     #[cfg(target_os = "windows")]
@@ -932,14 +919,14 @@ fn install_app_window_runtime_handler(app: &tauri::AppHandle, window: &WebviewWi
             return;
         }
 
-        let settings = handle.state::<AppState>().settings.lock().unwrap().clone();
-        if repair_hidden_menu && settings.hide_menu_bar {
+        if repair_hidden_menu && !crate::title_bar::shows_menu(event_window.label()) {
             let _ = event_window.hide_menu();
         }
 
         #[cfg(target_os = "windows")]
         if evaluate_auto_hide {
             let state = handle.state::<AppState>();
+            let settings = state.settings.lock().unwrap().clone();
             let has_tray = state.tray.lock().unwrap().is_some();
             let revealing = state
                 .revealing_main
@@ -1323,9 +1310,7 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     let builder = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
-        #[cfg(target_os = "linux")]
-        let builder = builder.decorations(native_decorations(&s));
-        #[cfg(target_os = "windows")]
+        #[cfg(not(target_os = "macos"))]
         let builder = builder.decorations(false);
         builder
             .initialization_script(crate::title_bar::initial_script(&s, false))

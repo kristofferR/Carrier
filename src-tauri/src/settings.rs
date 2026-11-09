@@ -118,10 +118,6 @@ pub(crate) struct Settings {
     pub(crate) menu_bar_only: bool,
     /// Windows/Linux: hide the native application menu from Messenger windows.
     pub(crate) hide_menu_bar: bool,
-    /// Linux: window title bar visibility — "auto" (Chatpane's own controls,
-    /// left out of windows a tiling window manager tiles, where the compositor
-    /// moves/closes them), "show" (the GTK header bar), or "hide".
-    pub(crate) title_bar: String,
     /// Windows: hide the main window into the tray when it is minimized.
     pub(crate) hide_on_minimize: bool,
     /// Windows: hide the main window into the tray when it loses focus.
@@ -264,9 +260,6 @@ impl Settings {
         if !crate::i18n::is_valid_setting(&self.language) {
             self.language = crate::i18n::SYSTEM.into();
         }
-        if !matches!(self.title_bar.as_str(), "auto" | "show" | "hide") {
-            self.title_bar = "auto".into();
-        }
         if self.color_theme.trim().is_empty() {
             self.color_theme = crate::themes::DEFAULT_THEME.into();
         }
@@ -347,7 +340,6 @@ impl Default for Settings {
             app_icon_variant: None,
             menu_bar_only: false,
             hide_menu_bar: false,
-            title_bar: "auto".into(),
             hide_on_minimize: false,
             hide_on_focus_loss: false,
             hide_taskbar_icon: false,
@@ -858,8 +850,7 @@ pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), S
 /// dispatching portal work off-main.
 pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     crate::menu::sync_setting_checks(app, s);
-    // The title bar setting can switch Chatpane's window controls on or off.
-    crate::title_bar::settings_changed(app, s);
+    crate::title_bar::settings_changed(s);
     // Action titles are fixed per macOS category registration.
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     let reaction_changed =
@@ -896,25 +887,9 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = window.set_background_color(Some(splash_background(s)));
-        // Title-bar visibility follows the setting live, on every window —
-        // the Settings dialog carries the same redundant header bar on
-        // tiling WMs. Messenger windows and Settings draw Chatpane's own controls
-        // instead, in windows the compositor doesn't tile (crate::title_bar).
-        #[cfg(target_os = "linux")]
-        let _ = window.set_decorations(
-            if crate::window::is_messenger_window_label(&label) || label == "settings" {
-                crate::window::native_decorations(s)
-            } else {
-                crate::window::show_title_bar(s)
-            },
-        );
         if label != "settings" {
             #[cfg(not(target_os = "macos"))]
-            let _ = if s.hide_menu_bar {
-                window.hide_menu()
-            } else {
-                window.show_menu()
-            };
+            crate::title_bar::sync_menu(&window);
             apply_page_zoom(&window, s.zoom);
             crate::themes::apply_appearance(&window, s);
             // Push the new prefs to the running page so JS-side settings
@@ -1073,7 +1048,6 @@ mod tests {
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
-        assert_eq!(s.title_bar, "auto", "title_bar should default to 'auto'");
         assert!(
             !s.hide_on_minimize,
             "hide_on_minimize should default to false"
@@ -1246,21 +1220,6 @@ mod tests {
         // Pre-existing installs have no `hide_menu_bar` key in settings.json.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.hide_menu_bar);
-    }
-
-    #[test]
-    fn settings_json_missing_title_bar_defaults_to_auto() {
-        // Pre-existing installs have no `title_bar` key in settings.json.
-        let s: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(s.title_bar, "auto");
-    }
-
-    #[test]
-    fn title_bar_setting_sanitizes_unknown_values_to_auto() {
-        let s: Settings = serde_json::from_str(r#"{"title_bar":"maybe"}"#).unwrap();
-        assert_eq!(s.sanitized().title_bar, "auto");
-        let s: Settings = serde_json::from_str(r#"{"title_bar":"hide"}"#).unwrap();
-        assert_eq!(s.sanitized().title_bar, "hide");
     }
 
     #[test]
@@ -1491,10 +1450,7 @@ mod tests {
             ),
             ("symbolic", "conversations", "light")
         );
-        assert_eq!(
-            (s.title_bar.as_str(), s.download_behavior.as_str(), s.zoom),
-            ("show", "ask", 125)
-        );
+        assert_eq!((s.download_behavior.as_str(), s.zoom), ("ask", 125));
         assert_eq!(s.nickname_scope, Some(NicknameScope::Groups));
         assert!(s.tray_notice_shown && s.spellcheck && s.hide_menu_bar && s.mute_notifications);
         assert!(s.hide_notification_preview && s.attention_on_message && s.system_emoji);

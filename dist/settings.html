@@ -419,7 +419,9 @@
         // the key of a section that builds its own card.
         { id: "appearance", label: t("settings.tab.appearance"), icon: ICONS.appearance,
           cards: [
-            ["zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "system_emoji", "nickname_scope"],
+            // Windows: the native menu bar never shows next to Chatpane's
+            // window buttons (src-tauri/src/title_bar.rs), so nothing to hide.
+            ["zoom", ...(IS_LINUX ? ["hide_menu_bar"] : []), "system_emoji", "nickname_scope"],
             "theme_section", "look_section", "app_icon",
           ] },
         { id: "tray", label: t("settings.tab.tray"), icon: ICONS.tray,
@@ -1121,22 +1123,6 @@
         );
       }
 
-      // Linux: tiling WMs manage tiled windows themselves, so Automatic drops
-      // the redundant title bar from those and keeps it on floating ones.
-      function titleBarRow() {
-        return selectRow(
-          "title_bar", "auto",
-          [
-            ["auto", t("settings.appearance.title_bar.auto")],
-            ["show", t("settings.appearance.title_bar.show")],
-            ["hide", t("settings.appearance.title_bar.hide")],
-          ],
-          t("settings.appearance.title_bar.label"),
-          t("settings.appearance.title_bar.hint"),
-          false,
-        );
-      }
-
       function downloadBehaviorRow() {
         return selectRow(
           "download_behavior", "downloads",
@@ -1525,7 +1511,6 @@
         app_icon: appIconSection,
         look_section: lookSection,
         zoom: zoomRow,
-        title_bar: titleBarRow,
         badge_mode: badgeModeRow,
         muted_conversations: mutedConversationsRow,
         notification_reaction: notificationReactionRow,

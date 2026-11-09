@@ -12,13 +12,17 @@
 //!
 //! The strip goes in full screen and, on macOS, while the photo viewer has a
 //! title bar of its own.
+//!
+//! Windows and Linux: a window with Chatpane's controls never shows the native
+//! menu bar ([`shows_menu`]). GTK would put it above the page, over the strip,
+//! and on Windows the frameless window has no room for it.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, WebviewWindow};
+use tauri::WebviewWindow;
 
 use crate::settings::Settings;
 use crate::window::is_messenger_window_label;
@@ -40,35 +44,23 @@ pub(crate) const INSET: f64 = if cfg!(target_os = "macos") {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Controls {
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Windows,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Linux,
 }
 
-/// Chatpane draws the window controls itself: always on Windows, and on Linux
-/// when the title bar is Automatic (Show keeps the GTK header bar), except
-/// in windows the compositor handles (see [`window_controls`]).
-pub(crate) fn controls(settings: &Settings) -> Option<Controls> {
-    #[cfg(target_os = "windows")]
-    {
-        let _ = settings;
-        Some(Controls::Windows)
-    }
-    #[cfg(target_os = "linux")]
-    {
-        (settings.title_bar == "auto").then_some(Controls::Linux)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = settings;
-        None
-    }
-}
+/// Chatpane draws the window controls itself on Windows and Linux, except in
+/// windows the compositor handles (see [`window_controls`]).
+const CONTROLS: Option<Controls> = if cfg!(target_os = "windows") {
+    Some(Controls::Windows)
+} else if cfg!(target_os = "linux") {
+    Some(Controls::Linux)
+} else {
+    None
+};
 
 /// The controls one window draws: none where the compositor handles them.
 fn window_controls(label: &str) -> Option<Controls> {
-    let controls = *current_controls().lock().unwrap();
+    let controls = CONTROLS;
     #[cfg(target_os = "linux")]
     let controls = controls.filter(|_| !crate::linux_tiling::compositor_handles(label));
     #[cfg(not(target_os = "linux"))]
@@ -81,12 +73,27 @@ fn has_strip(controls: Option<Controls>) -> bool {
     cfg!(target_os = "macos") || controls.is_some()
 }
 
-/// The page zoom in percent and the controls in use, kept here rather than read
-/// from the settings, whose lock may be held by whoever changes them.
+/// The page zoom in percent and the Hide Top Menu setting, kept here rather
+/// than read from the settings, whose lock may be held by whoever changes them.
 static ZOOM_PERCENT: AtomicI32 = AtomicI32::new(100);
-fn current_controls() -> &'static Mutex<Option<Controls>> {
-    static CONTROLS: OnceLock<Mutex<Option<Controls>>> = OnceLock::new();
-    CONTROLS.get_or_init(Default::default)
+static HIDE_MENU_BAR: AtomicBool = AtomicBool::new(false);
+
+/// Whether a window shows the native menu bar: not one with Chatpane's
+/// controls, and none when Hide Top Menu is on. The Settings window has none.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn shows_menu(label: &str) -> bool {
+    !HIDE_MENU_BAR.load(Ordering::Relaxed)
+        && (!has_title_bar(label) || window_controls(label).is_none())
+}
+
+/// Show or hide a window's native menu bar, as [`shows_menu`] says.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn sync_menu(window: &WebviewWindow) {
+    let _ = if shows_menu(window.label()) {
+        window.show_menu()
+    } else {
+        window.hide_menu()
+    };
 }
 
 /// What each window's page was last told, by label.
@@ -133,13 +140,14 @@ fn is_maximized(window: &WebviewWindow) -> bool {
 /// first layout already keeps the strip. The Settings window gets it too, at
 /// 100%: page zoom applies only to Messenger.
 pub(crate) fn initial_script(settings: &Settings, zoomed: bool) -> String {
-    let controls = controls(settings);
-    *current_controls().lock().unwrap() = controls;
+    // The first window is built before the settings are first applied.
+    settings_changed(settings);
     // A new window counts as tiled until the compositor says otherwise.
     #[cfg(target_os = "linux")]
-    let controls = controls.filter(|_| !crate::linux::is_tiling_wm());
-    // Even without a strip: the page then follows a later change of the title
-    // bar setting (Linux "show" to "auto").
+    let controls = CONTROLS.filter(|_| !crate::linux::is_tiling_wm());
+    #[cfg(not(target_os = "linux"))]
+    let controls = CONTROLS;
+    // Even without a strip: the page then follows a tiled window floating.
     let (minimize, maximize) = buttons();
     let state = PageState {
         inset: if has_strip(controls) {
@@ -201,6 +209,9 @@ pub(crate) fn sync(window: &WebviewWindow) {
     {
         return;
     }
+    // The controls may have come or gone with the window tiling or floating.
+    #[cfg(not(target_os = "macos"))]
+    sync_menu(window);
     let _ = window.eval(format!(
         "document.documentElement && document.documentElement.style.setProperty(\
          '--chatpane-title-bar-inset', '{inset}px'); window.__chatpaneTitleBar?.({json});",
@@ -244,14 +255,16 @@ pub(crate) fn zoom_changed(window: &WebviewWindow, percent: i32) {
     sync(window);
 }
 
-/// Called with every settings change (and at startup): the title bar setting
-/// can switch Chatpane's controls on or off.
-pub(crate) fn settings_changed(app: &tauri::AppHandle, settings: &Settings) {
-    *current_controls().lock().unwrap() = controls(settings);
-    sync_all(app);
+/// Called with every settings change (and at startup). The caller syncs the
+/// menu bars.
+pub(crate) fn settings_changed(settings: &Settings) {
+    HIDE_MENU_BAR.store(settings.hide_menu_bar, Ordering::Relaxed);
 }
 
+/// Linux: a compositor that starts reporting tiling changes every window.
+#[cfg(target_os = "linux")]
 pub(crate) fn sync_all(app: &tauri::AppHandle) {
+    use tauri::Manager;
     for (label, window) in app.webview_windows() {
         if has_title_bar(&label) {
             sync(&window);
@@ -282,7 +295,7 @@ pub(crate) fn window_control(window: WebviewWindow, action: Action) {
 }
 
 pub(crate) fn perform(window: &WebviewWindow, action: Action) {
-    if current_controls().lock().unwrap().is_none() {
+    if CONTROLS.is_none() {
         return;
     }
     let result = match action {
