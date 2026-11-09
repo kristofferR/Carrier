@@ -8646,13 +8646,15 @@ ${button.innerHTML}`)
       observer?.disconnect();
       observer = null;
     };
+    let enabled = false;
     const apply2 = () => {
       if (on2()) {
         start();
-        scan(document, true);
+        if (!enabled) scan(document, true);
       } else {
         stop();
       }
+      enabled = on2();
     };
     apply2();
     window.addEventListener("chatpane:settings", apply2);
