@@ -305,7 +305,7 @@ impl Settings {
         if snap {
             self.autostart = false;
             self.automatic_update_checks = false;
-            // Snap notification actions require a single owner of snap.carrier.
+            // Snap notification actions require a single owner of snap.chatpane.
             self.multi_instance = false;
         }
         // Every Windows tray-oriented behavior can make the main window
@@ -501,7 +501,6 @@ pub(crate) enum ContextMenuActivation {
     },
 }
 
-const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";
 // Orders concurrent settings writes: each call takes a monotonically increasing
 // ticket, and the publish step below refuses to overwrite a destination that a
 // higher-ticket (newer) snapshot has already reached.
@@ -527,7 +526,7 @@ pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
 /// (used to decide single-instance enforcement). Falls back to defaults.
 pub(crate) fn load_settings_early() -> Settings {
     dirs_config_dir()
-        .map(|b| b.join(APP_IDENTIFIER).join("settings.json"))
+        .map(|b| b.join(crate::identity::current()).join("settings.json"))
         .map(|path| load_settings_from_path(&path))
         .unwrap_or_else(|| Settings::default().sanitized())
 }
@@ -765,8 +764,8 @@ fn webview_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
             let identifier = app.config().identifier.as_str();
             push_macos_webview_store_paths(&mut paths, &home, identifier);
 
-            // Older/dev builds wrote WKWebView data under the executable name.
-            push_macos_webview_store_paths(&mut paths, &home, "carrier");
+            // Unbundled dev builds write WKWebView data under the executable name.
+            push_macos_webview_store_paths(&mut paths, &home, "chatpane");
         }
     }
 

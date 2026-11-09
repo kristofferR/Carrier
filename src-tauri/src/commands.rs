@@ -18,7 +18,7 @@ use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 #[cfg(any(target_os = "linux", test))]
 const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/chatpane";
 #[cfg(any(target_os = "linux", test))]
-const RELEASES_URL: &str = "https://github.com/kristofferR/Carrier/releases/latest";
+const RELEASES_URL: &str = "https://github.com/kristofferR/Chatpane/releases/latest";
 // Autostart can beat the OS network/DNS service by a few seconds. Keep the
 // existing recovery screen for persistent failures, but absorb that launch race.
 const MESSENGER_DNS_MAX_ATTEMPTS: usize = 6;
@@ -173,7 +173,7 @@ fn pacman_owns_chatpane_with(
     current_executable: Option<&std::path::Path>,
     mut owns: impl FnMut(&std::path::Path) -> bool,
 ) -> bool {
-    let system_chatpane = std::path::Path::new("/usr/bin/carrier");
+    let system_chatpane = std::path::Path::new("/usr/bin/chatpane");
     let paths = [
         Some(system_chatpane),
         current_executable.filter(|path| *path != system_chatpane),
@@ -275,7 +275,7 @@ fn current_update_install_mode() -> UpdateInstallMode {
             button_label: Some("Debug build instructions".into()),
             instructions: Some(crate::debug_install::UPDATE_INSTRUCTIONS.into()),
             manual_url: Some(
-                "https://github.com/kristofferR/Carrier/blob/main/docs/debug-installs.md",
+                "https://github.com/kristofferR/Chatpane/blob/main/docs/debug-installs.md",
             ),
         };
     }
@@ -285,7 +285,7 @@ fn current_update_install_mode() -> UpdateInstallMode {
             LinuxUpdateEvidence {
                 snap: is_snap(),
                 pacman_owned: pacman_owns_chatpane(),
-                system_chatpane_exists: std::path::Path::new("/usr/bin/carrier").is_file(),
+                system_chatpane_exists: std::path::Path::new("/usr/bin/chatpane").is_file(),
                 appimage_runtime: is_genuine_appimage_runtime(),
             },
             command_available("paru"),
@@ -1267,9 +1267,9 @@ mod tests {
 
     #[test]
     fn shadowing_appimage_does_not_hide_the_package_owned_system_binary() {
-        let shadowing_appimage = std::path::Path::new("/tmp/.mount_Carrie/usr/bin/carrier");
+        let shadowing_appimage = std::path::Path::new("/tmp/.mount_Chatpa/usr/bin/chatpane");
         let pacman_owned = pacman_owns_chatpane_with(Some(shadowing_appimage), |path| {
-            path == std::path::Path::new("/usr/bin/carrier")
+            path == std::path::Path::new("/usr/bin/chatpane")
         });
         assert!(pacman_owned);
 
@@ -1291,9 +1291,9 @@ mod tests {
     fn genuine_standalone_appimage_keeps_the_builtin_updater() {
         #[cfg(unix)]
         assert!(appimage_runtime_paths_match(
-            std::path::Path::new("/tmp/.mount_Carrie/usr/bin/carrier"),
+            std::path::Path::new("/tmp/.mount_Chatpa/usr/bin/chatpane"),
             std::path::Path::new("/home/user/Applications/Chatpane.AppImage"),
-            std::path::Path::new("/tmp/.mount_Carrie"),
+            std::path::Path::new("/tmp/.mount_Chatpa"),
             std::path::Path::new("/tmp"),
         ));
         let mode = linux_update_install_mode(
@@ -1314,9 +1314,9 @@ mod tests {
     fn ambiguous_linux_install_fails_closed_to_manual_updates() {
         #[cfg(unix)]
         assert!(!appimage_runtime_paths_match(
-            std::path::Path::new("/usr/bin/carrier"),
+            std::path::Path::new("/usr/bin/chatpane"),
             std::path::Path::new("/home/user/Chatpane.AppImage"),
-            std::path::Path::new("/tmp/.mount_Carrie"),
+            std::path::Path::new("/tmp/.mount_Chatpa"),
             std::path::Path::new("/tmp"),
         ));
         let mode = linux_update_install_mode(

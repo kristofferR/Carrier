@@ -38,7 +38,7 @@ test.skipIf(!executable || process.platform !== "linux")(
         join(artifacts, "Chatpane-debug-linux.tar.gz"),
         "-C",
         join(executable!, ".."),
-        "carrier",
+        "chatpane",
       ]);
       expect(tar.exitCode).toBe(0);
       for (const file of ["update.ts", "policy.ts"])
@@ -90,7 +90,7 @@ if (a[0] === "api") {
         await chmod(join(commands, "pgrep"), 0o755);
       };
       const root = join(home, ".local/share/chatpane-debug");
-      const target = join(home, ".local/bin/carrier");
+      const target = join(home, ".local/bin/chatpane");
       const env = { ...process.env, HOME: home, PATH: `${commands}:${process.env.PATH}` };
       const lockReady = join(directory, "install-lock-ready");
       const lockHolder = Bun.spawn(
@@ -138,7 +138,7 @@ if (a[0] === "api") {
       expect(attestations).toContain("build.json");
       expect(attestations).toContain(`--source-digest\t${info.revision}`);
       expect(attestations).toContain(
-        "--signer-workflow\tkristofferR/Carrier/.github/workflows/debug.yml",
+        "--signer-workflow\tkristofferR/Chatpane/.github/workflows/debug.yml",
       );
       // A withdrawn draft must not be installed from the cached pending manifest.
       await writeFile(withdrawn, "");
@@ -215,7 +215,7 @@ if (a[0] === "api") {
       // Recovery finds the verified rollback binary when the canonical path is mid-swap.
       const interruptedRevision = "b".repeat(40);
       const interruptedBackup = `1-${interruptedRevision}`;
-      const previous = join(root, "backups", interruptedBackup, "carrier");
+      const previous = join(root, "backups", interruptedBackup, "chatpane");
       await mkdir(join(previous, ".."), { recursive: true });
       await rename(target, previous);
       await writeFile(target, "interrupted-new-install");

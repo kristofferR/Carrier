@@ -161,6 +161,9 @@ pub(crate) fn startup() -> bool {
         // SAFETY: `run()` calls this first, while the process is single-threaded.
         unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
     }
+    // Before the native log below creates Chatpane's data folder, and after
+    // the environment, since stopping a running Carrier can start threads.
+    crate::identity::migrate();
     #[cfg(all(unix, debug_assertions))]
     if let Err(error) = capture_native_output() {
         eprintln!("Chatpane could not capture native diagnostics: {error}");
@@ -195,12 +198,13 @@ fn capture_native_output() -> std::io::Result<()> {
         std::env::var_os("HOME").ok_or_else(|| std::io::Error::other("HOME missing"))?,
     );
     let dir = if cfg!(target_os = "macos") {
-        home.join("Library/Logs/io.github.kristofferr.carrier")
+        home.join("Library/Logs").join(crate::identity::current())
     } else {
         PathBuf::from(
             std::env::var_os("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local/share").into()),
         )
-        .join("io.github.kristofferr.carrier/logs")
+        .join(crate::identity::current())
+        .join("logs")
     };
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("native-{}.log", std::process::id()));

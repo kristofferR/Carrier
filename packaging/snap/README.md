@@ -1,6 +1,6 @@
 # Snap Store
 
-`snap/snapcraft.yaml` builds Chatpane (formerly Carrier) as the `chatpane` snap from the current checkout for AMD64 and
+`snap/snapcraft.yaml` builds Chatpane as the `chatpane` snap from the current checkout for AMD64 and
 ARM64, using core24 and the GNOME extension. The version comes from Cargo.toml.
 Committed inject bundles and static frontend files are embedded by Cargo; the
 dev-only MCP feature is disabled.
@@ -41,7 +41,7 @@ not establish that the sandbox permissions are sufficient.
   (`shouldUseBubblewrap()` in WebKit's `wtf/glib/Sandbox.cpp`), and the Store
   reserves that attribute for vetted publishers.
 - The D-Bus slot matches the installed single-instance plugin's exact name:
-  `io.github.kristofferr.carrier.SingleInstance`.
+  `app.chatpane.Chatpane.SingleInstance`.
 - Notifications use the XDG notification portal and export actions on
   `snap.chatpane` at `/snap/chatpane` (derived from `SNAP_NAME`). This receives Wayland activation data in
   a directed method call; Snap blocks the freedesktop `ActivationToken` broadcast.
@@ -91,7 +91,7 @@ First release, with the publisher's Snap Store account (Ubuntu One):
    [store-requests](https://forum.snapcraft.io/c/store-requests/19) category
    asking reviewers to clear the revisions and grant a snap declaration for:
    the session-bus `dbus` slots `snap.chatpane` (exported notification actions)
-   and `io.github.kristofferr.carrier.SingleInstance` (second launches), and the
+   and `app.chatpane.Chatpane.SingleInstance` (second launches), and the
    `desktop` plug's `desktop-file-ids: [snap.chatpane]`. Optionally ask for
    `camera` and `audio-record` auto-connection for Messenger calls; without it,
    users connect them in their software center. A declaration lets later

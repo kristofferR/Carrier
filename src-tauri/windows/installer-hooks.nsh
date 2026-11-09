@@ -3,10 +3,9 @@
 ; Carrier would leave the old copy beside it. After Chatpane is in place, this
 ; removes Carrier's copy and its entries.
 ;
-; App data lives under the bundle identifier, which didn't change, so the login
-; and settings carry over. The old uninstaller runs with /UPDATE, which keeps
-; data and the "Carrier" Run value; the app moves that startup entry to
-; "Chatpane" on its first launch.
+; The old uninstaller runs with /UPDATE, which keeps Carrier's data and its
+; "Carrier" Run value, and stops a running Carrier. On its first launch the app
+; moves that data to Chatpane's identifier and the startup entry to "Chatpane".
 ;
 ; This file is included before the installer defines its names, so the keys
 ; are spelled out inside the macro, which expands where it is inserted.
@@ -38,14 +37,15 @@
   ${If} $R9 != ""
     ; Put Chatpane shortcuts where Carrier's were. An update only refreshes
     ; shortcuts that already exist, so it wouldn't create these itself.
-    !insertmacro IsShortcutTarget "$SMPROGRAMS\Carrier.lnk" "$R9\${MAINBINARYNAME}.exe"
+    ; Carrier's executable was carrier.exe.
+    !insertmacro IsShortcutTarget "$SMPROGRAMS\Carrier.lnk" "$R9\carrier.exe"
     Pop $0
     ${If} $0 = 1
       Delete "$SMPROGRAMS\Carrier.lnk"
       CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
       !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\${PRODUCTNAME}.lnk"
     ${EndIf}
-    !insertmacro IsShortcutTarget "$DESKTOP\Carrier.lnk" "$R9\${MAINBINARYNAME}.exe"
+    !insertmacro IsShortcutTarget "$DESKTOP\Carrier.lnk" "$R9\carrier.exe"
     Pop $0
     ${If} $0 = 1
       Delete "$DESKTOP\Carrier.lnk"
@@ -53,7 +53,7 @@
       !insertmacro SetLnkAppUserModelId "$DESKTOP\${PRODUCTNAME}.lnk"
     ${EndIf}
     ; A taskbar pin keeps working once it points at the new copy.
-    !insertmacro IsShortcutTarget "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Carrier.lnk" "$R9\${MAINBINARYNAME}.exe"
+    !insertmacro IsShortcutTarget "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Carrier.lnk" "$R9\carrier.exe"
     Pop $0
     ${If} $0 = 1
       !insertmacro SetShortcutTarget "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Carrier.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"

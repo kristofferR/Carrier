@@ -185,8 +185,16 @@ fn dedicated_toast_app_id(identifier: &str) -> String {
     format!("{identifier}.notifications")
 }
 
-fn toast_history_app_ids(identifier: &str) -> [String; 2] {
-    [dedicated_toast_app_id(identifier), identifier.to_string()]
+/// Every identity Chatpane's toasts can sit under, Carrier's included, so
+/// reading a chat or logging out also clears previews shown before the update.
+fn toast_history_app_ids(identifier: &str) -> [String; 4] {
+    let previous = crate::identity::PREVIOUS;
+    [
+        dedicated_toast_app_id(identifier),
+        identifier.to_string(),
+        dedicated_toast_app_id(previous),
+        previous.to_string(),
+    ]
 }
 
 /// Everything [`deliver_notification_windows`] needs. Owned so the WinRT handlers
@@ -348,7 +356,7 @@ fn windows_blocker_message(setting: NotificationSetting) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<()> {
-    // Carrier used the main app AUMID before the dedicated notification
+    // Older versions used the main app AUMID before the dedicated notification
     // identity existed. Keep honoring an application-specific or system-wide
     // opt-out recorded against that original identity; otherwise an upgrade
     // could expose message previews the user had already disabled in Windows.
@@ -442,21 +450,30 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
 
 #[cfg(target_os = "windows")]
 fn legacy_notifications_disabled(app: &tauri::AppHandle) -> bool {
-    let legacy_app_id = app.config().identifier.clone();
-    let Ok(notifier) =
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(legacy_app_id))
-    else {
-        // A fresh portable install has no legacy identity to preserve.
-        return false;
-    };
-    let Ok(setting) = notifier.Setting() else {
-        return false;
-    };
-    let disabled = should_preserve_legacy_opt_out(Some(setting == NotificationSetting::Enabled));
-    if disabled {
-        log_legacy_notifications_disabled_once(setting);
-    }
-    disabled
+    // Carrier's identities too, so an opt-out recorded for Carrier carries over.
+    let previous = crate::identity::PREVIOUS;
+    let app_ids = [
+        app.config().identifier.clone(),
+        previous.to_string(),
+        dedicated_toast_app_id(previous),
+    ];
+    app_ids.into_iter().any(|app_id| {
+        let Ok(notifier) =
+            ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))
+        else {
+            // A fresh portable install has no legacy identity to preserve.
+            return false;
+        };
+        let Ok(setting) = notifier.Setting() else {
+            return false;
+        };
+        let disabled =
+            should_preserve_legacy_opt_out(Some(setting == NotificationSetting::Enabled));
+        if disabled {
+            log_legacy_notifications_disabled_once(setting);
+        }
+        disabled
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -609,7 +626,7 @@ pub(crate) fn init(app: &tauri::AppHandle) {
 #[cfg(target_os = "windows")]
 fn toast_app_id(app: &tauri::AppHandle) -> String {
     // Windows caches a notification identity's display assets after its first
-    // toast. Carrier previously used the main AUMID without an IconUri, so that
+    // toast. Older versions used the main AUMID without an IconUri, so that
     // identity remains stuck with the generic glyph even after registration.
     // A dedicated, stable toast identity starts with the correct assets while
     // leaving the shortcut/taskbar identity unchanged.
@@ -828,8 +845,10 @@ mod tests {
     #[test]
     fn toast_history_includes_dedicated_and_legacy_identities() {
         assert_eq!(
-            toast_history_app_ids("io.github.kristofferr.carrier"),
+            toast_history_app_ids("app.chatpane.Chatpane"),
             [
+                "app.chatpane.Chatpane.notifications".to_string(),
+                "app.chatpane.Chatpane".to_string(),
                 "io.github.kristofferr.carrier.notifications".to_string(),
                 "io.github.kristofferr.carrier".to_string(),
             ]

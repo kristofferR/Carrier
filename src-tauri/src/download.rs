@@ -628,23 +628,23 @@ mod tests {
         let mut downloads = RecentDownloads::default();
         for n in 0..=MAX_RECENT_DOWNLOADS {
             downloads.remember_at(
-                &format!("blob:carrier/{n}"),
+                &format!("blob:chatpane/{n}"),
                 format!("download-{n}"),
                 PathBuf::from(format!("download-{n}.png")),
                 now,
             );
-            downloads.complete_at(&format!("blob:carrier/{n}"), now);
+            downloads.complete_at(&format!("blob:chatpane/{n}"), now);
         }
 
         assert_eq!(downloads.entries.len(), MAX_RECENT_DOWNLOADS);
-        assert_eq!(downloads.lookup_at("blob:carrier/0", now), None);
+        assert_eq!(downloads.lookup_at("blob:chatpane/0", now), None);
         let newest = PathBuf::from(format!("download-{MAX_RECENT_DOWNLOADS}.png"));
         assert_eq!(
-            downloads.lookup_at(&format!("blob:carrier/{MAX_RECENT_DOWNLOADS}"), now),
+            downloads.lookup_at(&format!("blob:chatpane/{MAX_RECENT_DOWNLOADS}"), now),
             Some(newest.clone())
         );
         assert_eq!(
-            downloads.lookup_at(&format!("blob:carrier/{MAX_RECENT_DOWNLOADS}"), now),
+            downloads.lookup_at(&format!("blob:chatpane/{MAX_RECENT_DOWNLOADS}"), now),
             Some(newest)
         );
     }
@@ -654,31 +654,31 @@ mod tests {
         let now = Instant::now();
         let mut downloads = RecentDownloads::default();
         downloads.remember_at(
-            "blob:carrier/expired",
+            "blob:chatpane/expired",
             "expired-id".into(),
             PathBuf::from("expired.png"),
             now,
         );
-        downloads.complete_at("blob:carrier/expired", now);
+        downloads.complete_at("blob:chatpane/expired", now);
         assert_eq!(
             downloads.lookup_at(
-                "blob:carrier/expired",
+                "blob:chatpane/expired",
                 now + RECENT_DOWNLOAD_TTL + Duration::from_millis(1)
             ),
             None
         );
 
         downloads.remember_at(
-            "blob:carrier/failed",
+            "blob:chatpane/failed",
             "failed-id".into(),
             PathBuf::from("failed.png"),
             now,
         );
         assert_eq!(
-            downloads.forget("blob:carrier/failed"),
+            downloads.forget("blob:chatpane/failed"),
             Some(("failed-id".into(), PathBuf::from("failed.png")))
         );
-        assert_eq!(downloads.lookup_at("blob:carrier/failed", now), None);
+        assert_eq!(downloads.lookup_at("blob:chatpane/failed", now), None);
     }
 
     #[test]
@@ -687,15 +687,18 @@ mod tests {
         let mut downloads = RecentDownloads::default();
         let path = PathBuf::from("pending.png");
         downloads.remember_at(
-            "blob:carrier/pending",
+            "blob:chatpane/pending",
             "pending-id".into(),
             path.clone(),
             now,
         );
-        assert_eq!(downloads.lookup_at("blob:carrier/pending", now), None);
+        assert_eq!(downloads.lookup_at("blob:chatpane/pending", now), None);
 
-        downloads.complete_at("blob:carrier/pending", now);
-        assert_eq!(downloads.lookup_at("blob:carrier/pending", now), Some(path));
+        downloads.complete_at("blob:chatpane/pending", now);
+        assert_eq!(
+            downloads.lookup_at("blob:chatpane/pending", now),
+            Some(path)
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -704,9 +707,14 @@ mod tests {
         let now = Instant::now();
         let mut downloads = RecentDownloads::default();
         let path = PathBuf::from("shared.png");
-        downloads.remember_at("blob:carrier/shared", "shared-id".into(), path.clone(), now);
+        downloads.remember_at(
+            "blob:chatpane/shared",
+            "shared-id".into(),
+            path.clone(),
+            now,
+        );
         assert_eq!(downloads.lookup_id_at("shared-id", now), None);
-        downloads.complete_at("blob:carrier/shared", now);
+        downloads.complete_at("blob:chatpane/shared", now);
         assert_eq!(downloads.lookup_id_at("shared-id", now), Some(path));
         assert_eq!(downloads.lookup_id_at("unknown-id", now), None);
     }
@@ -717,22 +725,27 @@ mod tests {
         let completed = started + RECENT_DOWNLOAD_TTL + Duration::from_secs(1);
         let mut downloads = RecentDownloads::default();
         let path = PathBuf::from("slow.png");
-        downloads.remember_at("blob:carrier/slow", "slow-id".into(), path.clone(), started);
         downloads.remember_at(
-            "blob:carrier/new",
+            "blob:chatpane/slow",
+            "slow-id".into(),
+            path.clone(),
+            started,
+        );
+        downloads.remember_at(
+            "blob:chatpane/new",
             "new-id".into(),
             PathBuf::from("new.png"),
             completed,
         );
-        downloads.complete_at("blob:carrier/slow", completed);
+        downloads.complete_at("blob:chatpane/slow", completed);
 
         assert_eq!(
-            downloads.lookup_at("blob:carrier/slow", completed),
+            downloads.lookup_at("blob:chatpane/slow", completed),
             Some(path)
         );
         assert_eq!(
             downloads.lookup_at(
-                "blob:carrier/slow",
+                "blob:chatpane/slow",
                 completed + RECENT_DOWNLOAD_TTL + Duration::from_millis(1)
             ),
             None

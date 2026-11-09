@@ -87,10 +87,10 @@ jobs:
       - name: Build with all diagnostics and embedded debug symbols
         run: |
           bun run tauri build --debug --features diagnostics --no-bundle --ci
-          readelf -S src-tauri/target/debug/carrier | grep -q .debug_info
-          tar -czf Chatpane-debug-linux.tar.gz -C src-tauri/target/debug carrier
+          readelf -S src-tauri/target/debug/chatpane | grep -q .debug_info
+          tar -czf Chatpane-debug-linux.tar.gz -C src-tauri/target/debug chatpane
           cp scripts/debug/{update,policy}.ts .
-          bun scripts/debug/manifest.ts src-tauri/target/debug/carrier Chatpane-debug-linux.tar.gz update.ts policy.ts
+          bun scripts/debug/manifest.ts src-tauri/target/debug/chatpane Chatpane-debug-linux.tar.gz update.ts policy.ts
       - name: Attest Linux debug artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -99,7 +99,7 @@ jobs:
             build.json
       - name: Test the debug installer end to end
         env:
-          CHATPANE_TEST_BINARY: src-tauri/target/debug/carrier
+          CHATPANE_TEST_BINARY: src-tauri/target/debug/chatpane
         run: bun test scripts/debug/install.test.ts
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -231,8 +231,8 @@ jobs:
           spctl --assess --type execute --verbose=2 "$APP"
           xcrun stapler validate "$APP"
           ditto -c -k --sequesterRsrc --keepParent "$APP" Chatpane-debug-macos.zip
-          symbols=src-tauri/target/debug/carrier.dSYM
-          app_uuid=$(xcrun dwarfdump --uuid "$APP/Contents/MacOS/carrier" | awk '{print $2}')
+          symbols=src-tauri/target/debug/chatpane.dSYM
+          app_uuid=$(xcrun dwarfdump --uuid "$APP/Contents/MacOS/chatpane" | awk '{print $2}')
           symbols_uuid=$(xcrun dwarfdump --uuid "$symbols" | awk '{print $2}')
           if [ -z "$app_uuid" ] || [ "$app_uuid" != "$symbols_uuid" ]; then
             echo "Debug symbols do not match the signed app." >&2
@@ -243,7 +243,7 @@ jobs:
       - name: Record debug identity and checksums
         run: |
           cp scripts/debug/{update,policy}.ts .
-          bun scripts/debug/manifest.ts src-tauri/target/debug/bundle/macos/Chatpane.app/Contents/MacOS/carrier Chatpane-debug-macos.zip Chatpane-debug-symbols.zip update.ts policy.ts
+          bun scripts/debug/manifest.ts src-tauri/target/debug/bundle/macos/Chatpane.app/Contents/MacOS/chatpane Chatpane-debug-macos.zip Chatpane-debug-symbols.zip update.ts policy.ts
 
       - name: Attest macOS debug manifest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

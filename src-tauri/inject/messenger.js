@@ -8095,7 +8095,7 @@ ${button.innerHTML}`)
   var CALL_BUTTONS = CALL_BUTTON_LABELS.map(
     (label2) => `[role="button"][aria-label="${label2}"]`
   ).join(", ");
-  var ISSUE_URL = "https://github.com/kristofferR/Carrier/issues/345";
+  var ISSUE_URL = "https://github.com/kristofferR/Chatpane/issues/345";
   var WIDTH = 280;
   var GAP = 8;
   var inside = (rect, x, y) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;

@@ -60,7 +60,7 @@ fn reconcile_blocking(app: &tauri::AppHandle) -> Option<Status> {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     platform::migrate_previous_entry(app);
     #[cfg(target_os = "macos")]
-    platform::repoint_after_bundle_rename(app);
+    platform::repoint_after_rename(app);
     #[cfg(target_os = "macos")]
     platform::migrate_legacy_agent(app);
     let observed = status(app)
@@ -285,12 +285,16 @@ mod platform {
         }
     }
 
-    /// The first launch after `Carrier.app` became `Chatpane.app`: the login
-    /// item or agent still opens the old path, so register this one instead,
-    /// if Start on System Startup was on.
-    pub(super) fn repoint_after_bundle_rename(app: &tauri::AppHandle) {
+    /// The first launch after `Carrier.app` became `Chatpane.app`, or after
+    /// Carrier's data moved to Chatpane's identifier: the login item or agent
+    /// still opens the old path or app, so register this one instead, if Start
+    /// on System Startup was on.
+    pub(super) fn repoint_after_rename(app: &tauri::AppHandle) {
         use tauri::Manager;
-        if !crate::bundle_rename::take_launched_after_rename()
+        // Both, so neither stays set for a later call.
+        let renamed = crate::bundle_rename::take_launched_after_rename();
+        let moved = crate::identity::take_moved();
+        if !(renamed || moved)
             || !app
                 .state::<crate::settings::AppState>()
                 .settings
@@ -310,8 +314,8 @@ mod platform {
             Ok(())
         };
         match result {
-            Ok(()) => log::info!("Start on System Startup now opens Chatpane.app"),
-            Err(e) => log::warn!("couldn't move Start on System Startup to Chatpane.app: {e}"),
+            Ok(()) => log::info!("Start on System Startup now opens Chatpane"),
+            Err(e) => log::warn!("couldn't move Start on System Startup to Chatpane: {e}"),
         }
     }
 

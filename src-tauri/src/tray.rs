@@ -642,7 +642,7 @@ fn macos_tray_icon(
 ) -> tauri::Result<(tauri::image::Image<'static>, bool)> {
     let symbolic = icon_style == "symbolic";
     let icon = if symbolic {
-        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))?
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/chatpane-symbolic.png"))?
     } else {
         app.default_window_icon()
             .ok_or_else(|| tauri::Error::Io(std::io::Error::other("missing bundled icon")))?
@@ -883,7 +883,7 @@ fn windows_tray_image(
     dark_taskbar: bool,
 ) -> tauri::image::Image<'static> {
     if icon_style == "symbolic" {
-        match tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
+        match tauri::image::Image::from_bytes(include_bytes!("../icons/tray/chatpane-symbolic.png"))
         {
             Ok(symbolic) => {
                 if let Some(bbox) = alpha_bbox(symbolic.rgba(), symbolic.width() as usize) {
@@ -954,7 +954,7 @@ pub(crate) fn build_tray_with_menu(
 
     let (icon, base_rgba) = linux_tray_base_image(app)?;
     let symbolic =
-        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))?;
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/chatpane-symbolic.png"))?;
     debug_assert_eq!((symbolic.width(), symbolic.height()), (128, 128));
     let symbolic_alpha = symbolic.rgba().to_vec();
     let tray = LinuxTray {
@@ -1021,7 +1021,7 @@ mod tests {
     #[test]
     fn symbolic_asset_is_a_high_resolution_rgba_pixmap() {
         let image =
-            tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
+            tauri::image::Image::from_bytes(include_bytes!("../icons/tray/chatpane-symbolic.png"))
                 .unwrap();
         assert_eq!((image.width(), image.height()), (128, 128));
         let (pixels, _) = image.rgba().as_chunks::<4>();
@@ -1054,7 +1054,7 @@ mod tests {
     #[test]
     fn resampled_glyph_fills_the_canvas_and_antialiases() {
         let symbolic =
-            tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
+            tauri::image::Image::from_bytes(include_bytes!("../icons/tray/chatpane-symbolic.png"))
                 .unwrap();
         let width = symbolic.width() as usize;
         let bbox = alpha_bbox(symbolic.rgba(), width).unwrap();

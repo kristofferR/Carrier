@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 /// Passed to the reopened app, which then moves Start on System Startup to the
 /// new path: the login item still names `Carrier.app`.
 #[cfg(target_os = "macos")]
-const RENAMED_ARG: &str = "--renamed-from-carrier";
+const RENAMED_ARG: &str = "--after-bundle-rename";
 
 /// Where the bundle should move, or None when it already has the new name, the
 /// new name is taken, or Homebrew manages it (`caskrooms` are Homebrew's

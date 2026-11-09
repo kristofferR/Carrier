@@ -4,17 +4,15 @@
 
 <h1 align="center">Chatpane for Messenger</h1>
 
-<p align="center"><em>Formerly Carrier.</em></p>
-
 <p align="center">
   <strong>Facebook Messenger without the Facebook clutter.</strong><br>
-  A free, open-source desktop app for macOS, Windows, and Linux.
+  A free, open-source desktop app for macOS, Windows, and Linux, in 30 languages.
 </p>
 
 <p align="center">
-  <a href="https://github.com/kristofferR/Carrier/releases/latest"><img src="https://img.shields.io/github/v/release/kristofferR/Carrier?label=latest&style=flat-square" alt="Latest release"></a>
-  <a href="https://github.com/kristofferR/Carrier/actions/workflows/ci.yml"><img src="https://github.com/kristofferR/Carrier/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/kristofferR/Carrier?style=flat-square" alt="MIT license"></a>
+  <a href="https://github.com/kristofferR/Chatpane/releases/latest"><img src="https://img.shields.io/github/v/release/kristofferR/Chatpane?label=latest&style=flat-square" alt="Latest release"></a>
+  <a href="https://github.com/kristofferR/Chatpane/actions/workflows/ci.yml"><img src="https://github.com/kristofferR/Chatpane/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/kristofferR/Chatpane?style=flat-square" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -28,21 +26,21 @@
 <table align="center">
   <tr>
     <td align="center" width="220">
-      <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_mac_arm.dmg">
+      <a href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_mac_arm.dmg">
         <img src="docs/icons/download.svg" width="56" height="56" alt=""><br>
         <strong>Download for macOS</strong><br>
         <sub>Apple Silicon &middot; .dmg</sub>
       </a>
     </td>
     <td align="center" width="220">
-      <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_win_x64_setup.exe">
+      <a href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_win_x64_setup.exe">
         <img src="docs/icons/download.svg" width="56" height="56" alt=""><br>
         <strong>Download for Windows</strong><br>
         <sub>64-bit installer &middot; .exe</sub>
       </a>
     </td>
     <td align="center" width="220">
-      <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.AppImage">
+      <a href="https://github.com/kristofferR/Chatpane/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.AppImage">
         <img src="docs/icons/download.svg" width="56" height="56" alt=""><br>
         <strong>Download for Linux</strong><br>
         <sub>AppImage &middot; x64</sub>
@@ -54,7 +52,7 @@
 <p align="center">
   <sub>
     Intel Mac, Windows ARM, Linux ARM, portable Windows, <code>.deb</code>, or <code>.rpm</code>?
-    <a href="https://github.com/kristofferR/Carrier/releases/latest">See every download →</a>
+    <a href="https://github.com/kristofferR/Chatpane/releases/latest">See every download →</a>
   </sub>
 </p>
 
@@ -82,8 +80,10 @@ global shortcuts, and cryptographically verified updates.
 - **Right-click menus**: react to, reply to, forward or pin a message; mute,
   archive or mark a conversation as read.
 - **Hide that you're typing**: the people you chat with don't see "typing…".
-- **Themes and app icons**: four themes, an accent color, a message font and
-  four app icons.
+- **In your language**: menus, notifications and Settings in 30 languages.
+- **Themes and app icons**: nine built-in themes or your own, an accent color,
+  a message font and four app icons.
+- **Your notification sound**: the system's own sounds or a file of your own.
 - **Export conversations**: save a conversation as an HTML or JSON file.
 - **[Schedule messages](docs/scheduled-sending.md)**: send texts at a chosen
   date and time. Chatpane must be running and connected.
@@ -102,20 +102,25 @@ global shortcuts, and cryptographically verified updates.
 - Group-chat messages can count on the unread badge without notifying
 - Muted conversations can be left out, shown on the badge only, or counted like any other chat
 - No notifications for messages that are old or already read on another device, for example after sleep
+- Choose the notification sound: the system default, the operating system's own
+  sounds, or a sound file of your own, with a preview
 - One sound per message: Messenger's in-page sounds don't double up with Chatpane's,
   and stay silent during Do Not Disturb, Pause and Mute (calls still ring)
-- Hidden message previews, notification sound controls, and a test notification
-  in Settings that explains when the system is blocking banners
+- Hidden message previews, and a test notification in Settings that explains
+  when the system is blocking banners
 
 ### Desktop integration
 
 - Unread count on the Dock or taskbar icon, or just a dot
 - Recent conversations in the Dock, tray and jump-list menus
-- Tray support, start to tray, start on login, and hide on close
+- Tray support, start to tray, and hide on close
+- Start at login that shows the real state, even when you switch it off in the
+  operating system; on macOS 13 and later it's a normal Open at Login item
 - Optional system-wide <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> hotkey
 - Menu-bar-only mode on macOS
-- On macOS the window buttons sit over the chat list; on Windows and floating
-  Linux desktops Chatpane draws its own window buttons instead of a title bar
+- On macOS the window buttons sit over the chat list; on Windows and Linux
+  Chatpane draws its own window buttons instead of a title bar. Under a tiling
+  window manager they appear only on floating windows
 - Always on top and experimental multi-window support
 - Window size, position and pane widths restored between launches
 
@@ -130,6 +135,17 @@ global shortcuts, and cryptographically verified updates.
 - Adjustable and persistent page zoom
 - Optional system emoji instead of Facebook's emoji sprites
 - Optional top application menu on Windows and Linux
+
+### Languages
+
+Chatpane's menus, notifications, dialogs and Settings follow your operating
+system's language. Change it in **Settings → General → Language**. Messenger
+itself follows your Facebook language.
+
+English, Español, Português (Brasil), Français, Deutsch, Italiano, Polski,
+Čeština, Magyar, Română, Ελληνικά, Türkçe, Українська, Svenska, Dansk, Norsk
+bokmål, Tiếng Việt, Bahasa Indonesia, Filipino, ไทย, ខ្មែរ, ລາວ, မြန်မာ, 简体中文,
+हिन्दी, বাংলা, नेपाली, සිංහල, اردو and العربية. Arabic and Urdu read right to left.
 
 ### Privacy
 
@@ -223,7 +239,7 @@ replacement for the Messenger service. Meta's own data handling still applies.
 ## Install options
 
 The primary downloads above cover Apple Silicon macOS, x64 Windows, and x64
-Linux. The [latest release](https://github.com/kristofferR/Carrier/releases/latest)
+Linux. The [latest release](https://github.com/kristofferR/Chatpane/releases/latest)
 also includes:
 
 | Platform | Architectures | Packages |
@@ -247,7 +263,7 @@ The same cask token works on macOS and Linux:
 brew install --cask kristofferR/tap/chatpane
 ```
 
-On macOS, if `Carrier.app` or `Chatpane.app` is already present in `/Applications`, adopt it with:
+On macOS, if `Chatpane.app` is already in `/Applications`, adopt it with:
 
 ```bash
 brew install --cask --adopt kristofferR/tap/chatpane
@@ -279,7 +295,7 @@ Niri is detected through `NIRI_SOCKET` or a `niri` desktop identifier in
 If the window is blank or rendering is unstable, try launching with:
 
 ```bash
-CHATPANE_LINUX_WEBKIT_SAFE_MODE=1 carrier
+CHATPANE_LINUX_WEBKIT_SAFE_MODE=1 chatpane
 ```
 
 `1` requests both rendering fallbacks on any Linux desktop. `0` disables the
@@ -316,7 +332,7 @@ Requires [Rust](https://rustup.rs), [Bun](https://bun.sh), and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
 
 ```bash
-git clone https://github.com/kristofferR/Carrier.git
+git clone https://github.com/kristofferR/Chatpane.git
 cd Chatpane
 bun install
 bun run dev
@@ -329,11 +345,11 @@ and bundled into single document-start scripts with `bun run build:inject`.
 ## Support and contributing
 
 If Facebook changed something, a feature stopped working, or you have an idea,
-[open an issue](https://github.com/kristofferR/Carrier/issues). Include your
+[open an issue](https://github.com/kristofferR/Chatpane/issues). Include your
 operating system and Chatpane version when reporting a problem.
 
 If Chatpane is useful to you, consider
-[starring the repository](https://github.com/kristofferR/Carrier). It helps other
+[starring the repository](https://github.com/kristofferR/Chatpane). It helps other
 people looking for a Messenger desktop client find the project.
 
 ## Disclaimer

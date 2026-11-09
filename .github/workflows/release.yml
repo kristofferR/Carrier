@@ -227,8 +227,8 @@ jobs:
           xcrun stapler validate "$APP"
           ditto -c -k --sequesterRsrc --keepParent "$APP" Chatpane-notarized-smoke.zip
           if [ "$DEBUG_BUILD" = "true" ]; then
-            symbols=src-tauri/target/debug/carrier.dSYM
-            app_uuid=$(xcrun dwarfdump --uuid "$APP/Contents/MacOS/carrier" | awk '{print $2}')
+            symbols=src-tauri/target/debug/chatpane.dSYM
+            app_uuid=$(xcrun dwarfdump --uuid "$APP/Contents/MacOS/chatpane" | awk '{print $2}')
             symbols_uuid=$(xcrun dwarfdump --uuid "$symbols" | awk '{print $2}')
             if [ -z "$app_uuid" ] || [ "$app_uuid" != "$symbols_uuid" ]; then
               echo "Debug symbols do not match the signed app." >&2
@@ -634,7 +634,7 @@ jobs:
       # A no-installer option for Windows: just the standalone .exe (WebView2 is
       # provided by the OS on Win10+/11). The app exe is the only top-level *.exe
       # in the release dir (deps/build scripts live in subfolders), so glob it
-      # rather than hardcode carrier.exe vs Carrier.exe.
+      # rather than hardcode its name.
       - name: Create Windows portable zip
         if: contains(matrix.target, 'pc-windows')
         shell: pwsh
@@ -870,29 +870,27 @@ jobs:
               app "Chatpane.app"
 
               zap trash: [
-                "~/Library/Application Scripts/io.github.kristofferr.carrier.share",
-                "~/Library/Application Scripts/S5Q742QZEL.io.github.kristofferr.carrier",
-                "~/Library/Application Support/io.github.kristofferr.carrier",
-                "~/Library/Caches/io.github.kristofferr.carrier",
-                "~/Library/Containers/io.github.kristofferr.carrier.share",
-                "~/Library/Group Containers/S5Q742QZEL.io.github.kristofferr.carrier",
-                "~/Library/HTTPStorages/io.github.kristofferr.carrier.binarycookies*",
-                "~/Library/LaunchAgents/Carrier.plist",
+                "~/Library/Application Scripts/app.chatpane.Chatpane.share",
+                "~/Library/Application Scripts/S5Q742QZEL.app.chatpane.Chatpane",
+                "~/Library/Application Support/app.chatpane.Chatpane",
+                "~/Library/Caches/app.chatpane.Chatpane",
+                "~/Library/Containers/app.chatpane.Chatpane.share",
+                "~/Library/Group Containers/S5Q742QZEL.app.chatpane.Chatpane",
+                "~/Library/HTTPStorages/app.chatpane.Chatpane.binarycookies*",
                 "~/Library/LaunchAgents/Chatpane.plist",
-                "~/Library/Logs/io.github.kristofferr.carrier",
-                "~/Library/Preferences/io.github.kristofferr.carrier.plist",
-                "~/Library/WebKit/io.github.kristofferr.carrier",
+                "~/Library/Logs/app.chatpane.Chatpane",
+                "~/Library/Preferences/app.chatpane.Chatpane.plist",
+                "~/Library/WebKit/app.chatpane.Chatpane",
               ]
             end
             on_linux do
               app_image "Chatpane_#{version}_lin_#{arch}.AppImage", target: "Chatpane.AppImage"
 
               zap trash: [
-                "~/.cache/io.github.kristofferr.carrier",
-                "~/.config/autostart/Carrier.desktop",
+                "~/.cache/app.chatpane.Chatpane",
                 "~/.config/autostart/Chatpane.desktop",
-                "~/.config/io.github.kristofferr.carrier",
-                "~/.local/share/io.github.kristofferr.carrier",
+                "~/.config/app.chatpane.Chatpane",
+                "~/.local/share/app.chatpane.Chatpane",
               ]
             end
 

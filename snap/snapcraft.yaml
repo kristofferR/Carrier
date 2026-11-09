@@ -1,10 +1,10 @@
 name: chatpane
 title: Chatpane for Messenger
 base: core24
-adopt-info: carrier
+adopt-info: chatpane
 summary: Unofficial desktop app for Facebook Messenger
 description: |
-  Chatpane (formerly Carrier) puts Messenger in a focused desktop window, with native notifications,
+  Chatpane puts Messenger in a focused desktop window, with native notifications,
   unread badges, keyboard shortcuts, privacy controls, and a system tray.
   Choose light or dark appearance and keep conversations close without the
   surrounding Facebook feed, Reels, or Marketplace.
@@ -13,9 +13,9 @@ description: |
   affiliated with or endorsed by Meta.
 license: MIT
 website: https://chatpane.app/
-source-code: https://github.com/kristofferR/Carrier
-issues: https://github.com/kristofferR/Carrier/issues
-contact: https://github.com/kristofferR/Carrier/issues
+source-code: https://github.com/kristofferR/Chatpane
+issues: https://github.com/kristofferR/Chatpane/issues
+contact: https://github.com/kristofferR/Chatpane/issues
 icon: src-tauri/icons/icon.png
 grade: stable
 confinement: strict
@@ -33,7 +33,7 @@ apps:
   # Keep the app key equal to the snap name: the command is then `chatpane`
   # and the launcher's desktop ID is `chatpane_chatpane`.
   chatpane:
-    command: bin/carrier
+    command: bin/chatpane
     desktop: usr/share/applications/chatpane.desktop
     extensions: [gnome]
     plugs:
@@ -64,10 +64,10 @@ slots:
     interface: dbus
     bus: session
     # tauri-plugin-single-instance 2.4.4 uses the identifier verbatim.
-    name: io.github.kristofferr.carrier.SingleInstance
+    name: app.chatpane.Chatpane.SingleInstance
 
 parts:
-  carrier:
+  chatpane:
     plugin: nil
     source: .
     build-packages:
@@ -91,6 +91,6 @@ parts:
       set -eu
       /usr/bin/rustup default stable
       /usr/bin/cargo build --locked --release --manifest-path src-tauri/Cargo.toml
-      install -Dm755 src-tauri/target/release/carrier "$CRAFT_PART_INSTALL/bin/carrier"
+      install -Dm755 src-tauri/target/release/chatpane "$CRAFT_PART_INSTALL/bin/chatpane"
       install -Dm644 snap/gui/chatpane.desktop "$CRAFT_PART_INSTALL/usr/share/applications/chatpane.desktop"
-      install -Dm644 src-tauri/icons/icon.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/512x512/apps/carrier.png"
+      install -Dm644 src-tauri/icons/icon.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/512x512/apps/chatpane.png"

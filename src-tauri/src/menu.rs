@@ -1476,7 +1476,7 @@ mod tests {
         assert_eq!(metadata.comments.as_deref(), Some(t("menu.about_comments")));
         assert_eq!(
             metadata.website.as_deref(),
-            Some("https://github.com/kristofferR/Carrier")
+            Some("https://github.com/kristofferR/Chatpane")
         );
         assert_eq!(metadata.website_label.as_deref(), Some("GitHub"));
     }

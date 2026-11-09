@@ -36,6 +36,7 @@ mod hotkey;
 #[cfg(target_os = "linux")]
 mod hotkey_portal;
 mod i18n;
+mod identity;
 mod install_environment;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -1233,6 +1234,7 @@ pub fn run() {
             #[cfg(all(feature = "mcp", debug_assertions))]
             app.add_capability(include_str!("../dev-capabilities/mcp.json"))?;
 
+            identity::log_report();
             clear_pending_webview_data(app.handle());
             account::install(app.handle());
             pane_widths::install(app.handle());
@@ -2250,7 +2252,11 @@ pub fn run() {
 
             Ok(())
         })
-        .build(app_context())
+        .build({
+            let mut context = app_context();
+            context.config_mut().identifier = identity::current().into();
+            context
+        })
         .expect("error while building Chatpane")
         .run(move |app, event| {
             // `tray_icon_size` follows Windows' DPI-aware small-icon metric.
@@ -2372,7 +2378,7 @@ pub fn run() {
                         match actions::parse_app_url(url) {
                             Some(action) => automation_action = Some(action),
                             None => log::warn!(
-                                "ignoring malformed carrier URL ({} bytes)",
+                                "ignoring a malformed chatpane:// URL ({} bytes)",
                                 url.as_str().len().min(4_096)
                             ),
                         }
@@ -2427,7 +2433,7 @@ mod tests {
     fn thread_viewed_url_requires_the_real_messenger_thread() {
         assert_eq!(
             messenger_url_thread_id(
-                &url::Url::parse("https://www.facebook.com/messages/t/123/?source=carrier")
+                &url::Url::parse("https://www.facebook.com/messages/t/123/?source=chatpane")
                     .unwrap()
             )
             .as_deref(),
