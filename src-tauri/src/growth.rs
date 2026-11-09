@@ -15,9 +15,8 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::settings::{AppState, SaveOutcome, save_settings};
 
-/// The landing page; the link people share. Becomes "https://chatpane.app/"
-/// once GitHub Pages serves that domain.
-pub(crate) const SITE_URL: &str = "https://kristofferr.github.io/Carrier/";
+/// The landing page; the link people share.
+pub(crate) const SITE_URL: &str = "https://chatpane.app/";
 /// GitHub redirects this after a repository rename.
 pub(crate) const REPO_URL: &str = "https://github.com/kristofferR/Carrier";
 
