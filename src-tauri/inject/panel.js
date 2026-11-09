@@ -53,6 +53,50 @@
     ];
   }
 
+  // inject/src/panel/star-prompt.ts
+  var SETTLE_MS = 2e3;
+  var TYPING_QUIET_MS = 1e4;
+  var VISIBLE_MS = 2e4;
+  var isQuietMoment = (moment) => moment.focused && moment.messengerUi && !moment.dialogOpen && moment.msSinceKey >= TYPING_QUIET_MS && moment.draftLength === 0;
+  function installStarPrompt() {
+    let lastKey = Number.NEGATIVE_INFINITY;
+    window.addEventListener("keydown", () => lastKey = performance.now(), true);
+    let shown = false;
+    let pending;
+    const moment = () => ({
+      focused: document.visibilityState === "visible" && document.hasFocus(),
+      // The chat list, so not the login page.
+      messengerUi: Boolean(document.querySelector('[role="navigation"] a[href*="/t/"]')),
+      dialogOpen: [...document.querySelectorAll('[role="dialog"]')].some(
+        (dialog) => dialog.getClientRects().length > 0
+      ),
+      msSinceKey: performance.now() - lastKey,
+      draftLength: [
+        ...document.querySelectorAll('[role="main"] [contenteditable="true"][role="textbox"]')
+      ].reduce((length, box) => length + (box.textContent?.trim().length ?? 0), 0)
+    });
+    Object.defineProperty(window, "__chatpaneStarPrompt", {
+      // `name` is the app name native code passes in (growth::NAME).
+      value: (name) => {
+        if (shown || typeof name !== "string" || !name) return;
+        clearTimeout(pending);
+        pending = setTimeout(() => {
+          if (shown || !isQuietMoment(moment())) return;
+          shown = true;
+          window.__chatpaneToast?.(
+            `Enjoying ${name}? A star on GitHub helps other people find it.`,
+            { label: "Star on GitHub", kind: "star-github" },
+            { duration: VISIBLE_MS, closable: true, bottom: 88 }
+          );
+          chatpaneStarPrompt("shown")?.catch?.(() => {
+          });
+        }, SETTLE_MS);
+      },
+      writable: false,
+      configurable: false
+    });
+  }
+
   // inject/src/panel/toast.ts
   var canActivateToastAction = (eventIsTrusted, userActivationIsActive) => eventIsTrusted && userActivationIsActive;
   function installToast() {
@@ -93,6 +137,18 @@
       whiteSpace: "nowrap",
       cursor: "pointer"
     });
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "✕";
+    close.setAttribute("aria-label", "Close");
+    Object.assign(close.style, {
+      border: "0",
+      padding: "0 2px",
+      background: "transparent",
+      color: "#b0b3b8",
+      font: "inherit",
+      cursor: "pointer"
+    });
     let mounted = false;
     let action;
     let toastTimer;
@@ -107,6 +163,34 @@
       else if (action.kind === "open-download-privacy")
         chatpaneOpenDownloadPrivacy()?.catch?.(() => {
         });
+      else if (action.kind === "star-github") chatpaneStarPrompt("star")?.catch?.(() => {
+      });
+      hide();
+    });
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      hide();
+    });
+    const hide = () => {
+      clearTimeout(toastTimer);
+      clearTimeout(toastRemoveTimer);
+      action = void 0;
+      toastEl.style.pointerEvents = "none";
+      toastEl.style.opacity = "0";
+      toastEl.style.transform = "translateX(-50%) translateY(8px)";
+      toastRemoveTimer = setTimeout(() => {
+        toastEl.remove();
+        mounted = false;
+        action = void 0;
+      }, 250);
+    };
+    const scheduleHide = (ms) => {
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(hide, ms);
+    };
+    toastEl.addEventListener("mouseenter", () => clearTimeout(toastTimer));
+    toastEl.addEventListener("mouseleave", () => {
+      if (mounted) scheduleHide(2600);
     });
     const showToast = (msg, nextAction, options) => {
       if (!mounted) {
@@ -117,31 +201,21 @@
       toastEl.setAttribute("role", options?.warning ? "alert" : "status");
       toastEl.setAttribute("aria-live", options?.warning ? "assertive" : "polite");
       toastEl.style.border = options?.warning ? "1px solid #b58130" : "none";
+      toastEl.style.bottom = `${options?.bottom ?? 24}px`;
       message.textContent = msg;
       toastEl.replaceChildren(message);
-      toastEl.style.pointerEvents = action ? "auto" : "none";
+      toastEl.style.pointerEvents = action || options?.closable ? "auto" : "none";
       if (action) {
         button.textContent = action.label;
         toastEl.append(button);
       }
+      if (options?.closable) toastEl.append(close);
       requestAnimationFrame(() => {
         toastEl.style.opacity = "1";
         toastEl.style.transform = "translateX(-50%) translateY(0)";
       });
-      clearTimeout(toastTimer);
       clearTimeout(toastRemoveTimer);
-      toastTimer = setTimeout(
-        () => {
-          toastEl.style.opacity = "0";
-          toastEl.style.transform = "translateX(-50%) translateY(8px)";
-          toastRemoveTimer = setTimeout(() => {
-            toastEl.remove();
-            mounted = false;
-            action = void 0;
-          }, 250);
-        },
-        options?.warning ? 8e3 : action ? 6e3 : 2600
-      );
+      scheduleHide(options?.duration ?? (options?.warning ? 8e3 : action ? 6e3 : 2600));
     };
     Object.defineProperty(window, "__chatpaneToast", {
       value: showToast,
@@ -163,6 +237,7 @@
   });
   function main() {
     installToast();
+    installStarPrompt();
     window.__chatpaneCheckUpdates = () => {
       window.__chatpaneToast?.("Opening Settings to check for updates…");
       emit("chatpane:open-settings");

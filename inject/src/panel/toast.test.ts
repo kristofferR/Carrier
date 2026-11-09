@@ -95,6 +95,18 @@ describe("installToast", () => {
     expect(toast?.children[0]?.textContent).toBe("Download failed");
   });
 
+  test("a closable toast is interactive and its close button hides it", () => {
+    cleanup = installToast();
+    window.__chatpaneToast?.("Enjoying Chatpane?", undefined, { closable: true, bottom: 88 });
+    const toast = body.children[0];
+    expect(toast?.style.pointerEvents).toBe("auto");
+    expect(toast?.style.bottom).toBe("88px");
+    const close = toast?.children[1];
+    expect(close?.attributes.get("aria-label")).toBe("Close");
+    close?.dispatchEvent(new Event("click"));
+    expect(toast?.style.opacity).toBe("0");
+  });
+
   test("installs an immutable page hook", () => {
     cleanup = installToast();
     const descriptor = Object.getOwnPropertyDescriptor(window, "__chatpaneToast");

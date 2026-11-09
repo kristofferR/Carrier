@@ -6,6 +6,7 @@
  * Source of the generated src-tauri/inject/panel.js (see inject/build.ts).
  */
 import { shortcutGroups } from "./shortcut-data";
+import { installStarPrompt } from "./star-prompt";
 import { installToast } from "./toast";
 
 // Internal bridge directly (no global window.__TAURI__ exposed to the page).
@@ -19,6 +20,7 @@ const emit = (event: string) =>
 function main() {
   /* ------------------------------- Toast -------------------------------- */
   installToast();
+  installStarPrompt();
 
   /* --------------------------- Update check ----------------------------- */
   // Updates can replace and restart the app, so the remote Facebook origin

@@ -195,6 +195,9 @@ pub(crate) struct Settings {
     pub(crate) zoom: i32,
     /// Dragged chat list and details pane widths, reported by the page.
     pub(crate) pane_widths: crate::pane_widths::PaneWidths,
+    /// Days of use and the one-time star prompt (growth.rs). Internal state.
+    #[serde(deserialize_with = "crate::growth::deserialize_usage")]
+    pub(crate) usage: crate::growth::Usage,
     /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Chatpane from
     /// anywhere. Off by default so it can't clash with other apps' shortcuts.
     pub(crate) global_hotkey: bool,
@@ -364,6 +367,7 @@ impl Default for Settings {
             block_typing_indicator: false,
             zoom: 100,
             pane_widths: crate::pane_widths::PaneWidths::default(),
+            usage: crate::growth::Usage::default(),
             global_hotkey: false,
             block_telemetry: true,
             strip_link_tracking: true,
