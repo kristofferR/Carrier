@@ -279,8 +279,8 @@ const copyText = (text: string) =>
     .catch(() => toast(t("shared.context.copy_failed")));
 
 // Download a media src by letting the WebView initiate the download, which the
-// Rust `on_download` handler then writes to Downloads. (Custom commands can't
-// be called from the remote Facebook origin, only plugins / WebView hooks.)
+// Rust `on_download` handler then writes to Downloads. The page only prepares
+// it (share binding, ask-mode save prompt) through `page_commands.rs`.
 export async function downloadSrc(
   src: string,
   fallbackName: string,

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal release capabilities for Chatpane's Messenger windows. Every listed remote origin's own scripts—not just Chatpane's injection—can call these commands, so grant only event emission, unread badge, notification permission query, and the scoped external opener that the page actually uses. meta.com/oculus.com are deliberately absent because they are transient login redirects where injected features can fail soft. fbcdn.net/fbsbx.com are absent because they serve user-uploaded content (photos, files, sandboxed frames), and Chatpane's injected features never need IPC there.",
+  "description": "Minimal release capabilities for Chatpane's Messenger windows. Every listed remote origin's own scripts—not just Chatpane's injection—can call these commands, so grant only event emission, Chatpane's signed download, share and copy-image commands, unread badge, notification permission query, and the scoped external opener that the page actually uses. meta.com/oculus.com are deliberately absent because they are transient login redirects where injected features can fail soft. fbcdn.net/fbsbx.com are absent because they serve user-uploaded content (photos, files, sandboxed frames), and Chatpane's injected features never need IPC there.",
   "windows": ["main", "win-*"],
   "remote": {
     "urls": [
@@ -13,6 +13,10 @@
   },
   "permissions": [
     "core:event:allow-emit",
+    "allow-choose-download",
+    "allow-prepare-download",
+    "allow-share-download",
+    "allow-copy-image",
     "core:window:allow-get-all-windows",
     "core:window:allow-set-badge-count",
     "core:window:allow-set-badge-label",

@@ -1445,6 +1445,11 @@ fn init_script(
     var key = nativeImportKey(
       'raw', nativeEncode(secret), {{ name: 'HMAC', hash: 'SHA-256' }}, false, ['sign', 'verify']
     );
+    var commands = nativeObjectCreate(null);
+    commands['chatpane:choose-download'] = 'choose_download';
+    commands['chatpane:prepare-download'] = 'prepare_download';
+    commands['chatpane:share-download'] = 'share_download';
+    commands['chatpane:copy-image'] = 'copy_image';
     function inertClone(value) {{
       if (value === null || typeof value !== 'object') return value;
       var clone = nativeArrayIsArray(value) ? [] : nativeObjectCreate(null);
@@ -1489,10 +1494,12 @@ fn init_script(
       var signature = hex(new NativeUint8Array(
         await nativeSign('HMAC', await key, nativeEncode(authenticated))
       ));
-      return invoke('plugin:event|emit', {{
-        event: event,
-        payload: {{ message: message, nonce: nonce, timestamp: timestamp, signature: signature }}
-      }});
+      var signed = {{ message: message, nonce: nonce, timestamp: timestamp, signature: signature }};
+      // Requests that touch files go to typed commands granted per origin
+      // (page_commands.rs); the rest are still app events.
+      var command = commands[event];
+      if (command) return invoke(command, {{ signed: signed }});
+      return invoke('plugin:event|emit', {{ event: event, payload: signed }});
     }};
     nativeDefineProperty(emit, 'verifyResult', {{
       value: async function (event, value, signature) {{
@@ -2033,11 +2040,10 @@ mod tests {
 
         assert!(script.contains("name: 'HMAC', hash: 'SHA-256'"));
         assert!(script.contains("false, ['sign', 'verify']"));
-        assert!(
-            script.contains(
-                "payload: { message: message, nonce: nonce, timestamp: timestamp, signature: signature }"
-            )
-        );
+        assert!(script.contains(
+            "var signed = { message: message, nonce: nonce, timestamp: timestamp, signature: signature };"
+        ));
+        assert!(script.contains("commands['chatpane:copy-image'] = 'copy_image';"));
         assert!(script.contains("event + '\\n' + timestamp + '\\n' + nonce + '\\n' + message"));
         assert!(!script.contains("authorization: authorization"));
         assert!(!script.contains("__chatpaneDispatchContextAction"));
