@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 // Run after the first verified debug installation. Never changes package-manager state.
 import { homedir, userInfo } from "node:os";
@@ -18,7 +19,15 @@ const binary = mac
 const config = mac
   ? join(home, "Library/Application Support")
   : process.env.XDG_CONFIG_HOME || join(home, ".config");
-const settingsFile = join(config, "app.chatpane.Chatpane/settings.json");
+// Until Chatpane's first launch moves it, the settings stay in Carrier's folder.
+const settingsFile = join(
+  config,
+  !existsSync(join(config, "app.chatpane.Chatpane")) &&
+    existsSync(join(config, "io.github.kristofferr.carrier"))
+    ? "io.github.kristofferr.carrier"
+    : "app.chatpane.Chatpane",
+  "settings.json",
+);
 async function loadSettings() {
   const original = await readFile(settingsFile, "utf8").catch((error: NodeJS.ErrnoException) => {
     // Rust's serde defaults fill in missing preferences on a fresh install.

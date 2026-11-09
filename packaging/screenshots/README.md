@@ -3,42 +3,33 @@
 Use only fictional English content. Never capture a signed-in personal profile,
 real conversations, contact names, photos, notifications, IDs, or desktop content.
 
-The current images in `docs/screenshots/` were captured on Ubuntu from a floating
-Chatpane debug window with native GNOME / Yaru decorations, rounded corners, and
-window shadows. They retain the website demo's 993 × 620 CSS-pixel conversation
-area at 100% zoom. The resulting PNGs are 1021 × 712 pixels, including the native
-menu, title bar, and shadow. Light is the default AppStream screenshot; use dark
-first and light second in the Snap listing.
-The capture build uses the title `Chatpane`; normal debug builds retain their
-debug label. The title is rendered by the window manager, not edited into the PNG.
+The current images in `docs/screenshots/` are renders of the website's window
+mock in `docs/index.html`, framed as a KDE Breeze window with the title
+`Chatpane` and a File, Edit, View and Help menu bar. They are not captures of
+the app. Both PNGs are 1021 × 744 pixels. Light is the default AppStream
+screenshot; use dark first and light second in the Snap listing.
 
 ## Content provenance
 
-The fixture uses the static English conversation markup in `docs/index.html`
+The mock uses the static English conversation markup in `docs/index.html`
 and the seven portraits in `docs/avatars/en/`. All conversations are invented;
 all portraits depict AI-generated fictional people. The original provenance is
 documented in commits `17fab64` and `bc1c168` and the website's avatar CSS comment.
 
-The fixture is rendered inside Chatpane's real WebKit window. It replaces the
-page with the website's demo conversation markup; it is not a capture of live
-Messenger conversations. The native Linux menu and Ubuntu title bar are real.
-No image compositing or post-capture editing is used.
-
-Before any upload, both captures were visually inspected in full, their content
-was checked against the fixture, and their PNG chunks were inspected. They have
-only IHDR, sBIT, tEXt, IDAT, and IEND chunks. The sole text field is
-`Software=gnome-screenshot`; there is no account, location, or EXIF metadata. No desktop
-notifications, pointer, underlying windows, or personal data are visible.
+Both images were visually inspected in full. Their PNGs hold only IHDR, IDAT
+and IEND chunks: no text, account, location, or EXIF metadata.
 
 | Image | SHA-256 |
 | --- | --- |
-| `chatpane-linux-en-light.png` | `25062985d53d566fe313f619a07bd49fd7691edbf2a5435f6775cbe47f30f53a` |
-| `chatpane-linux-en-dark.png` | `dfa908e4d63c71ea515500699fe009c12fec6a8095be16ba04b8447084371b6c` |
+| `chatpane-linux-en-light.png` | `61c602d1cb33cf092157977f2b6e69e6bf735bf99807da49e59ab0b850795ebb` |
+| `chatpane-linux-en-dark.png` | `5c2367c82934a6245fedca067e0c734b452dc5cb5dcafe8b1de87bfb5eb8c99e` |
 
-The AppStream URLs point to these inspected files on the permanent artifact
-host. Replacing either image requires a new privacy inspection before upload.
+The AppStream URLs point to these files on https://chatpane.app/screenshots/.
+Replacing either image requires a new privacy inspection.
 
-## Regeneration
+## Real captures
+
+A store that needs real app captures can use this process instead.
 
 1. Temporarily change only `APP_TITLE`'s debug string in `src-tauri/src/lib.rs`
    from `Chatpane (debug)` to `Chatpane`. Build with

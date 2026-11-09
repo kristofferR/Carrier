@@ -442,21 +442,30 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
 
 #[cfg(target_os = "windows")]
 fn legacy_notifications_disabled(app: &tauri::AppHandle) -> bool {
-    let legacy_app_id = app.config().identifier.clone();
-    let Ok(notifier) =
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(legacy_app_id))
-    else {
-        // A fresh portable install has no legacy identity to preserve.
-        return false;
-    };
-    let Ok(setting) = notifier.Setting() else {
-        return false;
-    };
-    let disabled = should_preserve_legacy_opt_out(Some(setting == NotificationSetting::Enabled));
-    if disabled {
-        log_legacy_notifications_disabled_once(setting);
-    }
-    disabled
+    // Carrier's identities too, so an opt-out recorded for Carrier carries over.
+    let previous = crate::identity::PREVIOUS;
+    let app_ids = [
+        app.config().identifier.clone(),
+        previous.to_string(),
+        dedicated_toast_app_id(previous),
+    ];
+    app_ids.into_iter().any(|app_id| {
+        let Ok(notifier) =
+            ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))
+        else {
+            // A fresh portable install has no legacy identity to preserve.
+            return false;
+        };
+        let Ok(setting) = notifier.Setting() else {
+            return false;
+        };
+        let disabled =
+            should_preserve_legacy_opt_out(Some(setting == NotificationSetting::Enabled));
+        if disabled {
+            log_legacy_notifications_disabled_once(setting);
+        }
+        disabled
+    })
 }
 
 #[cfg(target_os = "windows")]

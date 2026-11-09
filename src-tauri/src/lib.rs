@@ -2252,7 +2252,11 @@ pub fn run() {
 
             Ok(())
         })
-        .build(app_context())
+        .build({
+            let mut context = app_context();
+            context.config_mut().identifier = identity::current().into();
+            context
+        })
         .expect("error while building Chatpane")
         .run(move |app, event| {
             // `tray_icon_size` follows Windows' DPI-aware small-icon metric.

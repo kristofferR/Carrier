@@ -4,7 +4,9 @@
 //! settings, themes and logs, and the webview's Facebook login and
 //! encrypted-chat keys. Carrier used `io.github.kristofferr.carrier`. The first
 //! launch as Chatpane stops a Carrier that is still running, then moves those
-//! folders to Chatpane's names before anything reads or creates them.
+//! folders to Chatpane's names before anything reads or creates them. When a
+//! folder can't be moved, that launch runs on Carrier's folders instead and the
+//! next one tries again.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -14,9 +16,10 @@ use std::time::Duration;
 /// `identifier` in tauri.conf.json, for code that runs before the app is built.
 pub(crate) const IDENTIFIER: &str = "app.chatpane.Chatpane";
 /// Carrier's identifier.
-const PREVIOUS: &str = "io.github.kristofferr.carrier";
+pub(crate) const PREVIOUS: &str = "io.github.kristofferr.carrier";
 
 static MOVED: AtomicBool = AtomicBool::new(false);
+static ON_PREVIOUS: AtomicBool = AtomicBool::new(false);
 static REPORT: Mutex<Vec<Result<String, String>>> = Mutex::new(Vec::new());
 
 /// Move Carrier's data folders to Chatpane's. Runs before anything else opens
@@ -31,18 +34,52 @@ pub(crate) fn migrate() {
     }
     stop_previous_app();
     let mut report = REPORT.lock().unwrap();
-    for (old, new) in &folders {
-        let (old_name, new_name) = (old.display(), new.display());
-        match move_folder(old, new) {
-            Ok(true) => {
-                MOVED.store(true, Ordering::Relaxed);
-                report.push(Ok(format!("moved {old_name} to {new_name}")));
-            }
-            Ok(false) => {}
-            Err(error) => report.push(Err(format!(
-                "couldn't move {old_name} to {new_name}: {error}"
-            ))),
+    match move_all(&folders) {
+        Ok(moved) => {
+            MOVED.store(!moved.is_empty(), Ordering::Relaxed);
+            report.extend(moved.into_iter().map(Ok));
         }
+        Err(failure) => {
+            ON_PREVIOUS.store(true, Ordering::Relaxed);
+            report.push(Err(format!("{failure}; using Carrier's folders this time")));
+        }
+    }
+}
+
+/// Move every folder, or none: after a failure, what already moved goes
+/// back, so Carrier's data stays whole and Chatpane has no folders that would
+/// stop the next try.
+fn move_all(folders: &[(PathBuf, PathBuf)]) -> Result<Vec<String>, String> {
+    let mut moved = Vec::new();
+    for (old, new) in folders {
+        match move_folder(old, new) {
+            Ok(true) => moved.push((old, new)),
+            Ok(false) => {}
+            Err(error) => {
+                for (old, new) in moved {
+                    let _ = std::fs::rename(new, old);
+                }
+                return Err(format!(
+                    "couldn't move {} to {}: {error}",
+                    old.display(),
+                    new.display()
+                ));
+            }
+        }
+    }
+    Ok(moved
+        .into_iter()
+        .map(|(old, new)| format!("moved {} to {}", old.display(), new.display()))
+        .collect())
+}
+
+/// The identifier whose folders this launch uses: Chatpane's, or Carrier's
+/// when its data couldn't be moved.
+pub(crate) fn current() -> &'static str {
+    if ON_PREVIOUS.load(Ordering::Relaxed) {
+        PREVIOUS
+    } else {
+        IDENTIFIER
     }
 }
 
@@ -249,6 +286,29 @@ mod tests {
             "{}"
         );
         assert!(old.exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_move_puts_back_what_moved() {
+        let root = std::env::temp_dir().join(format!("chatpane-move-all-{}", std::process::id()));
+        let config = (
+            root.join("config").join(PREVIOUS),
+            root.join("config").join(IDENTIFIER),
+        );
+        std::fs::create_dir_all(&config.0).unwrap();
+        // The second destination can't be created: its parent is a file.
+        let data = (
+            root.join("data").join(PREVIOUS),
+            root.join("blocked").join(IDENTIFIER),
+        );
+        std::fs::create_dir_all(&data.0).unwrap();
+        std::fs::write(root.join("blocked"), "").unwrap();
+
+        assert!(move_all(&[config.clone(), data.clone()]).is_err());
+        assert!(config.0.exists() && !config.1.exists());
+        assert!(data.0.exists());
 
         std::fs::remove_dir_all(&root).unwrap();
     }

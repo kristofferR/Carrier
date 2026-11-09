@@ -198,12 +198,12 @@ fn capture_native_output() -> std::io::Result<()> {
         std::env::var_os("HOME").ok_or_else(|| std::io::Error::other("HOME missing"))?,
     );
     let dir = if cfg!(target_os = "macos") {
-        home.join("Library/Logs").join(crate::identity::IDENTIFIER)
+        home.join("Library/Logs").join(crate::identity::current())
     } else {
         PathBuf::from(
             std::env::var_os("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local/share").into()),
         )
-        .join(crate::identity::IDENTIFIER)
+        .join(crate::identity::current())
         .join("logs")
     };
     std::fs::create_dir_all(&dir)?;

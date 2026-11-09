@@ -526,7 +526,7 @@ pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
 /// (used to decide single-instance enforcement). Falls back to defaults.
 pub(crate) fn load_settings_early() -> Settings {
     dirs_config_dir()
-        .map(|b| b.join(crate::identity::IDENTIFIER).join("settings.json"))
+        .map(|b| b.join(crate::identity::current()).join("settings.json"))
         .map(|path| load_settings_from_path(&path))
         .unwrap_or_else(|| Settings::default().sanitized())
 }
