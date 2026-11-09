@@ -975,6 +975,24 @@
     background: #fcfcfc; border: 1px solid rgba(35, 38, 41, .25); color: #232629; font-weight: 400;
   }
 
+  /* With the window in a dark theme, the notifications switch to the OS's
+     dark mode too: macOS dark material, Windows 11 dark, Breeze Dark. */
+  .win-stage[data-win-theme="dark"] .toast {
+    background: rgba(44, 44, 46, .94); border-color: rgba(255, 255, 255, .14); color: #f5f5f7;
+  }
+  .win-stage[data-win-theme="dark"] .toast .t-now { color: rgba(235, 235, 245, .6); }
+  .win-stage[data-win-theme="dark"] .toast .t-msg { color: rgba(245, 245, 247, .88); }
+  .win-stage[data-win-theme="dark"] .toast .t-app { box-shadow: 0 0 0 1.5px rgba(44, 44, 46, .94); }
+  html[data-os="windows"] .win-stage[data-win-theme="dark"] .toast { background: rgba(44, 44, 44, .94); border-color: rgba(255, 255, 255, .08); color: #fff; }
+  html[data-os="windows"] .win-stage[data-win-theme="dark"] .toast::before { color: rgba(255, 255, 255, .78); }
+  html[data-os="windows"] .win-stage[data-win-theme="dark"] .toast .t-msg { color: rgba(255, 255, 255, .78); }
+  html[data-os="windows"] .win-stage[data-win-theme="dark"] .toast .t-app { box-shadow: none; }
+  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast { background: #202326; border-color: rgba(252, 252, 252, .12); color: #fcfcfc; }
+  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast::before { color: rgba(252, 252, 252, .7); }
+  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast::after { color: rgba(252, 252, 252, .6); }
+  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast .t-msg { color: #fcfcfc; }
+  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast .t-app { box-shadow: none; }
+
   /* ---------- Sections shared ---------- */
   section { padding-block: clamp(2.75rem, 6vw, 4.75rem); }
   .eyebrow {
