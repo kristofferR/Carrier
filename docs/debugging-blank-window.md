@@ -93,12 +93,12 @@ is a recovery policy for the observed failure, not a confirmed root-cause fix.
 
 ## Preserve the next occurrence
 
-Before restarting or changing rendering settings, collect `Chatpane.log` (`Carrier.log` before the rename), process
+Before restarting or changing rendering settings, collect `Chatpane.log`, process
 lifetimes, kernel crash/OOM/GPU messages and the native/frame diagnostics above.
 For debug launches with redirected output, also collect `debug-stdout.log` and
 `debug-stderr.log` from the app's log directory. The Settings log-folder action
 locates that directory; on Linux it is normally under
-`~/.local/share/io.github.kristofferr.carrier/logs/`.
+`~/.local/share/app.chatpane.Chatpane/logs/`.
 
 With MCP, inspect `window.__TAURI_MCP_LOG_STATS__` before interpreting an empty
 `query_logs` result. Use counts and geometry to inspect Messenger; avoid dumping
