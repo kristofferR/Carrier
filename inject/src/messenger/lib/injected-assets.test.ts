@@ -70,7 +70,7 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("Windows tray options remain platform-gated and keep a tray escape hatch", async () => {
-    const settings = await repoAsset("dist/settings.html");
+    const settings = await repoAsset("inject/src/settings/index.ts");
 
     expect(settings).toContain("const IS_WINDOWS = /Win/");
     expect(settings).toContain('"hide_on_minimize"');
@@ -80,7 +80,7 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("the symbolic tray setting is offered on macOS, Linux, and Windows", async () => {
-    const settings = await repoAsset("dist/settings.html");
+    const settings = await repoAsset("inject/src/settings/index.ts");
 
     expect(settings).toContain("const IS_LINUX = !IS_MAC && !IS_WINDOWS");
     expect(settings).toContain('...(IS_MAC || IS_LINUX || IS_WINDOWS ? ["tray_icon_style"] : [])');
@@ -89,7 +89,7 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("notification polish is configurable, with a taskbar flash on Windows", async () => {
-    const settings = await repoAsset("dist/settings.html");
+    const settings = await repoAsset("inject/src/settings/index.ts");
 
     // Conversation grouping stays macOS-only (Windows groups inherently);
     // clear-on-view and the attention setting cover Windows too.
@@ -102,7 +102,7 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("downloads can save automatically or ask for a location", async () => {
-    const settings = await repoAsset("dist/settings.html");
+    const settings = await repoAsset("inject/src/settings/index.ts");
 
     expect(settings).toContain('"download_behavior", "downloads"');
     expect(settings).toContain('["downloads", t("settings.general.download_behavior.downloads")]');
@@ -113,7 +113,7 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("custom CSS is presented as best-effort and reloadable", async () => {
-    const settings = await repoAsset("dist/settings.html");
+    const settings = await repoAsset("inject/src/settings/index.ts");
 
     expect(settings).toContain('invoke("open_custom_css")');
     expect(settings).toContain('t("settings.advanced.custom_css.opened")');
@@ -126,7 +126,7 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("privacy settings share their own tab", async () => {
-    const settings = await repoAsset("dist/settings.html");
+    const settings = await repoAsset("inject/src/settings/index.ts");
 
     expect(settings).toContain(
       'fields: ["block_typing_indicator", "hide_names", "hide_avatars", "block_telemetry", "strip_link_tracking"]',
@@ -134,7 +134,7 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("Facebook link cleanup is a default-on setting beside telemetry blocking", async () => {
-    const settings = await repoAsset("dist/settings.html");
+    const settings = await repoAsset("inject/src/settings/index.ts");
 
     expect(settings).toContain(
       '["strip_link_tracking", t("settings.privacy.strip_link_tracking.label")',

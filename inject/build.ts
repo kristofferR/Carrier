@@ -52,3 +52,21 @@ await build({
     js: banner("inject/src/settings/update-consent.ts"),
   },
 });
+
+// The Settings window's own scripts are classic scripts that share globals,
+// so they are only stripped of types, not bundled.
+for (const [entry, outfile] of [
+  ["inject/src/settings/early.ts", "dist/settings-early.js"],
+  ["inject/src/settings/index.ts", "dist/settings.js"],
+] as const) {
+  await build({
+    entryPoints: [entry],
+    outfile,
+    bundle: false,
+    // As inline scripts they ran in sloppy mode; keep it.
+    tsconfigRaw: { compilerOptions: { alwaysStrict: false } },
+    target: "es2020",
+    charset: "utf8",
+    banner: { js: banner(entry) },
+  });
+}
