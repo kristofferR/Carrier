@@ -4,6 +4,7 @@
  * docs/i18n/<lang>.json; this writes:
  *
  * - docs/<lang>/index.html for every translation,
+ * - docs/<lang>/<slug>/index.html for every localized guide (see guides.ts),
  * - the language list and hreflang alternates inside docs/index.html,
  * - docs/sitemap.xml (every language plus any other docs/<path>/index.html
  *   page, picked up automatically) and docs/robots.txt.
@@ -13,6 +14,7 @@
  * committed output is stale.
  */
 import { readdir, rm } from "node:fs/promises";
+import { buildGuides, GROUPS, loadGuides } from "./guides";
 
 /** Where the site is served. Changing it and rebuilding moves every absolute
  * URL: canonical, Open Graph, structured data, hreflang, sitemap and robots. */
@@ -69,6 +71,8 @@ template = replaceOnce(
 await writeIfChanged("index.html", template);
 
 // 2. One prerendered page per translation.
+const guides = await loadGuides();
+const locales = new Map<string, Locale>();
 for (const lang of langs) {
   if (!template.includes(`<option value="${lang}">`)) {
     throw new Error(`The language menu in docs/index.html has no option for ${lang}`);
@@ -83,6 +87,7 @@ for (const lang of langs) {
   if (!signed) throw new Error(`I18N_SIGNED_UPDATE_CHECKS has no phrase for ${lang}`);
   locale.t["dl.trust"] = trust.slice(0, trust.lastIndexOf(" · ") + 3) + signed;
 
+  locales.set(lang, locale);
   await writeIfChanged(`${lang}/index.html`, renderPage(lang, locale));
 }
 
@@ -95,6 +100,29 @@ for await (const path of new Bun.Glob("*/index.html").scan(docs.pathname)) {
     console.log(`removed docs/${dir}/`);
   }
 }
+
+// 2b. Localized guides, which reuse the translations' shared strings.
+await buildGuides(
+  {
+    docs,
+    site,
+    download,
+    version,
+    generated: GENERATED,
+    template,
+    strings: (lang) => {
+      const locale = locales.get(lang);
+      if (!locale) throw new Error(`A guide is written in ${lang}, which has no translation`);
+      return Object.fromEntries(
+        Object.entries(locale.t).flatMap(([key, value]) =>
+          typeof value === "string" ? [[key, value]] : [],
+        ),
+      );
+    },
+    write: writeIfChanged,
+  },
+  guides,
+);
 
 // 3. Sitemap and robots.txt. Other pages (docs/<path>/index.html written by
 // hand) join the sitemap automatically.
@@ -166,7 +194,7 @@ function renderPage(lang: string, locale: Locale): string {
     },
   });
 
-  return new HTMLRewriter()
+  const rewriter = new HTMLRewriter()
     .on("html", {
       element(el) {
         el.setAttribute("lang", lang);
@@ -206,8 +234,20 @@ function renderPage(lang: string, locale: Locale): string {
       },
     })
     .on("[src]", relocate("src"))
-    .on("[href]", relocate("href"))
-    .transform(html);
+    .on("[href]", relocate("href"));
+  // The footer links this language's own guides in place of the English ones.
+  // Registered after relocate, so the relative link it sets is final.
+  for (const guide of guides.filter((g) => g.lang === lang)) {
+    rewriter.on(`.foot-guides a[href="./${GROUPS[guide.group]}"]`, {
+      element(el) {
+        el.setAttribute("href", `${guide.slug}/`);
+        el.setAttribute("hreflang", lang);
+        el.setAttribute("lang", lang);
+        el.setInnerContent(guide.label);
+      },
+    });
+  }
+  return rewriter.transform(html);
 }
 
 function text(locale: Locale, key: string): string {

@@ -737,12 +737,13 @@ jobs:
           base=$(gh api "repos/${REPO}/git/ref/heads/main" --jq '.object.sha')
           base_tree=$(gh api "repos/${REPO}/git/commits/${base}" --jq '.tree.sha')
           tree_entries='[]'
-          # Every docs/<dir>/index.html carries the same links: the prerendered
-          # language pages (scripts/site/build.ts) and the hand-written English
-          # guides. Language translations hold a {version} token, so rewriting
-          # those pages here matches what a rebuild from the new docs/index.html makes.
+          # Every docs/<dir>/index.html and docs/<lang>/<slug>/index.html carries
+          # the same links: the prerendered language pages and localized guides
+          # (scripts/site/build.ts) and the hand-written English guides. Their
+          # sources hold {download}/{version} tokens, so rewriting the pages here
+          # matches what a rebuild from the new docs/index.html makes.
           pages_list=$(gh api "repos/${REPO}/git/trees/${base_tree}?recursive=1" \
-            --jq '.tree[] | select(.type == "blob") | .path | select(test("^docs/[^/]+/index\\.html$"))')
+            --jq '.tree[] | select(.type == "blob") | .path | select(test("^docs/[^/]+(/[^/]+)?/index\\.html$"))')
           mapfile -t pages <<< "$pages_list"
           for path in README.md docs/index.html "${pages[@]}"; do
             temp="/tmp/$(basename "$path")"

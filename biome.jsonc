@@ -9,7 +9,14 @@
     // path it is given, and a project-local worktree checks out this very file,
     // which it then rejects as a second root configuration. Narrowing the
     // argument keeps that walk inside the only tree we lint.
-    "includes": ["inject/**", "scripts/debug/**", "scripts/i18n/**", "scripts/site/**"]
+    // scripts/site/guides/ holds page content (HTML fragments), not code.
+    "includes": [
+      "inject/**",
+      "scripts/debug/**",
+      "scripts/i18n/**",
+      "scripts/site/**",
+      "!scripts/site/guides/**"
+    ]
   },
   "formatter": {
     "enabled": true,
