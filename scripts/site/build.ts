@@ -16,7 +16,7 @@ import { readdir, rm } from "node:fs/promises";
 
 /** Where the site is served. Changing it and rebuilding moves every absolute
  * URL: canonical, Open Graph, structured data, hreflang, sitemap and robots. */
-const SITE = "https://kristofferr.github.io/Carrier/";
+const SITE = "https://chatpane.app/";
 
 type Locale = { rtl: boolean; t: Record<string, string | string[]> };
 
