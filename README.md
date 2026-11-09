@@ -58,7 +58,7 @@
 
 <p align="center">
   <code>brew install --cask kristofferR/tap/chatpane</code><br>
-  <code>winget install kristofferR.Chatpane</code>
+  <code>winget install chatpane</code>
 </p>
 
 ---
@@ -260,7 +260,7 @@ to sign in there. The macOS build supports macOS 10.15 and later.
 ### Windows (winget)
 
 ```powershell
-winget install kristofferR.Chatpane
+winget install chatpane
 ```
 
 This installs the same per-user installer as the download above, for x64 or
