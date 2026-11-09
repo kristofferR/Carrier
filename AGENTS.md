@@ -117,6 +117,13 @@ until the newest entry matches the version (`scripts/check-metainfo-release.sh`)
 targets, signs + notarizes macOS, attaches artifacts without rewriting the title
 or body, and publishes it. Apple/Tauri secrets are set in the repo.
 
+After the release is published, `.github/workflows/winget.yml` opens the
+microsoft/winget-pkgs PR for `kristofferR.Chatpane` with komac (needs the
+`WINGET_TOKEN` secret; see `packaging/winget/README.md`). Check that its run
+for the tag succeeded and link the PR it opened when you hand off the release.
+If it skipped, for example because the release was held as a draft, run it
+with `gh workflow run winget.yml -f tag=vX.Y.Z` once the release is public.
+
 ---
 
 ## tauri-mcp — dev webview inspection

@@ -1,0 +1,35 @@
+{
+    "version": "3.1.0",
+    "description": "Chatpane: unofficial desktop app for Facebook Messenger, without the rest of Facebook. Not affiliated with or endorsed by Meta.",
+    "homepage": "https://chatpane.app/",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/kristofferR/Chatpane/releases/download/v3.1.0/Chatpane_3.1.0_win_x64_portable.zip",
+            "hash": "c4f53ba893863765f96261960a0f55141abdaea55d659678ec6193c8d6aef7cd"
+        },
+        "arm64": {
+            "url": "https://github.com/kristofferR/Chatpane/releases/download/v3.1.0/Chatpane_3.1.0_win_arm_portable.zip",
+            "hash": "36c2320285681fb7a5b29f5c0fd109e92a88f42e1d5286b9765b1072369106ee"
+        }
+    },
+    "shortcuts": [
+        [
+            "Chatpane.exe",
+            "Chatpane"
+        ]
+    ],
+    "checkver": {
+        "github": "https://github.com/kristofferR/Chatpane"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/kristofferR/Chatpane/releases/download/v$version/Chatpane_$version_win_x64_portable.zip"
+            },
+            "arm64": {
+                "url": "https://github.com/kristofferR/Chatpane/releases/download/v$version/Chatpane_$version_win_arm_portable.zip"
+            }
+        }
+    }
+}
