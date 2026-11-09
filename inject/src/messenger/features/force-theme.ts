@@ -4,29 +4,39 @@
 
 export function initForceTheme() {
   const html = document.documentElement;
+  const system = window.matchMedia("(prefers-color-scheme: dark)");
   // Track the class we forced so switching back to "system" can undo it live
   // (settings re-apply on the same page without a reload — see chatpane:settings).
   let forcedClass: string | null = null;
-  const apply = () => {
-    const forced = window.__CHATPANE_SETTINGS__?.theme;
-    if (forced !== "light" && forced !== "dark") {
-      // "system": drop any class we previously forced, then leave FB alone.
-      if (forcedClass) {
-        html.classList.remove(forcedClass);
-        forcedClass = null;
-      }
-      return;
-    }
-    const want = forced === "dark" ? "__fb-dark-mode" : "__fb-light-mode";
-    const other = forced === "dark" ? "__fb-light-mode" : "__fb-dark-mode";
+  // Once we have forced a class on this page, Facebook doesn't set its own
+  // again, so under "system" we keep it following the system ourselves.
+  let followSystem = false;
+  const show = (dark: boolean) => {
+    const want = dark ? "__fb-dark-mode" : "__fb-light-mode";
+    const other = dark ? "__fb-light-mode" : "__fb-dark-mode";
     if (!html.classList.contains(want) || html.classList.contains(other)) {
       html.classList.remove(other);
       html.classList.add(want);
     }
-    forcedClass = want;
+    return want;
+  };
+  const apply = () => {
+    const forced = window.__CHATPANE_SETTINGS__?.theme;
+    if (forced !== "light" && forced !== "dark") {
+      if (forcedClass) {
+        forcedClass = null;
+        followSystem = true;
+        show(system.matches);
+      }
+      return;
+    }
+    forcedClass = show(forced === "dark");
   };
   apply();
   window.addEventListener("chatpane:settings", apply);
+  system.addEventListener("change", () => {
+    if (followSystem && !forcedClass) show(system.matches);
+  });
   // Re-assert if Facebook flips its own class back.
   new MutationObserver(apply).observe(html, { attributes: true, attributeFilter: ["class"] });
 }

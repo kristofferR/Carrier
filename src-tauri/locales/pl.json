@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Dodany przez Ciebie",
   "settings.appearance.theme.add": "Dodaj plik motywu…",
   "settings.appearance.theme.open_folder": "Otwórz folder motywów",
+  "settings.appearance.theme.guide": "Jak stworzyć motyw",
   "settings.appearance.theme.remove": "Usuń motyw {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (Zaawansowane) nadal jest stosowany na końcu.",
   "settings.appearance.theme.added": "Dodano motyw {name}. Edytuj jego plik w folderze motywów i wczytaj stronę ponownie (Cmd/Ctrl+R), aby zobaczyć zmiany.",

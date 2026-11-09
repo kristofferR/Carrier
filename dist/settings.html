@@ -824,6 +824,10 @@
         folder.type = "button";
         folder.onclick = () => invoke("open_themes_folder").catch((e) => setStatus(String(e)));
         links.append(folder);
+        const guide = el("button", "link-button", t("settings.appearance.theme.guide"));
+        guide.type = "button";
+        guide.onclick = () => invoke("open_theme_guide").catch((e) => setStatus(String(e)));
+        links.append(guide);
         const selected = themes.find((theme) => theme.id === (settings.color_theme || "default"));
         if (selected && !selected.builtIn) {
           const remove = el("button", "link-button", t("settings.appearance.theme.remove", { name: selected.name }));

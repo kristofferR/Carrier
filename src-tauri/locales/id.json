@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Ditambahkan olehmu",
   "settings.appearance.theme.add": "Tambah file tema…",
   "settings.appearance.theme.open_folder": "Buka folder tema",
+  "settings.appearance.theme.guide": "Cara membuat tema",
   "settings.appearance.theme.remove": "Hapus {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (Lanjutan) tetap diterapkan paling akhir.",
   "settings.appearance.theme.added": "{name} ditambahkan. Edit file-nya di folder tema, lalu muat ulang (Cmd/Ctrl+R) untuk melihat perubahan.",

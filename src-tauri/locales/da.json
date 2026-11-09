@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Tilføjet af dig",
   "settings.appearance.theme.add": "Tilføj temafil…",
   "settings.appearance.theme.open_folder": "Åbn temamappen",
+  "settings.appearance.theme.guide": "Sådan laver du et tema",
   "settings.appearance.theme.remove": "Fjern {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (Avanceret) anvendes stadig til sidst.",
   "settings.appearance.theme.added": "{name} er tilføjet. Rediger filen i temamappen, og genindlæs (Cmd/Ctrl+R) for at se ændringerne.",

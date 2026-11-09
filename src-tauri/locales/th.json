@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "คุณเพิ่มเอง",
   "settings.appearance.theme.add": "เพิ่มไฟล์ธีม…",
   "settings.appearance.theme.open_folder": "เปิดโฟลเดอร์ธีม",
+  "settings.appearance.theme.guide": "วิธีสร้างธีม",
   "settings.appearance.theme.remove": "ลบ {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (ขั้นสูง) ยังคงมีผลเป็นลำดับสุดท้าย",
   "settings.appearance.theme.added": "เพิ่ม {name} แล้ว แก้ไขไฟล์ของธีมในโฟลเดอร์ธีมแล้วโหลดซ้ำ (Cmd/Ctrl+R) เพื่อดูการเปลี่ยนแปลง",

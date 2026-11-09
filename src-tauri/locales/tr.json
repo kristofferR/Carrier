@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Senin eklediğin",
   "settings.appearance.theme.add": "Tema dosyası ekle…",
   "settings.appearance.theme.open_folder": "Temalar klasörünü aç",
+  "settings.appearance.theme.guide": "Tema nasıl yapılır",
   "settings.appearance.theme.remove": "{name} temasını kaldır",
   "settings.appearance.theme.custom_css_note": "custom.css (Gelişmiş) yine en son uygulanır.",
   "settings.appearance.theme.added": "{name} eklendi. Değişiklikleri görmek için dosyasını temalar klasöründe düzenle ve yeniden yükle (Cmd/Ctrl+R).",

@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Adicionado por você",
   "settings.appearance.theme.add": "Adicionar arquivo de tema…",
   "settings.appearance.theme.open_folder": "Abrir pasta de temas",
+  "settings.appearance.theme.guide": "Como criar um tema",
   "settings.appearance.theme.remove": "Remover {name}",
   "settings.appearance.theme.custom_css_note": "O custom.css (Avançado) continua sendo aplicado por último.",
   "settings.appearance.theme.added": "Tema {name} adicionado. Edite o arquivo dele na pasta de temas e recarregue (Cmd/Ctrl+R) para ver as mudanças.",

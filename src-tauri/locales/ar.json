@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "أضفتها أنت",
   "settings.appearance.theme.add": "إضافة ملف سمة…",
   "settings.appearance.theme.open_folder": "فتح مجلد السمات",
+  "settings.appearance.theme.guide": "كيفية إنشاء سمة",
   "settings.appearance.theme.remove": "إزالة {name}",
   "settings.appearance.theme.custom_css_note": "يظل ملف custom.css (في «متقدّم») يُطبَّق في النهاية.",
   "settings.appearance.theme.added": "تمت إضافة {name}. عدّل ملفها في مجلد السمات ثم أعد التحميل (Cmd/Ctrl+R) لرؤية التغييرات.",

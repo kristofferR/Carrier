@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Додано вами",
   "settings.appearance.theme.add": "Додати файл теми…",
   "settings.appearance.theme.open_folder": "Відкрити теку тем",
+  "settings.appearance.theme.guide": "Як створити тему",
   "settings.appearance.theme.remove": "Видалити тему {name}",
   "settings.appearance.theme.custom_css_note": "custom.css (Додатково) і далі застосовується останнім.",
   "settings.appearance.theme.added": "Тему {name} додано. Редагуйте її файл у теці тем і перезавантажте сторінку (Cmd/Ctrl+R), щоб побачити зміни.",

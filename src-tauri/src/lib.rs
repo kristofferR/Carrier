@@ -1223,6 +1223,7 @@ pub fn run() {
             themes::add_theme,
             themes::remove_theme,
             themes::open_themes_folder,
+            themes::open_theme_guide,
             themes::list_fonts,
             sound::notification_sounds,
             sound::choose_notification_sound,
@@ -1234,6 +1235,8 @@ pub fn run() {
             // scripts access to app events.
             #[cfg(all(feature = "mcp", debug_assertions))]
             app.add_capability(include_str!("../dev-capabilities/mcp.json"))?;
+            #[cfg(all(feature = "mcp", debug_assertions))]
+            themes::preview::install(app.handle());
 
             identity::log_report();
             clear_pending_webview_data(app.handle());

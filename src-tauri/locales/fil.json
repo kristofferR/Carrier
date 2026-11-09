@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Idinagdag mo",
   "settings.appearance.theme.add": "Magdagdag ng theme file…",
   "settings.appearance.theme.open_folder": "Buksan ang themes folder",
+  "settings.appearance.theme.guide": "Paano gumawa ng theme",
   "settings.appearance.theme.remove": "Alisin ang {name}",
   "settings.appearance.theme.custom_css_note": "Huli pa ring ina-apply ang custom.css (Advanced).",
   "settings.appearance.theme.added": "Naidagdag ang {name}. I-edit ang file nito sa themes folder at i-reload (Cmd/Ctrl+R) para makita ang mga pagbabago.",

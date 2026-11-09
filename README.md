@@ -128,7 +128,7 @@ global shortcuts, and cryptographically verified updates.
 ### Appearance
 
 - Themes: Default, OLED Black, Terminal, Graphite, Warm, Pink, Lavender, Sage
-  and Slate, or import your own
+  and Slate, or import your own ([how to make a theme](themes/README.md))
 - Accent color and message font
 - Four app icons (Color, Color dark, Mono and Mono dark), with an optional
   different icon in dark mode

@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "Te adtad hozzá",
   "settings.appearance.theme.add": "Témafájl hozzáadása…",
   "settings.appearance.theme.open_folder": "Témák mappájának megnyitása",
+  "settings.appearance.theme.guide": "Hogyan készíts témát",
   "settings.appearance.theme.remove": "Eltávolítás: {name}",
   "settings.appearance.theme.custom_css_note": "A custom.css (Speciális) továbbra is utoljára érvényesül.",
   "settings.appearance.theme.added": "Hozzáadva: {name}. Szerkeszd a fájlját a témák mappájában, majd töltsd újra az oldalt (Cmd/Ctrl+R), hogy lásd a változásokat.",

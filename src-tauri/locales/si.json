@@ -425,6 +425,7 @@
   "settings.appearance.theme.added_by_you": "ඔබ විසින් එක් කළ",
   "settings.appearance.theme.add": "තේමා ගොනුවක් එක් කරන්න…",
   "settings.appearance.theme.open_folder": "තේමා ෆෝල්ඩරය විවෘත කරන්න",
+  "settings.appearance.theme.guide": "තේමාවක් සාදන ආකාරය",
   "settings.appearance.theme.remove": "{name} ඉවත් කරන්න",
   "settings.appearance.theme.custom_css_note": "custom.css (උසස්) තවමත් අවසානයට අදාළ වේ.",
   "settings.appearance.theme.added": "{name} එක් කරන ලදී. වෙනස්කම් බැලීමට තේමා ෆෝල්ඩරයේ එහි ගොනුව සංස්කරණය කර නැවත පූරණය කරන්න (Cmd/Ctrl+R).",
