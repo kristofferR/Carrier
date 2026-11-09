@@ -31,7 +31,7 @@ impl MessengerLoadStatus {
         Self::new(
             "loading",
             "Loading Messenger",
-            "Messenger is reachable. Carrier is opening it now.",
+            "Messenger is reachable. Chatpane is opening it now.",
             None,
         )
     }
@@ -40,7 +40,7 @@ impl MessengerLoadStatus {
         Self::new(
             "error",
             title,
-            "Carrier could not finish the Messenger reachability check.",
+            "Chatpane could not finish the Messenger reachability check.",
             Some(detail),
         )
     }
@@ -79,7 +79,7 @@ impl From<MessengerPreflightError> for MessengerLoadStatus {
             MessengerPreflightError::Blocked { host, ips } => Self::new(
                 "blocked",
                 "Messenger appears blocked",
-                "Carrier cannot load Messenger because Facebook is resolving to a local blocking address. This commonly happens when a productivity blocker, DNS filter, or hosts-file rule is active.",
+                "Chatpane cannot load Messenger because Facebook is resolving to a local blocking address. This commonly happens when a productivity blocker, DNS filter, or hosts-file rule is active.",
                 Some(format!("{host} -> {}", format_ips(&ips))),
             ),
             MessengerPreflightError::DnsFailed {
@@ -91,7 +91,7 @@ impl From<MessengerPreflightError> for MessengerLoadStatus {
             } => Self::new(
                 "unreachable",
                 "Cannot resolve Messenger",
-                "Carrier could not resolve Facebook's Messenger host. Check your internet connection, DNS settings, VPN, or firewall.",
+                "Chatpane could not resolve Facebook's Messenger host. Check your internet connection, DNS settings, VPN, or firewall.",
                 Some(match resolver_status {
                     Some(status) => {
                         format!("{host}: {error} ({kind:?}, resolver status {status})")

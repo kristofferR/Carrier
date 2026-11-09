@@ -1,6 +1,6 @@
 # Snap Store
 
-`snap/snapcraft.yaml` builds Carrier from the current checkout for AMD64 and
+`snap/snapcraft.yaml` builds Chatpane (formerly Carrier) as the `chatpane` snap from the current checkout for AMD64 and
 ARM64, using core24 and the GNOME extension. The version comes from Cargo.toml.
 Committed inject bundles and static frontend files are embedded by Cargo; the
 dev-only MCP feature is disabled.
@@ -11,8 +11,8 @@ Use Snapcraft with its LXD build provider on Linux, from the repository root:
 
 ```sh
 snapcraft
-sudo snap install --dangerous ./carrier_1.13.0_amd64.snap
-snap run carrier
+sudo snap install --dangerous ./chatpane_<version>_amd64.snap
+snap run chatpane
 ```
 
 The **Linux store packages** GitHub Actions workflow builds candidate artifacts
@@ -36,31 +36,33 @@ not establish that the sandbox permissions are sufficient.
 - `audio-playback`, `audio-record`, and `camera` support messaging and calls.
   Camera and microphone interfaces may need explicit connections by the user.
 - `unity7` supports tray and launcher integration.
-- `browser-support` with `allow-sandbox: true` preserves WebKit's inner sandbox.
+- `browser-support` covers WebKit's shared-memory and process needs. It omits
+  `allow-sandbox`: WebKitGTK never starts its Bubblewrap sandbox inside a Snap
+  (`shouldUseBubblewrap()` in WebKit's `wtf/glib/Sandbox.cpp`), and the Store
+  reserves that attribute for vetted publishers.
 - The D-Bus slot matches the installed single-instance plugin's exact name:
   `io.github.kristofferr.carrier.SingleInstance`.
 - Notifications use the XDG notification portal and export actions on
-  `snap.carrier` at `/snap/carrier`. This receives Wayland activation data in
+  `snap.chatpane` at `/snap/chatpane` (derived from `SNAP_NAME`). This receives Wayland activation data in
   a directed method call; Snap blocks the freedesktop `ActivationToken` broadcast.
-- The desktop plug preserves a hidden `snap.carrier.desktop` with
+- The desktop plug preserves a hidden `snap.chatpane.desktop` with
   `desktop-file-ids` (snapd 2.66 or newer). Its ID matches the portal's
-  `snap.carrier` identity. Supply it directly in `snap/gui/`; Snapcraft's app
-  `desktop` key renames extracted files. The regular `carrier.desktop` remains
+  `snap.chatpane` identity. Supply it directly in `snap/gui/`; Snapcraft's app
+  `desktop` key renames extracted files. The regular `chatpane.desktop` remains
   the visible launcher: Ubuntu identifies the running window and its badges
-  through `carrier_carrier.desktop`. `NoDisplay=true` on the portal entry avoids
+  through `chatpane_chatpane.desktop`. `NoDisplay=true` on the portal entry avoids
   a duplicate menu item. CI checks both entries inside the built package.
 
-The two D-Bus slots, preserved desktop ID, and sandbox permission need Snap Store review. Request the
-necessary declarations and connections through the publisher dashboard when
-the first upload enters review. Do not disable WebKit's sandbox to clear denials.
+The two D-Bus slots and the preserved desktop ID need Snap Store review; see
+the release steps below.
 
-Snap owns updates. Carrier disables its GitHub update polling and installer in
+Snap owns updates. Chatpane disables its GitHub update polling and installer in
 the package. Login startup remains unavailable until Snap autostart integration
 is implemented. Multi Instance is disabled because exported notification actions
-require one Carrier process to own the application bus name. Notification avatars are sent as serialized bytes icons over
+require one Chatpane process to own the application bus name. Notification avatars are sent as serialized bytes icons over
 D-Bus, so the host does not need access to files inside the sandbox. Reply
-buttons open Carrier's composer. Portal version 1 leaves notification sound
-to the desktop; version 2 supports Carrier's sound preference.
+buttons open Chatpane's composer. Portal version 1 leaves notification sound
+to the desktop; version 2 supports Chatpane's sound preference.
 
 Ubuntu 24.04 can strip notification avatars because AppArmor blocks the host
 portal's sandboxed icon validator ([Ubuntu #2069526](https://bugs.launchpad.net/bugs/2069526)).
@@ -70,27 +72,41 @@ make the avatar test pass.
 
 ## Publisher setup and release
 
-Create a publisher account at <https://snapcraft.io>, then register `carrier`.
-Availability is only confirmed when registration succeeds. If a different name
-is needed, update `name`, the `snap.<name>` desktop and action-bus identities,
-and their Rust constants together; the portal derives its identity from the
-registered Snap name. Keep the application key `carrier` for desktop actions.
+`snapcraft.io/chatpane` has no published revision (checked 2026-11-08). Only
+registration confirms the name is free. Register and upload only after the
+Chatpane rename release ships, so the snap never shows the old in-app name.
 
-After strict-confinement testing and store review:
+To use a different name, change `name`, the app key, `snap/gui/snap.<name>.desktop`,
+`desktop-file-ids`, and the notification D-Bus slot together. Chatpane's Rust
+code derives the portal bus name, object path, and launcher desktop ID
+(`<name>_<name>`) from `SNAP_NAME`, so the app key must equal the snap name.
 
-```sh
-snapcraft login
-snapcraft register carrier
-snapcraft upload --release=candidate ./carrier_1.13.0_amd64.snap
-snapcraft upload --release=candidate ./carrier_1.13.0_arm64.snap
-snapcraft status carrier
-```
+First release, with the publisher's Snap Store account (Ubuntu One):
 
-Test both candidate revisions before promoting each approved revision with
-`snapcraft release carrier <revision> stable`. Configure the listing's icon,
-screenshots, description, and support links in the publisher dashboard first.
-Keep credentials out of the repository. Future CI publishing should use a
-package-scoped store credential only after the account and name are established.
+1. `snapcraft login`, then `snapcraft register chatpane`.
+2. Build or download both CI candidates (**Linux store packages**, run manually)
+   and upload them: `snapcraft upload --release=candidate ./chatpane_<version>_<arch>.snap`.
+   The D-Bus slots stop each upload in manual review.
+3. Post one request in the forum's
+   [store-requests](https://forum.snapcraft.io/c/store-requests/19) category
+   asking reviewers to clear the revisions and grant a snap declaration for:
+   the session-bus `dbus` slots `snap.chatpane` (exported notification actions)
+   and `io.github.kristofferr.carrier.SingleInstance` (second launches), and the
+   `desktop` plug's `desktop-file-ids: [snap.chatpane]`. Optionally ask for
+   `camera` and `audio-record` auto-connection for Messenger calls; without it,
+   users connect them in their software center. A declaration lets later
+   uploads pass automatically.
+4. In the publisher dashboard listing, set the icon, category (Social), the
+   screenshots in `docs/screenshots/` (dark first), and support links.
+5. Test both candidate revisions (see above), then
+   `snapcraft release chatpane <revision> stable` for each architecture.
+
+Later releases: create a package-scoped credential with
+`snapcraft export-login --snaps=chatpane --channels=edge,beta,candidate --acls package_access,package_push,package_update,package_release -`,
+store it as `SNAPCRAFT_STORE_CREDENTIALS` in the repository's `snap-store`
+environment, and set the repository variable `SNAP_STORE_PUBLISH` to `true`.
+The **Snap Store** workflow then uploads each `v*` tag to `candidate`; promote
+tested revisions to stable by hand. Keep credentials out of the repository.
 
 References: [Tauri packaging](https://v2.tauri.app/distribute/snapcraft/),
 [GNOME extension](https://ubuntu.com/docs/snapcraft/9/reference/extensions/gnome-extension/),

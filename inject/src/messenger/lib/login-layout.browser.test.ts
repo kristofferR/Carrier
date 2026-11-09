@@ -12,14 +12,14 @@ const chromium = Bun.which("google-chrome") || Bun.which("chromium");
 test.skipIf(!chromium)(
   "login preserves scrolling, themes, required auth UI, and post-login navigation",
   async () => {
-    const profile = await mkdtemp(join(tmpdir(), "carrier-login-layout-"));
+    const profile = await mkdtemp(join(tmpdir(), "chatpane-login-layout-"));
     const bundle = await build({
       stdin: {
         contents: `
           import { findOptionalCookieDeclineButton } from "../features/cookie-consent";
           import { initForceTheme } from "../features/force-theme";
           import { initLoginTidy } from "../features/login-tidy";
-          const testLocation = globalThis.__carrierTestLocation = {
+          const testLocation = globalThis.__chatpaneTestLocation = {
             hostname: "www.facebook.com", pathname: "/login.php",
             href: "https://www.facebook.com/login.php", replace() {}
           };
@@ -30,7 +30,7 @@ test.skipIf(!chromium)(
       bundle: true,
       write: false,
       define: {
-        location: "globalThis.__carrierTestLocation",
+        location: "globalThis.__chatpaneTestLocation",
       },
     });
     const css = await readFile(
@@ -136,16 +136,16 @@ async function runFixture(
         super.disconnect();
       }
     };
-    window.__CARRIER_SETTINGS__ = { theme: "dark" };
+    window.__CHATPANE_SETTINGS__ = { theme: "dark" };
     initTheme(); // Production order: the forced root class already exists.
     initTidy();
     await new Promise((resolve) => setTimeout(resolve, 200));
-    const languageRoot = document.querySelector("[data-carrier-login-languages]");
+    const languageRoot = document.querySelector("[data-chatpane-login-languages]");
     if (!languageRoot) throw new Error("Language strip missing");
-    if (document.body.hasAttribute("data-carrier-login-footer-keep"))
+    if (document.body.hasAttribute("data-chatpane-login-footer-keep"))
       throw new Error("Footer styling reached the page body");
-    for (const wrapper of document.querySelectorAll("[data-carrier-login-footer-keep]")) {
-      if (!wrapper.closest("[data-carrier-login-footer]") || !wrapper.contains(languageRoot))
+    for (const wrapper of document.querySelectorAll("[data-chatpane-login-footer-keep]")) {
+      if (!wrapper.closest("[data-chatpane-login-footer]") || !wrapper.contains(languageRoot))
         throw new Error("Footer styling escaped the language branch");
     }
     const html = document.documentElement;
@@ -158,7 +158,7 @@ async function runFixture(
     );
     const color = (selector: string) => getComputedStyle(document.querySelector(selector)!).color;
     const checkLanguageSpacing = () => {
-      const form = document.querySelector("[data-carrier-login-form]")!;
+      const form = document.querySelector("[data-chatpane-login-form]")!;
       const gap = languageRoot.getBoundingClientRect().top - form.getBoundingClientRect().bottom;
       assert("Language selector follows the form without a large gap", gap >= 16 && gap <= 48);
       assert(
@@ -181,7 +181,7 @@ async function runFixture(
     };
     assert(
       "Forced dark is applied after force-theme",
-      html.hasAttribute("data-carrier-login-dark"),
+      html.hasAttribute("data-chatpane-login-dark"),
     );
     assert("Nested light text palette replaced", color("h2") === "rgb(243, 244, 245)");
     assert("Input text follows dark palette", color('input[name="email"]') === color("h2"));
@@ -210,13 +210,13 @@ async function runFixture(
     checkLanguageSpacing(); // A short form must not push languages to the window bottom.
     content.style.minHeight = "120vh";
     const theme = async (value: "light" | "dark" | "system") => {
-      window.__CARRIER_SETTINGS__ = { theme: value };
-      window.dispatchEvent(new Event("carrier:settings"));
+      window.__CHATPANE_SETTINGS__ = { theme: value };
+      window.dispatchEvent(new Event("chatpane:settings"));
       await new Promise((resolve) => setTimeout(resolve, 40));
     };
     await theme("light");
     assert("Light palette restored", color("h2") === "rgb(17, 17, 18)");
-    assert("Light marker removed", !html.hasAttribute("data-carrier-login-dark"));
+    assert("Light marker removed", !html.hasAttribute("data-chatpane-login-dark"));
     assert(
       "Literal-white band restored in light mode",
       getComputedStyle(document.querySelector("#legacy-band")!).backgroundColor ===
@@ -226,7 +226,7 @@ async function runFixture(
     await theme("system");
     assert(
       "System theme followed",
-      html.hasAttribute("data-carrier-login-dark") ===
+      html.hasAttribute("data-chatpane-login-dark") ===
         matchMedia("(prefers-color-scheme: dark)").matches,
     );
     await theme("dark");
@@ -238,8 +238,8 @@ async function runFixture(
     ]) {
       document.body.innerHTML = content;
       await new Promise((resolve) => setTimeout(resolve, 40));
-      assert("Non-login layout preserved", !html.hasAttribute("data-carrier-login"));
-      assert("Login palette cleaned up", !html.hasAttribute("data-carrier-login-dark"));
+      assert("Non-login layout preserved", !html.hasAttribute("data-chatpane-login"));
+      assert("Login palette cleaned up", !html.hasAttribute("data-chatpane-login-dark"));
       assert(
         "Required controls visible",
         document.querySelector("button")!.getBoundingClientRect().height > 0,
@@ -251,7 +251,7 @@ async function runFixture(
     testLocation.replace = (url) => redirects.push(String(url));
     const checkNavigation = async (path: string, expected: number) => {
       testLocation.pathname = path;
-      window.dispatchEvent(new Event("carrier:settings"));
+      window.dispatchEvent(new Event("chatpane:settings"));
       await new Promise((resolve) => setTimeout(resolve, 40));
       if (redirects.length !== expected)
         throw new Error(`Unexpected redirect count on ${path}: ${redirects.length}`);

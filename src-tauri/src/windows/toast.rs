@@ -314,7 +314,7 @@ pub(crate) fn try_deliver_notification_windows(
     show_toast(app, &opts).map_err(|error| format!("Windows refused the notification: {error}"))
 }
 
-/// Why Windows would not show Carrier's toasts, from its notification
+/// Why Windows would not show Chatpane's toasts, from its notification
 /// settings (Ref #259). None when they are allowed or unreadable.
 #[cfg(target_os = "windows")]
 pub(crate) fn notification_blocker(app: &tauri::AppHandle) -> Option<String> {
@@ -332,7 +332,7 @@ fn windows_blocker_message(setting: NotificationSetting) -> Option<String> {
     let message = match setting {
         NotificationSetting::Enabled => return None,
         NotificationSetting::DisabledForApplication => {
-            "Notifications are turned off for Carrier. Turn them on in Windows Settings → System → Notifications."
+            "Notifications are turned off for Chatpane. Turn them on in Windows Settings → System → Notifications."
         }
         NotificationSetting::DisabledForUser => {
             "Notifications are turned off for this Windows account. Turn them on in Windows Settings → System → Notifications."
@@ -341,9 +341,9 @@ fn windows_blocker_message(setting: NotificationSetting) -> Option<String> {
             "Notifications are turned off by your organization's policy."
         }
         NotificationSetting::DisabledByManifest => {
-            "This Carrier installation cannot show notifications. Reinstalling Carrier should fix it."
+            "This Chatpane installation cannot show notifications. Reinstalling Chatpane should fix it."
         }
-        _ => "Windows reports that notifications are turned off for Carrier.",
+        _ => "Windows reports that notifications are turned off for Chatpane.",
     };
     Some(message.into())
 }
@@ -430,7 +430,7 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
     log_notifications_disabled_once(&notifier);
     notifier.Show(&toast)?;
     // An unpackaged app's toast can't play a file, so the toast is silent and
-    // Carrier plays it, unless Windows turned Carrier's toasts off.
+    // Chatpane plays it, unless Windows turned Chatpane's toasts off.
     if let crate::sound::Sound::File(path) = &opts.sound
         && notifier
             .Setting()
@@ -467,7 +467,7 @@ fn log_legacy_notifications_disabled_once(setting: NotificationSetting) {
     static LOGGED: AtomicBool = AtomicBool::new(false);
     if !LOGGED.swap(true, Ordering::Relaxed) {
         log::warn!(
-            "Windows notifications remain disabled for Carrier's original identity (setting {setting:?})"
+            "Windows notifications remain disabled for Chatpane's original identity (setting {setting:?})"
         );
     }
 }
@@ -551,7 +551,7 @@ fn log_notifications_disabled_once(notifier: &ToastNotifier) {
         && setting != NotificationSetting::Enabled
         && !LOGGED.swap(true, Ordering::Relaxed)
     {
-        log::warn!("Windows notifications appear disabled for Carrier (setting {setting:?})");
+        log::warn!("Windows notifications appear disabled for Chatpane (setting {setting:?})");
     }
 }
 
@@ -575,7 +575,7 @@ pub(crate) fn clear_thread_group(app: &tauri::AppHandle, thread_id: &str) {
     crate::notifications::take_routed_notification_ids_for_thread(&format!("/t/{thread_id}/"));
 }
 
-/// Clear every Carrier toast from Action Center (Log Out; Ref #356).
+/// Clear every Chatpane toast from Action Center (Log Out; Ref #356).
 #[cfg(target_os = "windows")]
 pub(crate) fn clear_all(app: &tauri::AppHandle) {
     match ToastNotificationManager::History() {
@@ -590,7 +590,7 @@ pub(crate) fn clear_all(app: &tauri::AppHandle) {
     }
 }
 
-/// Register Carrier's dedicated toast AppUserModelID in
+/// Register Chatpane's dedicated toast AppUserModelID in
 /// `HKCU\Software\Classes\AppUserModelId\<aumid>` with its display assets.
 /// This works independently of the installed shortcut, so installed and
 /// portable builds follow the same path. Idempotent, per-user, no admin.
@@ -603,7 +603,7 @@ pub(crate) fn init(app: &tauri::AppHandle) {
             return;
         }
     };
-    if let Err(error) = register_aumid(&toast_app_id(app), "Carrier", &icon_path) {
+    if let Err(error) = register_aumid(&toast_app_id(app), "Chatpane", &icon_path) {
         log::warn!("failed to register the toast AppUserModelID: {error}");
     }
 }

@@ -14,7 +14,7 @@ describe("viewerControlOffset", () => {
     expect(viewerControlOffset([8, 42], 28)).toBe(28);
   });
 
-  test("keeps controls clear of Carrier's window controls", () => {
+  test("keeps controls clear of Chatpane's window controls", () => {
     expect(viewerControlOffset([8, 14], 0, 32)).toBe(32);
   });
 

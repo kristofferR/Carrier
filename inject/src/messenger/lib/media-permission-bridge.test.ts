@@ -4,8 +4,8 @@ test("permission snapshots require matching requests, known states and a native 
   const source = await Bun.file(
     new URL("../../../../src-tauri/src/window.rs", import.meta.url),
   ).text();
-  const start = source.indexOf("  var carrierMediaPermissionStatus = function");
-  const end = source.indexOf("  var carrierOpenMediaPrivacy", start);
+  const start = source.indexOf("  var chatpaneMediaPermissionStatus = function");
+  const end = source.indexOf("  var chatpaneOpenMediaPrivacy", start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   const factory = source.slice(start, end).replaceAll("{{", "{").replaceAll("}}", "}");
@@ -13,9 +13,9 @@ test("permission snapshots require matching requests, known states and a native 
   const emitted: Record<string, unknown>[] = [];
   const verified: unknown[] = [];
   const make = new Function(
-    "carrierAuthorizedEmit",
-    "carrierVerifyResult",
-    "carrierNativeRequest",
+    "chatpaneAuthorizedEmit",
+    "chatpaneVerifyResult",
+    "chatpaneNativeRequest",
     "NativePromise",
     "nativeSetTimeout",
     "nativeClearTimeout",
@@ -23,7 +23,7 @@ test("permission snapshots require matching requests, known states and a native 
     "nativeWindowAddEventListener",
     "nativeWindowRemoveEventListener",
     "window",
-    `${factory}; return carrierMediaPermissionStatus;`,
+    `${factory}; return chatpaneMediaPermissionStatus;`,
   );
   const query = make(
     async (_event: string, payload: Record<string, unknown>) => {
@@ -44,7 +44,7 @@ test("permission snapshots require matching requests, known states and a native 
   ) as (device?: "camera" | "microphone") => Promise<{ camera: string; microphone: string }>;
   const dispatch = (request: string, camera: string, signature: string) =>
     target.dispatchEvent(
-      new CustomEvent("carrier:media-permission-status-result", {
+      new CustomEvent("chatpane:media-permission-status-result", {
         detail: { request, camera, microphone: "allowed", signature },
       }),
     );

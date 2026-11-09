@@ -1,7 +1,7 @@
-// Carrier Share — the macOS share extension (Ref #211).
+// Chatpane Share — the macOS share extension (Ref #211).
 //
 // The share sheet only lists apps that bundle an .appex, so this tiny
-// sandboxed extension is what puts Carrier in the menu. It presents no UI:
+// sandboxed extension is what puts Chatpane in the menu. It presents no UI:
 // the attachments are serialized onto a one-time, unguessable named
 // pasteboard, the main app is told to take over via a capability URL, and the
 // request completes.
@@ -16,18 +16,18 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 
-static NSString *const kCarrierPasteboardPrefix = @"io.github.kristofferr.carrier.share.";
-static NSString *const kCarrierHandoffURLPrefix = @"carrier://share-pasteboard";
+static NSString *const kChatpanePasteboardPrefix = @"io.github.kristofferr.carrier.share.";
+static NSString *const kChatpaneHandoffURLPrefix = @"chatpane://share-pasteboard";
 /// Mirrors the intake's cap; a larger selection is refused here so the sheet
 /// reports the failure instead of the app silently dropping it.
-static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
+static const NSUInteger kChatpaneMaxBytes = 100 * 1024 * 1024;
 
-@interface CarrierShareViewController : NSViewController <NSExtensionRequestHandling>
+@interface ChatpaneShareViewController : NSViewController <NSExtensionRequestHandling>
 @property(atomic) BOOL started;
 @property(nonatomic, strong) NSExtensionContext *shareContext;
 @end
 
-@implementation CarrierShareViewController
+@implementation ChatpaneShareViewController
 
 - (void)loadView {
   // Never meaningfully shown; the request is handled from
@@ -38,7 +38,7 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
 // The system calls this on the principal class when the request starts,
 // independent of whether the (empty) view is ever presented.
 - (void)beginRequestWithExtensionContext:(NSExtensionContext *)context {
-  NSLog(@"Carrier Share: beginRequest");
+  NSLog(@"Chatpane Share: beginRequest");
   self.shareContext = context;
   [self processRequest];
 }
@@ -95,7 +95,7 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
   }
   NSExtensionContext *context = self.shareContext;
   if (!context) {
-    NSLog(@"Carrier Share: no extension context");
+    NSLog(@"Chatpane Share: no extension context");
     return;
   }
 
@@ -116,7 +116,7 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
         }
       };
       void (^collect)(NSString *, NSData *) = ^(NSString *name, NSData *data) {
-        if (name.length > 0 && data.length > 0 && data.length <= kCarrierMaxBytes) {
+        if (name.length > 0 && data.length > 0 && data.length <= kChatpaneMaxBytes) {
           @synchronized(collected) {
             collected[slot] = @{
               @"name" : name,
@@ -148,22 +148,22 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
                                 if (![source getResourceValue:&fileSize
                                                        forKey:NSURLFileSizeKey
                                                         error:&metadataError] ||
-                                    fileSize.unsignedLongLongValue > kCarrierMaxBytes) {
-                                  NSLog(@"Carrier Share: refused file before reading: %@",
+                                    fileSize.unsignedLongLongValue > kChatpaneMaxBytes) {
+                                  NSLog(@"Chatpane Share: refused file before reading: %@",
                                         metadataError ?: @"over the size cap");
                                   fail();
                                 } else {
                                   NSError *readError = nil;
                                   NSFileHandle *handle = [NSFileHandle fileHandleForReadingFromURL:source
                                                                                             error:&readError];
-                                  NSData *data = [handle readDataUpToLength:kCarrierMaxBytes + 1
+                                  NSData *data = [handle readDataUpToLength:kChatpaneMaxBytes + 1
                                                                      error:&readError];
                                   [handle closeFile];
                                   if (!handle || !data) {
-                                    NSLog(@"Carrier Share: file read failed: %@", readError);
+                                    NSLog(@"Chatpane Share: file read failed: %@", readError);
                                     fail();
-                                  } else if (data.length > kCarrierMaxBytes) {
-                                    NSLog(@"Carrier Share: file grew beyond the size cap while reading");
+                                  } else if (data.length > kChatpaneMaxBytes) {
+                                    NSLog(@"Chatpane Share: file grew beyond the size cap while reading");
                                     fail();
                                   } else {
                                     collect([self nameForIndex:slot.unsignedIntegerValue
@@ -178,7 +178,7 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
                                 }
                               }
                             } else {
-                              NSLog(@"Carrier Share: file-url load failed: %@", error);
+                              NSLog(@"Chatpane Share: file-url load failed: %@", error);
                               fail();
                             }
                             dispatch_group_leave(group);
@@ -195,7 +195,7 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
                                                 fallback:extension],
                                       (NSData *)loaded);
                             } else {
-                              NSLog(@"Carrier Share: data load failed: %@", error);
+                              NSLog(@"Chatpane Share: data load failed: %@", error);
                               fail();
                             }
                             dispatch_group_leave(group);
@@ -213,8 +213,8 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
     for (NSNumber *slot in [collected.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
       NSDictionary *entry = collected[slot];
       totalBytes += [entry[@"bytes"] unsignedIntegerValue];
-      if (totalBytes > kCarrierMaxBytes) {
-        NSLog(@"Carrier Share: selection over the size cap");
+      if (totalBytes > kChatpaneMaxBytes) {
+        NSLog(@"Chatpane Share: selection over the size cap");
         [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
                                                             code:3
                                                         userInfo:nil]];
@@ -222,9 +222,9 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
       }
       [payload addObject:@{@"name" : entry[@"name"], @"data" : entry[@"data"]}];
     }
-    NSLog(@"Carrier Share: collected %lu attachment(s)", (unsigned long)payload.count);
+    NSLog(@"Chatpane Share: collected %lu attachment(s)", (unsigned long)payload.count);
     if (payload.count == 0 || failed.count > 0 || payload.count != index) {
-      NSLog(@"Carrier Share: refusing partial selection (%lu attachment(s) failed)",
+      NSLog(@"Chatpane Share: refusing partial selection (%lu attachment(s) failed)",
             (unsigned long)failed.count);
       [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
                                                           code:2
@@ -237,7 +237,7 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
                                                        encoding:NSUTF8StringEncoding]
                                 : nil;
     if (!serialized) {
-      NSLog(@"Carrier Share: serializing the payload failed");
+      NSLog(@"Chatpane Share: serializing the payload failed");
       [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
                                                           code:4
                                                       userInfo:nil]];
@@ -245,13 +245,13 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
     }
 
     NSString *token = [NSUUID.UUID.UUIDString lowercaseString];
-    NSString *pasteboardName = [kCarrierPasteboardPrefix stringByAppendingString:token];
-    NSString *handoffURL = [NSString stringWithFormat:@"%@/%@", kCarrierHandoffURLPrefix, token];
+    NSString *pasteboardName = [kChatpanePasteboardPrefix stringByAppendingString:token];
+    NSString *handoffURL = [NSString stringWithFormat:@"%@/%@", kChatpaneHandoffURLPrefix, token];
     NSPasteboard *pasteboard = [NSPasteboard pasteboardWithName:pasteboardName];
     [pasteboard clearContents];
     BOOL wrote = [pasteboard setString:serialized forType:NSPasteboardTypeString];
     BOOL opened = wrote && [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:handoffURL]];
-    NSLog(@"Carrier Share: pasteboard %@, handoff %@", wrote ? @"written" : @"FAILED",
+    NSLog(@"Chatpane Share: pasteboard %@, handoff %@", wrote ? @"written" : @"FAILED",
           opened ? @"opened" : @"FAILED");
     if (!wrote || !opened) {
       [pasteboard clearContents];

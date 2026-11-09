@@ -1,9 +1,9 @@
 /* ----------------------------- Page zoom ------------------------------ */
 // The persisted zoom level lives in the Rust Settings struct (source of
-// truth) and reaches the page via __CARRIER_SETTINGS__ / carrier:settings.
+// truth) and reaches the page via __CHATPANE_SETTINGS__ / chatpane:settings.
 // Rust applies it as native WebView zoom; CSS `zoom` grew the layout past the
 // window (#318). Keyboard/menu zoom reports its changes back with a
-// carrier:zoom event, which Rust applies and persists. The old localStorage
+// chatpane:zoom event, which Rust applies and persists. The old localStorage
 // key is only kept as a migration source for pre-settings installs (see
 // initZoomLevel below).
 import { invoke } from "../bridge";
@@ -23,15 +23,15 @@ function setZoomLevel(percent: number, fromSettings?: boolean) {
   try {
     localStorage.setItem(ZOOM_KEY, String(clamped));
     const settings =
-      window.__CARRIER_SETTINGS__ &&
-      typeof window.__CARRIER_SETTINGS__ === "object" &&
-      !Array.isArray(window.__CARRIER_SETTINGS__)
-        ? window.__CARRIER_SETTINGS__
+      window.__CHATPANE_SETTINGS__ &&
+      typeof window.__CHATPANE_SETTINGS__ === "object" &&
+      !Array.isArray(window.__CHATPANE_SETTINGS__)
+        ? window.__CHATPANE_SETTINGS__
         : null;
     if (settings) settings.zoom = clamped;
     const cached = JSON.parse(
-      localStorage.getItem("__carrier_settings") || "null",
-    ) as CarrierSettings | null;
+      localStorage.getItem("__chatpane_settings") || "null",
+    ) as ChatpaneSettings | null;
     const nextSettings =
       cached && typeof cached === "object" && !Array.isArray(cached)
         ? cached
@@ -40,14 +40,14 @@ function setZoomLevel(percent: number, fromSettings?: boolean) {
           : null;
     if (nextSettings) {
       nextSettings.zoom = clamped;
-      localStorage.setItem("__carrier_settings", JSON.stringify(nextSettings));
+      localStorage.setItem("__chatpane_settings", JSON.stringify(nextSettings));
     }
   } catch (_) {}
   // Report a local change (keyboard / View menu) so Rust applies and persists
   // it. Never re-emit for a settings push — Rust already has that value, and echoing
   // it back could feed a loop.
   if (changed && !fromSettings) {
-    invoke("plugin:event|emit", { event: "carrier:zoom", payload: clamped })?.catch?.(() => {});
+    invoke("plugin:event|emit", { event: "chatpane:zoom", payload: clamped })?.catch?.(() => {});
   }
 }
 
@@ -58,13 +58,13 @@ export const zoomReset = () => setZoomLevel(100);
 // Follow the zoom in settings: applied at load and whenever Rust pushes a
 // settings change (e.g. the Settings window's Page zoom select).
 function syncZoomFromSettings() {
-  const s = window.__CARRIER_SETTINGS__ || {};
+  const s = window.__CHATPANE_SETTINGS__ || {};
   const z = typeof s.zoom === "number" && Number.isFinite(s.zoom) ? clampZoom(s.zoom) : 100;
   if (z !== zoomLevel) setZoomLevel(z, true);
 }
 
 function initZoomLevel() {
-  const s = window.__CARRIER_SETTINGS__ || {};
+  const s = window.__CHATPANE_SETTINGS__ || {};
   let z = typeof s.zoom === "number" && Number.isFinite(s.zoom) ? clampZoom(s.zoom) : 100;
   // Migrate pre-settings installs: keyboard zoom used to persist only to
   // localStorage. If settings still hold the default but the old key has a
@@ -72,17 +72,17 @@ function initZoomLevel() {
   const stored = parseInt(localStorage.getItem(ZOOM_KEY) || "", 10);
   if (z === 100 && Number.isFinite(stored) && clampZoom(stored) !== 100) {
     z = clampZoom(stored);
-    invoke("plugin:event|emit", { event: "carrier:zoom", payload: z })?.catch?.(() => {});
+    invoke("plugin:event|emit", { event: "chatpane:zoom", payload: z })?.catch?.(() => {});
   }
   if (z !== zoomLevel) setZoomLevel(z, true);
-  window.addEventListener("carrier:settings", syncZoomFromSettings);
+  window.addEventListener("chatpane:settings", syncZoomFromSettings);
 }
 
 export function initZoom() {
   // Expose zoom controls so the native menu (View ▸ Zoom) can drive them.
-  window.__carrierZoomIn = zoomIn;
-  window.__carrierZoomOut = zoomOut;
-  window.__carrierZoomReset = zoomReset;
+  window.__chatpaneZoomIn = zoomIn;
+  window.__chatpaneZoomOut = zoomOut;
+  window.__chatpaneZoomReset = zoomReset;
 
   if (document.readyState === "loading")
     document.addEventListener("DOMContentLoaded", initZoomLevel, { once: true });

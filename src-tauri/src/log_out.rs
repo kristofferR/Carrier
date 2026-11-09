@@ -1,5 +1,5 @@
 //! Log Out… (Ref #356). Runs Facebook's own logout in the Messenger page, so
-//! the session ends on Facebook's side too, then deletes everything Carrier
+//! the session ends on Facebook's side too, then deletes everything Chatpane
 //! keeps for the account and restarts; `settings.json` stays.
 
 use tauri::Manager;
@@ -13,9 +13,9 @@ pub(crate) fn log_out(app: &tauri::AppHandle) {
     let mut dialog = app
         .dialog()
         .message(
-            "Carrier logs you out of Facebook, deletes what it stored for this account on \
+            "Chatpane logs you out of Facebook, deletes what it stored for this account on \
              this computer (cookies, Messenger's data and cache, notification history and \
-             recent conversations) and restarts. Your Carrier settings are kept.",
+             recent conversations) and restarts. Your Chatpane settings are kept.",
         )
         .title("Log Out")
         .kind(MessageDialogKind::Warning)
@@ -40,7 +40,7 @@ async fn reset(app: tauri::AppHandle) {
         message(
             &app,
             "Couldn't Log Out",
-            &format!("Carrier couldn't prepare the log out: {error}"),
+            &format!("Chatpane couldn't prepare the log out: {error}"),
         );
         return;
     }
@@ -56,7 +56,7 @@ async fn reset(app: tauri::AppHandle) {
             let handle = app.clone();
             app.dialog()
                 .message(format!(
-                    "Facebook didn't end the session ({error}). Carrier still deletes this \
+                    "Facebook didn't end the session ({error}). Chatpane still deletes this \
                      account's data from this computer and restarts. To end the session on \
                      Facebook too, log out of this device in Facebook's \"Where you're logged \
                      in\" settings."

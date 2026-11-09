@@ -4,14 +4,14 @@
 <plist version="1.0">
 <dict>
   <key>NSCameraUsageDescription</key>
-  <string>Carrier needs camera access for Messenger video calls.</string>
+  <string>Chatpane needs camera access for Messenger video calls.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Carrier needs microphone access for Messenger voice and video calls.</string>
+  <string>Chatpane needs microphone access for Messenger voice and video calls.</string>
   <!-- Saving Messenger media lands in ~/Downloads, which macOS protects via TCC
        (Files and Folders) even for non-sandboxed apps. This purpose string is the
        message shown in the permission prompt macOS raises on the first save. -->
   <key>NSDownloadsFolderUsageDescription</key>
-  <string>Carrier saves photos, videos, and files you download from Messenger to your Downloads folder.</string>
+  <string>Chatpane saves photos, videos, and files you download from Messenger to your Downloads folder.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsArbitraryLoads</key>
@@ -22,8 +22,8 @@
   <array>
     <string>INSendMessageIntent</string>
   </array>
-  <!-- LaunchServices delivers carrier:// automation URLs and share-extension
-       handoffs to the running instance, or launches Carrier when needed. -->
+  <!-- LaunchServices delivers chatpane:// automation URLs and share-extension
+       handoffs to the running instance, or launches Chatpane when needed. -->
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
@@ -33,7 +33,7 @@
       <string>Viewer</string>
       <key>CFBundleURLSchemes</key>
       <array>
-        <string>carrier</string>
+        <string>chatpane</string>
       </array>
     </dict>
   </array>

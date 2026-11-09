@@ -19,7 +19,7 @@ describe("UpdateConsentController", () => {
     const discovered = await controller.initialize();
     expect(discovered).toMatchObject({
       phase: "available",
-      buttonLabel: "Install Carrier 1.4.0",
+      buttonLabel: "Install Chatpane 1.4.0",
       version: "1.4.0",
     });
     expect(calls).toEqual(["update_install_mode", "discovered_update"]);
@@ -43,7 +43,7 @@ describe("UpdateConsentController", () => {
     await controller.initialize();
 
     discovered = "1.5.0";
-    expect((await controller.refresh())?.buttonLabel).toBe("Install Carrier 1.5.0");
+    expect((await controller.refresh())?.buttonLabel).toBe("Install Chatpane 1.5.0");
     expect(await controller.refresh()).toBeNull();
 
     discovered = null;
@@ -102,7 +102,7 @@ describe("UpdateConsentController", () => {
     await controller.initialize();
     expect(await controller.activate()).toMatchObject({
       phase: "available",
-      buttonLabel: "Install Carrier 2.0.0",
+      buttonLabel: "Install Chatpane 2.0.0",
       version: "2.0.0",
     });
     expect(calls).toEqual(["update_install_mode", "discovered_update", "check_for_updates"]);
@@ -134,7 +134,7 @@ describe("UpdateConsentController", () => {
 
     expect(result).toMatchObject({
       phase: "up-to-date",
-      status: "Carrier is up to date.",
+      status: "Chatpane is up to date.",
       busy: false,
     });
     expect(calls).toEqual(["update_install_mode", "discovered_update", "check_for_updates"]);
@@ -147,8 +147,8 @@ describe("UpdateConsentController", () => {
       if (command === "update_install_mode") {
         return {
           kind: "manual",
-          buttonLabel: "Open Carrier on AUR",
-          instructions: "Run paru -S carrier to update.",
+          buttonLabel: "Open Chatpane on AUR",
+          instructions: "Run paru -S chatpane to update.",
         };
       }
       if (command === "discovered_update") return "2.1.0";
@@ -158,15 +158,15 @@ describe("UpdateConsentController", () => {
 
     expect(await controller.initialize()).toMatchObject({
       phase: "available",
-      buttonLabel: "Open Carrier on AUR",
-      status: "Carrier 2.1.0 is available. Run paru -S carrier to update.",
+      buttonLabel: "Open Chatpane on AUR",
+      status: "Chatpane 2.1.0 is available. Run paru -S chatpane to update.",
     });
 
     const opened = await controller.activate();
     expect(opened).toMatchObject({
       phase: "available",
-      buttonLabel: "Open Carrier on AUR",
-      status: "Update page opened. Run paru -S carrier to update.",
+      buttonLabel: "Open Chatpane on AUR",
+      status: "Update page opened. Run paru -S chatpane to update.",
     });
     expect(calls).toEqual(["update_install_mode", "discovered_update", "open_manual_update"]);
     expect(calls).not.toContain("install_update");
@@ -197,14 +197,14 @@ describe("UpdateConsentController", () => {
     failInstall = true;
     expect(await controller.activate()).toMatchObject({
       phase: "available",
-      buttonLabel: "Install Carrier 3.0.0",
+      buttonLabel: "Install Chatpane 3.0.0",
       version: "3.0.0",
     });
     const installFailure = await controller.activate().catch((error: unknown) => error);
     expect(installFailure).toBeInstanceOf(Error);
     expect(controller.fail(installFailure)).toMatchObject({
       phase: "available",
-      buttonLabel: "Install Carrier 3.0.0",
+      buttonLabel: "Install Chatpane 3.0.0",
       status: "Update install failed. offline",
       busy: false,
       version: "3.0.0",

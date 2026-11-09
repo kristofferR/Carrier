@@ -12,7 +12,7 @@ const chromium =
 test.skipIf(!chromium)(
   "recovery episodes respect account, wake, retry, and timeout boundaries",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-recovery-controller-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-recovery-controller-test-"));
     let server: ReturnType<typeof Bun.serve> | undefined;
     try {
       const bundle = await build({
@@ -184,7 +184,7 @@ async function runFixtures(
     assert("inspection timeout permits another attempt", calls === 5);
 
     const restartFlags: boolean[] = [];
-    window.__CARRIER_SETTINGS__ = { multi_instance: false };
+    window.__CHATPANE_SETTINGS__ = { multi_instance: false };
     adapter.recover = async (_allowed, restartShared) => {
       restartFlags.push(restartShared === true);
       return "started";

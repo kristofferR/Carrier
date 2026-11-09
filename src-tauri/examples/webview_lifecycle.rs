@@ -67,7 +67,7 @@ mod macos {
     }
 
     pub fn run() {
-        // Use a separate identifier and only blank pages, without Carrier's
+        // Use a separate identifier and only blank pages, without Chatpane's
         // plugins, injected scripts, or Messenger session.
         let mut context = tauri::generate_context!();
         context.config_mut().identifier = "io.github.kristofferr.carrier.lifecycle-test".into();

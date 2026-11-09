@@ -7,12 +7,12 @@
 //!   `~/Library/Sounds`, so it becomes one more named sound.
 //! - Windows lists the built-in `ms-winsoundevent` toast sounds. A toast from
 //!   an app installed without a package can't play a file of its own, so a
-//!   chosen file means a silent toast while Carrier plays the file.
+//!   chosen file means a silent toast while Chatpane plays the file.
 //! - Linux lists message-like names from the freedesktop sound theme. A
 //!   notification server that advertises the `sound` capability plays the
-//!   hint; for any other, Carrier sends `suppress-sound` and plays the file.
+//!   hint; for any other, Chatpane sends `suppress-sound` and plays the file.
 //!
-//! The Messenger page never picks a sound. Its only say is `carrier:notify`'s
+//! The Messenger page never picks a sound. Its only say is `chatpane:notify`'s
 //! `silent` flag, which can take the sound away ([`message_sound`]). Stored
 //! names resolve only against the listed folders and tables, so a setting
 //! never becomes an arbitrary path.
@@ -31,7 +31,7 @@ const PLATFORM: &str = if cfg!(target_os = "macos") {
     "linux"
 };
 
-/// What Choose file… accepts: what each platform's notification or Carrier's
+/// What Choose file… accepts: what each platform's notification or Chatpane's
 /// own playback can play.
 #[cfg(target_os = "macos")]
 const EXTENSIONS: &[&str] = &["aiff", "aif", "caf", "wav"];
@@ -54,7 +54,7 @@ const WINDOWS_SOUNDS: &[(&str, &str, &str)] = &[
     ("SMS", "Notification.SMS", "Text message"),
 ];
 
-/// The freedesktop sound-theme name Carrier's Linux notifications use by default.
+/// The freedesktop sound-theme name Chatpane's Linux notifications use by default.
 #[cfg(any(target_os = "linux", test))]
 pub(crate) const LINUX_DEFAULT_SOUND: &str = "message-new-instant";
 
@@ -83,7 +83,7 @@ pub(crate) enum NotificationSound {
         name: String,
     },
     /// A sound added with Choose file… on Windows or Linux, by its name in
-    /// Carrier's sounds folder.
+    /// Chatpane's sounds folder.
     File(String),
 }
 
@@ -140,7 +140,7 @@ pub(crate) enum Sound {
     /// macOS: a file name in a Sounds folder. Windows: a name from
     /// [`WINDOWS_SOUNDS`]. Linux: a sound-theme name from [`LINUX_SOUNDS`].
     Named(String),
-    /// A file Carrier plays itself (Windows and Linux).
+    /// A file Chatpane plays itself (Windows and Linux).
     File(PathBuf),
 }
 
@@ -218,7 +218,7 @@ fn import_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|dir| dir.join("sounds"))
-        .map_err(|error| format!("could not locate Carrier's config folder: {error}"))
+        .map_err(|error| format!("could not locate Chatpane's config folder: {error}"))
 }
 
 /// The folders a chosen file may already be in, so it is used where it is.
@@ -512,7 +512,7 @@ fn preview(app: &tauri::AppHandle, sound: &Sound) {
 }
 
 /// The toast's `ms-winsoundevent` sound, or None for a silent toast (Off, or a
-/// file Carrier plays itself). Only names from [`WINDOWS_SOUNDS`] get through.
+/// file Chatpane plays itself). Only names from [`WINDOWS_SOUNDS`] get through.
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn windows_toast_audio(sound: &Sound) -> Option<&'static str> {
     match sound {
@@ -620,7 +620,7 @@ pub(crate) enum SoundHint {
 }
 
 /// A Linux notification's sound: what the notification asks the server for,
-/// and the file Carrier plays once it is shown.
+/// and the file Chatpane plays once it is shown.
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LinuxSound {
@@ -636,8 +636,8 @@ impl LinuxSound {
     };
 }
 
-/// Split a sound between the notification and Carrier: a server that plays
-/// hints gets the hint; otherwise the notification is silent and Carrier
+/// Split a sound between the notification and Chatpane: a server that plays
+/// hints gets the hint; otherwise the notification is silent and Chatpane
 /// plays the file. The portal plays its own default. `theme_sound` finds a
 /// sound-theme name's file; a name the theme no longer has plays the default.
 #[cfg(any(target_os = "linux", test))]
@@ -646,7 +646,7 @@ pub(crate) fn linux_sound(
     server: SoundServer,
     theme_sound: &dyn Fn(&str) -> Option<PathBuf>,
 ) -> LinuxSound {
-    let carrier_plays = |file: Option<PathBuf>| LinuxSound {
+    let chatpane_plays = |file: Option<PathBuf>| LinuxSound {
         hint: SoundHint::Silent,
         play: file,
     };
@@ -660,18 +660,18 @@ pub(crate) fn linux_sound(
             play: None,
         },
         (Sound::Default, SoundServer::IgnoresSound) => {
-            carrier_plays(theme_sound(LINUX_DEFAULT_SOUND))
+            chatpane_plays(theme_sound(LINUX_DEFAULT_SOUND))
         }
         (Sound::Named(name), SoundServer::PlaysHints) => LinuxSound {
             hint: SoundHint::Name(name),
             play: None,
         },
-        (Sound::Named(name), _) => carrier_plays(theme_sound(&name)),
+        (Sound::Named(name), _) => chatpane_plays(theme_sound(&name)),
         (Sound::File(path), SoundServer::PlaysHints) => LinuxSound {
             hint: SoundHint::File(path),
             play: None,
         },
-        (Sound::File(path), _) => carrier_plays(Some(path)),
+        (Sound::File(path), _) => chatpane_plays(Some(path)),
     }
 }
 
@@ -829,7 +829,7 @@ mod tests {
 
     fn temp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "carrier-sound-{label}-{}-{}",
+            "chatpane-sound-{label}-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));

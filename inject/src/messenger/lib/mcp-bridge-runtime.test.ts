@@ -248,7 +248,7 @@ describe("runtime MCP muted-row detection", () => {
     harness.document.querySelectorAll = (selector) =>
       selector === '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]' ? [row] : [];
 
-    expect(harness.execute("__carrier_mcp_notification_row_probe__")).toMatchObject({
+    expect(harness.execute("__chatpane_mcp_notification_row_probe__")).toMatchObject({
       rows: [
         {
           mute: {
@@ -259,7 +259,7 @@ describe("runtime MCP muted-row detection", () => {
         },
       ],
     });
-    expect(harness.execute("__carrier_mcp_notification_open_muted_row__")).toEqual({
+    expect(harness.execute("__chatpane_mcp_notification_open_muted_row__")).toEqual({
       applied: muted,
     });
     expect(row.click).toHaveBeenCalledTimes(muted ? 1 : 0);
@@ -310,7 +310,7 @@ describe("runtime MCP page-map bounds", () => {
         };
       };
       const harness = createHarness(root, undefined, {
-        __carrier_mcp_component_null__: "OptionalFeature.react",
+        __chatpane_mcp_component_null__: "OptionalFeature.react",
       });
 
       harness.window.__d = nativeDefine;
@@ -335,7 +335,7 @@ describe("runtime MCP page-map bounds", () => {
       expect((exports.default as () => unknown)()).toBeNull();
       expect((module.exports as unknown as () => unknown)()).toBeNull();
       if (arity > 6) expect(unrelated.default).toBe(unrelatedDefault);
-      const runtime = harness.window.__CARRIER_MCP_MODULE_RUNTIME__ as {
+      const runtime = harness.window.__CHATPANE_MCP_MODULE_RUNTIME__ as {
         replacedDefinitions: number;
       };
       expect(runtime.replacedDefinitions).toBe(1);
@@ -354,7 +354,7 @@ describe("runtime MCP page-map bounds", () => {
           replacementFactory = factory as (...args: unknown[]) => unknown;
         };
       },
-      { __carrier_mcp_component_null__: "ReadOnlyFeature.react" },
+      { __chatpane_mcp_component_null__: "ReadOnlyFeature.react" },
     );
 
     (harness.window.__d as (...args: unknown[]) => unknown)(
@@ -369,7 +369,7 @@ describe("runtime MCP page-map bounds", () => {
     Object.defineProperty(module, "exports", { value: original });
     replacementFactory?.(undefined, undefined, undefined, undefined, undefined, module, exports);
 
-    const runtime = harness.window.__CARRIER_MCP_MODULE_RUNTIME__ as {
+    const runtime = harness.window.__CHATPANE_MCP_MODULE_RUNTIME__ as {
       replacedDefinitions: number;
     };
     expect(runtime.replacedDefinitions).toBe(0);
@@ -383,8 +383,8 @@ describe("runtime MCP page-map bounds", () => {
         window.__d = () => undefined;
       },
       {
-        __carrier_mcp_component_null__: "NullFeature.react",
-        __carrier_mcp_component_passthrough__: "BoundaryFeature.react",
+        __chatpane_mcp_component_null__: "NullFeature.react",
+        __chatpane_mcp_component_passthrough__: "BoundaryFeature.react",
       },
     );
 
@@ -392,7 +392,7 @@ describe("runtime MCP page-map bounds", () => {
     define("NullFeature.react", ["NullDependency"], () => undefined);
     define("BoundaryFeature.react", ["BoundaryDependency"], () => undefined);
 
-    const runtime = harness.window.__CARRIER_MCP_MODULE_RUNTIME__ as {
+    const runtime = harness.window.__CHATPANE_MCP_MODULE_RUNTIME__ as {
       componentDependencies: Record<string, string[]>;
     };
     expect(runtime.componentDependencies).toEqual({
@@ -413,7 +413,7 @@ describe("runtime MCP page-map bounds", () => {
           instrumentedFactory = factory as (...args: unknown[]) => unknown;
         };
       },
-      { __carrier_mcp_react_profile__: "on" },
+      { __chatpane_mcp_react_profile__: "on" },
     );
 
     (harness.window.__d as (...args: unknown[]) => unknown)("OddArity.react", [], originalFactory);
@@ -421,7 +421,7 @@ describe("runtime MCP page-map bounds", () => {
     expect(instrumentedFactory?.length).toBe(arity);
     expect(instrumentedFactory?.(...Array.from({ length: arity }))).toBe("factory result");
     expect(originalFactory).toHaveBeenCalledTimes(1);
-    const runtime = harness.window.__CARRIER_MCP_MODULE_RUNTIME__ as {
+    const runtime = harness.window.__CHATPANE_MCP_MODULE_RUNTIME__ as {
       reactExecuted: number;
       reactModules: Record<string, { executions: number }>;
     };
@@ -440,7 +440,7 @@ describe("runtime MCP page-map bounds", () => {
         };
       },
       {
-        __carrier_mcp_component_passthrough__: "LoggingBoundary.react",
+        __chatpane_mcp_component_passthrough__: "LoggingBoundary.react",
       },
     );
 
@@ -454,19 +454,19 @@ describe("runtime MCP page-map bounds", () => {
     factory?.(undefined, undefined, undefined, undefined, undefined, module, exports);
     expect((exports.default as (props: { children: unknown }) => unknown)({ children: 0 })).toBe(0);
 
-    expect(harness.execute("__carrier_mcp_react_profile__:on")).toEqual({
+    expect(harness.execute("__chatpane_mcp_react_profile__:on")).toEqual({
       applied: true,
       reactProfile: "on",
       reloadRequired: true,
     });
-    expect(harness.sessionStorage.getItem("__carrier_mcp_react_profile__")).toBe("on");
+    expect(harness.sessionStorage.getItem("__chatpane_mcp_react_profile__")).toBe("on");
   });
 
   test("records only credential-free HTTPS JavaScript bundles from Facebook's CDN", () => {
     const root = new FakeElement("div");
     const harness = createHarness(root);
 
-    expect(harness.execute("__carrier_mcp_static_bundle_test_probe__")).toEqual([
+    expect(harness.execute("__chatpane_mcp_static_bundle_test_probe__")).toEqual([
       "static.xx.fbcdn.net/bundle.js",
       "static.xx.fbcdn.net/bundle-02.js",
       "static.xx.fbcdn.net/bundle-03.js",

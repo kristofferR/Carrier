@@ -11,7 +11,7 @@ for svg in "$here"/*.svg; do
   rsvg-convert -w 512 -h 512 "$svg" -o "$here/$name.png"
   rsvg-convert -w 96 -h 96 "$svg" -o "$root/dist/app-icons/$name.png"
 done
-source=$(mktemp -t carrier-icon-XXXXXX.png)
+source=$(mktemp -t chatpane-icon-XXXXXX.png)
 trap 'rm -f "$source"' EXIT
 rsvg-convert -w 1024 -h 1024 "$here/color-light.svg" -o "$source"
 (cd "$root" && bun run icon "$source")

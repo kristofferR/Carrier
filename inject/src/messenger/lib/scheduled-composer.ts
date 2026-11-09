@@ -55,7 +55,7 @@ export function composerControls(box: HTMLElement): Map<HTMLElement, string> {
   const controls = new Map<HTMLElement, string>();
   if (!region) return controls;
   for (const button of region.querySelectorAll<HTMLElement>('button, [role="button"]')) {
-    if (button.hasAttribute("data-carrier-schedule")) continue;
+    if (button.hasAttribute("data-chatpane-schedule")) continue;
     controls.set(button, `${button.getAttribute("aria-label") ?? ""}\n${button.innerHTML}`);
   }
   return controls;
@@ -70,7 +70,7 @@ export function findSendButton(
   const changed: HTMLElement[] = [];
   for (const button of region.querySelectorAll<HTMLElement>('button, [role="button"]')) {
     if (
-      button.hasAttribute("data-carrier-schedule") ||
+      button.hasAttribute("data-chatpane-schedule") ||
       !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) ||
       !isShown(button) ||
       button.getAttribute("aria-disabled") === "true" ||

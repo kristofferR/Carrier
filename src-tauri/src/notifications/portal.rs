@@ -1,5 +1,5 @@
 //! Snap blocks the freedesktop ActivationToken broadcast. Exported portal
-//! actions instead receive activation data in a call addressed only to Carrier.
+//! actions instead receive activation data in a call addressed only to Chatpane.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -71,14 +71,17 @@ struct Portal {
 impl Portal {
     fn connect() -> Result<Self, zbus::Error> {
         let pending = Pending::default();
+        // The portal's app ID is `snap.<name>`; it activates actions on that bus
+        // name at the matching object path. snapcraft.yaml declares the slot.
+        let snap = std::env::var("SNAP_NAME").unwrap_or_else(|_| "chatpane".into());
         let connection = zbus::blocking::connection::Builder::session()?
             .serve_at(
-                "/snap/carrier",
+                format!("/snap/{}", snap.replace('-', "_")),
                 ApplicationActions {
                     pending: pending.clone(),
                 },
             )?
-            .name("snap.carrier")?
+            .name(format!("snap.{snap}"))?
             .build()?;
         let version = zbus::blocking::Proxy::new(
             &connection,
@@ -164,7 +167,7 @@ pub(super) fn show(
     ]);
     // Version 1 rejects unknown keys rather than ignoring them.
     if portal.version >= 2 {
-        // The portal plays its default sound or none; Carrier plays any other.
+        // The portal plays its default sound or none; Chatpane plays any other.
         let silent = sound.hint == crate::sound::SoundHint::Silent;
         notification.insert("sound", if silent { "silent" } else { "default" }.into());
     }

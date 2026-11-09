@@ -1,11 +1,11 @@
 /* ----------------------- In-page Settings button ---------------------- */
 // Messenger's chat-list header already has an overflow control and a compose
-// button. Add a Carrier-owned gear immediately before the overflow control so
+// button. Add a Chatpane-owned gear immediately before the overflow control so
 // Settings stays reachable even when the native menu bar is hidden.
 import { isMessengerHeaderOverflowControl } from "../lib/settings-button";
 
-const SLOT_ATTR = "data-carrier-settings-slot";
-const BUTTON_ATTR = "data-carrier-settings-button";
+const SLOT_ATTR = "data-chatpane-settings-slot";
+const BUTTON_ATTR = "data-chatpane-settings-button";
 
 function isOverflowButton(button: Element): boolean {
   return (
@@ -74,13 +74,13 @@ function createSettingsSlot(): HTMLDivElement {
   const button = document.createElement("button");
   button.type = "button";
   button.setAttribute(BUTTON_ATTR, "");
-  button.setAttribute("aria-label", "Carrier Settings");
-  button.title = "Carrier Settings";
+  button.setAttribute("aria-label", "Chatpane Settings");
+  button.title = "Chatpane Settings";
   button.appendChild(createGearIcon());
   button.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    window.__carrierToggleSettings?.();
+    window.__chatpaneToggleSettings?.();
   });
   slot.appendChild(button);
   return slot;

@@ -13,18 +13,18 @@ import { stripFacebookTracking } from "./lib/links";
 export const invoke = (cmd: string, args?: Record<string, unknown>) =>
   window.__TAURI_INTERNALS__?.invoke(cmd, args);
 
-export const toast = (msg: string, action?: CarrierToastAction, options?: CarrierToastOptions) =>
-  window.__carrierToast
-    ? window.__carrierToast(msg, action, options)
-    : console.log("[carrier]", msg);
+export const toast = (msg: string, action?: ChatpaneToastAction, options?: ChatpaneToastOptions) =>
+  window.__chatpaneToast
+    ? window.__chatpaneToast(msg, action, options)
+    : console.log("[chatpane]", msg);
 
 /* ----------------------------- Diagnostics ---------------------------- */
 // Every page feature hangs off Facebook's unstable DOM, and failures used to
 // vanish into empty `catch {}` blocks — when Messenger shipped new markup a
 // feature just silently died. `diag()` reports failures to the native log
 // (Settings → Advanced → Open log folder) so field breakage is visible, and
-// mirrors them to the console when `localStorage.__carrier_debug = "1"`.
-// Reports carry only Carrier's own strings (selector names, counts) — never
+// mirrors them to the console when `localStorage.__chatpane_debug = "1"`.
+// Reports carry only Chatpane's own strings (selector names, counts) — never
 // message text, names, or URLs.
 export const diag = (() => {
   const RATE_MS = 60_000; // at most one report per key per minute
@@ -35,10 +35,10 @@ export const diag = (() => {
       if (now - (lastSent.get(key) || 0) < RATE_MS) return;
       lastSent.set(key, now);
       try {
-        if (localStorage.__carrier_debug === "1") console.warn(`[carrier] ${key}: ${msg}`);
+        if (localStorage.__chatpane_debug === "1") console.warn(`[chatpane] ${key}: ${msg}`);
       } catch (_) {}
       invoke("plugin:event|emit", {
-        event: "carrier:diag",
+        event: "chatpane:diag",
         payload: { key: String(key), msg: String(msg) },
       })?.catch?.(() => {});
     } catch (_) {}
@@ -50,7 +50,7 @@ export const diag = (() => {
 // by the capability ACL) but NOT the app's own custom commands. So page
 // features route through plugins, matching how the upstream app works.
 export const cleanSharedUrl = (url: string) =>
-  window.__CARRIER_SETTINGS__?.strip_link_tracking === false
+  window.__CHATPANE_SETTINGS__?.strip_link_tracking === false
     ? url
     : stripFacebookTracking(url, location.href);
 
@@ -61,7 +61,7 @@ export const openUrl = (url: string) =>
 
 export const toastDownloadSaved = (url: string) =>
   toast(
-    window.__CARRIER_SETTINGS__?.download_behavior === "ask"
+    window.__CHATPANE_SETTINGS__?.download_behavior === "ask"
       ? "Download saved"
       : "Saved to Downloads",
     {
@@ -79,6 +79,6 @@ export const toastDownloadFailure = (error: unknown, message = "Download failed"
 };
 
 export const toastDownloadAccessDenied = () => {
-  const { message, action } = downloadAccessDeniedToast(carrierMediaPlatform);
+  const { message, action } = downloadAccessDeniedToast(chatpaneMediaPlatform);
   toast(message, action, { warning: true });
 };

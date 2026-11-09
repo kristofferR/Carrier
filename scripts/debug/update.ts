@@ -34,10 +34,10 @@ const arch =
 const home = homedir();
 const root = join(
   home,
-  mac ? "Library/Application Support/CarrierDebug" : ".local/share/carrier-debug",
+  mac ? "Library/Application Support/ChatpaneDebug" : ".local/share/chatpane-debug",
 );
 const builds = join(root, "builds");
-const target = mac ? "/Applications/Carrier.app" : join(home, ".local/bin/carrier");
+const target = mac ? "/Applications/Chatpane.app" : join(home, ".local/bin/carrier");
 const binary = (path: string) => (mac ? join(path, "Contents/MacOS/carrier") : path);
 const args = process.argv.slice(2);
 const apply = args.includes("--apply");
@@ -170,7 +170,7 @@ async function updateLockBinary() {
       typeof installed.binarySha256 !== "string" ||
       !/^[0-9a-f]{64}$/.test(installed.binarySha256)
     )
-      throw new Error("Invalid installed Carrier identity");
+      throw new Error("Invalid installed Chatpane identity");
     expectedHash = installed.binarySha256;
   }
 
@@ -181,7 +181,7 @@ async function updateLockBinary() {
       if (!entry.isDirectory()) continue;
       const directory = join(backupRoot, entry.name);
       candidates.push(
-        binary(join(directory, mac ? "Carrier.app" : "carrier")),
+        binary(join(directory, mac ? "Chatpane.app" : "carrier")),
         binary(join(directory, mac ? "interrupted-new.app" : "interrupted-new")),
       );
     }
@@ -193,7 +193,7 @@ async function updateLockBinary() {
       } catch {}
     }
     throw new Error(
-      "Installed Carrier was replaced outside the debug updater. Refusing to execute it; restore the verified debug backup.",
+      "Installed Chatpane was replaced outside the debug updater. Refusing to execute it; restore the verified debug backup.",
     );
   }
 
@@ -203,7 +203,7 @@ async function updateLockBinary() {
     for (const entry of await readdir(builds, { withFileTypes: true })) {
       if (!entry.isDirectory() || !revisionPattern.test(entry.name)) continue;
       const candidate = binary(
-        join(builds, entry.name, "extracted", mac ? "Carrier.app" : "carrier"),
+        join(builds, entry.name, "extracted", mac ? "Chatpane.app" : "carrier"),
       );
       try {
         const identity = object(await json(join(builds, entry.name, "extracted.json")));
@@ -228,11 +228,11 @@ async function recoverInterruptedSwap() {
     return true;
   }
   if (await running()) {
-    log("Carrier is running; interrupted install recovery deferred.");
+    log("Chatpane is running; interrupted install recovery deferred.");
     return false;
   }
   const backup = join(root, "backups", transaction.backup);
-  const previous = join(backup, mac ? "Carrier.app" : "carrier");
+  const previous = join(backup, mac ? "Chatpane.app" : "carrier");
   const discarded = join(backup, mac ? "interrupted-new.app" : "interrupted-new");
   const previousExists = await exists(previous);
   if (transaction.hadPrevious && !previousExists && !(await exists(target))) {
@@ -244,7 +244,7 @@ async function recoverInterruptedSwap() {
       await rename(target, discarded);
       if (await running()) {
         await rename(discarded, target);
-        log("Carrier launched during interrupted install recovery; recovery deferred.");
+        log("Chatpane launched during interrupted install recovery; recovery deferred.");
         return false;
       }
     }
@@ -253,13 +253,13 @@ async function recoverInterruptedSwap() {
     await rename(target, discarded);
     if (await running()) {
       await rename(discarded, target);
-      log("Carrier launched during interrupted install recovery; recovery deferred.");
+      log("Chatpane launched during interrupted install recovery; recovery deferred.");
       return false;
     }
   }
   await removeBestEffort(backup, "interrupted install directory");
   await rm(swapFile, { force: true });
-  log("Recovered the previous Carrier installation after an interrupted swap.");
+  log("Recovered the previous Chatpane installation after an interrupted swap.");
   return true;
 }
 async function manifest(dir: string, revision: string) {
@@ -270,8 +270,8 @@ async function manifest(dir: string, revision: string) {
     throw new Error("Wrong commit or platform");
   const files = object(raw.files);
   const expected = mac
-    ? ["Carrier-debug-macos.zip", "Carrier-debug-symbols.zip", "update.ts", "policy.ts"]
-    : ["Carrier-debug-linux.tar.gz", "update.ts", "policy.ts"];
+    ? ["Chatpane-debug-macos.zip", "Chatpane-debug-symbols.zip", "update.ts", "policy.ts"]
+    : ["Chatpane-debug-linux.tar.gz", "update.ts", "policy.ts"];
   for (const name of expected) {
     if (typeof files[name] !== "string" || !/^[0-9a-f]{64}$/.test(files[name]))
       throw new Error(`Missing checksum for ${name}`);
@@ -283,7 +283,7 @@ async function manifest(dir: string, revision: string) {
   return info;
 }
 async function verifyProvenance(dir: string, revision: string) {
-  const names = mac ? ["build.json"] : ["build.json", "Carrier-debug-linux.tar.gz"];
+  const names = mac ? ["build.json"] : ["build.json", "Chatpane-debug-linux.tar.gz"];
   for (const name of names) {
     await command([
       "gh",
@@ -338,17 +338,17 @@ async function extract(dir: string, info: BuildInfo) {
   await rm(extracted, { recursive: true, force: true });
   await mkdir(extracted);
   if (mac) {
-    await command(["ditto", "-x", "-k", join(dir, "Carrier-debug-macos.zip"), extracted]);
-    await command(["ditto", "-x", "-k", join(dir, "Carrier-debug-symbols.zip"), extracted]);
+    await command(["ditto", "-x", "-k", join(dir, "Chatpane-debug-macos.zip"), extracted]);
+    await command(["ditto", "-x", "-k", join(dir, "Chatpane-debug-symbols.zip"), extracted]);
     const symbols = (await readdir(extracted)).filter((name) => name.endsWith(".dSYM"));
     if (symbols.length !== 1) throw new Error("Expected one matching symbol bundle");
-    await verify(join(extracted, "Carrier.app"), info, join(extracted, symbols[0]!));
+    await verify(join(extracted, "Chatpane.app"), info, join(extracted, symbols[0]!));
   } else {
-    await command(["tar", "-xzf", join(dir, "Carrier-debug-linux.tar.gz"), "-C", extracted]);
+    await command(["tar", "-xzf", join(dir, "Chatpane-debug-linux.tar.gz"), "-C", extracted]);
     await chmod(join(extracted, "carrier"), 0o755);
     await verify(join(extracted, "carrier"), info);
   }
-  const source = join(extracted, mac ? "Carrier.app" : "carrier");
+  const source = join(extracted, mac ? "Chatpane.app" : "carrier");
   await atomicJson(join(dir, "extracted.json"), {
     revision: info.revision,
     binarySha256: await sha256(binary(source)),
@@ -357,11 +357,11 @@ async function extract(dir: string, info: BuildInfo) {
 }
 async function install(dir: string, info: BuildInfo) {
   if (await running()) {
-    log("Carrier is running; verified debug update remains staged.");
+    log("Chatpane is running; verified debug update remains staged.");
     return;
   }
   const source = apply
-    ? join(dir, "extracted", mac ? "Carrier.app" : "carrier")
+    ? join(dir, "extracted", mac ? "Chatpane.app" : "carrier")
     : await extract(dir, info);
   if (!apply) {
     // The incoming binary supplies the same lock even for the first migration.
@@ -377,17 +377,17 @@ async function install(dir: string, info: BuildInfo) {
       [0, 75],
     );
     if (result.out.trim()) console.log(result.out.trim());
-    if (result.status === 75) log("Carrier launched during preparation; update deferred.");
+    if (result.status === 75) log("Chatpane launched during preparation; update deferred.");
     return;
   }
   if (await running()) {
-    log("Carrier launched; update deferred.");
+    log("Chatpane launched; update deferred.");
     return;
   }
   await verify(source, info);
   await mkdir(dirname(target), { recursive: true });
   const staged = mac
-    ? `/Applications/.Carrier-debug-${randomUUID()}.app`
+    ? `/Applications/.Chatpane-debug-${randomUUID()}.app`
     : `${target}.${randomUUID()}.tmp`;
   if (mac) await command(["ditto", source, staged]);
   else {
@@ -396,7 +396,7 @@ async function install(dir: string, info: BuildInfo) {
   }
   await verify(staged, info);
   const backupName = `${Date.now()}-${info.revision}`;
-  const previous = join(root, "backups", backupName, mac ? "Carrier.app" : "carrier");
+  const previous = join(root, "backups", backupName, mac ? "Chatpane.app" : "carrier");
   const backup = dirname(previous);
   await mkdir(backup, { recursive: true });
   const hadPrevious = await exists(target);
@@ -407,7 +407,7 @@ async function install(dir: string, info: BuildInfo) {
     await removeBestEffort(staged, "staged install");
     await removeBestEffort(backup, "rollback directory");
     await removeBestEffort(swapFile, "install transaction");
-    log("Carrier launched during preparation; update deferred.");
+    log("Chatpane launched during preparation; update deferred.");
     return;
   }
   try {
@@ -424,7 +424,7 @@ async function install(dir: string, info: BuildInfo) {
   try {
     await writeFile(
       join(root, "debug-only"),
-      "Only diagnostics debug builds. Managed by carrier-debug-update.\n",
+      "Only diagnostics debug builds. Managed by chatpane-debug-update.\n",
       { mode: 0o600 },
     );
     const nextUpdater = join(root, `updater-${randomUUID()}`);
@@ -436,7 +436,7 @@ async function install(dir: string, info: BuildInfo) {
     if (mac) {
       await mkdir(join(root, "symbols"), { recursive: true });
       await copyFile(
-        join(dir, "Carrier-debug-symbols.zip"),
+        join(dir, "Chatpane-debug-symbols.zip"),
         join(root, "symbols", `${info.revision}.zip`),
       );
       await copyFile(join(dir, "build.json"), join(root, "symbols", `${info.revision}.json`));
@@ -459,7 +459,7 @@ async function install(dir: string, info: BuildInfo) {
   await rm(join(root, "pending.json"), { force: true });
   await prune(info.revision);
   log(
-    `Installed Carrier ${info.version} debug ${info.revision.slice(0, 12)}. Previous app and symbols retained.`,
+    `Installed Chatpane ${info.version} debug ${info.revision.slice(0, 12)}. Previous app and symbols retained.`,
   );
 }
 async function prune(current: string) {
@@ -490,8 +490,8 @@ async function prune(current: string) {
 async function update() {
   await mkdir(builds, { recursive: true, mode: 0o700 });
   if (apply) {
-    if (process.env.CARRIER_DEBUG_LOCK_OWNER !== String(process.ppid)) {
-      throw new Error("Installation must run under Carrier's native install lock");
+    if (process.env.CHATPANE_DEBUG_LOCK_OWNER !== String(process.ppid)) {
+      throw new Error("Installation must run under Chatpane's native install lock");
     }
     const revision = args[args.indexOf("--apply") + 1];
     if (!revision || !revisionPattern.test(revision)) throw new Error("Invalid staged revision");
@@ -585,8 +585,8 @@ async function update() {
     try {
       const manifestName = `build-${platform}-${arch}.json`;
       const assets = mac
-        ? ["Carrier-debug-macos.zip", "Carrier-debug-symbols.zip"]
-        : ["Carrier-debug-linux.tar.gz"];
+        ? ["Chatpane-debug-macos.zip", "Chatpane-debug-symbols.zip"]
+        : ["Chatpane-debug-linux.tar.gz"];
       await command([
         "gh",
         "release",
@@ -612,7 +612,7 @@ async function update() {
   await extract(dir, info);
   await atomicJson(pending, info);
   await writeFile(checkFile, revision);
-  log(`Verified and staged Carrier ${info.version} debug ${revision.slice(0, 12)}.`);
+  log(`Verified and staged Chatpane ${info.version} debug ${revision.slice(0, 12)}.`);
   await install(dir, info);
 }
 
@@ -623,7 +623,7 @@ try {
     const lockBinary = await updateLockBinary();
     if (!lockBinary) {
       if (await exists(swapFile))
-        throw new Error("Interrupted install recovery has no verified Carrier lock binary");
+        throw new Error("Interrupted install recovery has no verified Chatpane lock binary");
       await update();
     } else {
       const result = await command(

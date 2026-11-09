@@ -13,7 +13,7 @@ const chromium =
 test.skipIf(!chromium)(
   "rate-limit cooldown, banner and protected automatic retry in a real DOM",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-rate-limit-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-rate-limit-test-"));
     let server: ReturnType<typeof Bun.serve> | undefined;
     try {
       const entry = fileURLToPath(new URL("../features/rate-limit.ts", import.meta.url));
@@ -110,15 +110,15 @@ async function runFixtures(
   try {
     // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.
     document.cookie = "c_user=123; path=/";
-    localStorage.removeItem("carrier-rate-limit:123");
+    localStorage.removeItem("chatpane-rate-limit:123");
     init();
     report("graphql-1675004", 120_000);
     const syncAlerts: string[] = [];
     Object.assign(window, {
-      __CARRIER_HEARTBEAT_ID__: 42,
+      __CHATPANE_HEARTBEAT_ID__: 42,
       __TAURI_INTERNALS__: {
         invoke: async (_command: string, args: { event?: string; payload?: { kind?: string } }) => {
-          if (args?.event === "carrier:sync-alert" && args.payload?.kind)
+          if (args?.event === "chatpane:sync-alert" && args.payload?.kind)
             syncAlerts.push(args.payload.kind);
         },
       },
@@ -140,7 +140,7 @@ async function runFixtures(
       "rate limiting raises a native alert for buried windows",
       syncAlerts.includes("rate-limited"),
     );
-    const banner = () => document.getElementById("carrier-sync-banner");
+    const banner = () => document.getElementById("chatpane-sync-banner");
     assert("visible countdown", banner()?.textContent?.includes("2 min") === true);
     const rect = banner()!.getBoundingClientRect();
     assert("fits narrow viewport", rect.left >= 0 && rect.right <= innerWidth);
@@ -171,7 +171,7 @@ async function runFixtures(
     assert("rejection cancels pending reload", ![...timers.values()].some((t) => t.delay === 8000));
     assert(
       "persisted backoff",
-      JSON.parse(localStorage.getItem("carrier-rate-limit:123")!).attempts === 2,
+      JSON.parse(localStorage.getItem("chatpane-rate-limit:123")!).attempts === 2,
     );
     const button = banner()!.querySelector("button")!;
     assert(
@@ -180,7 +180,7 @@ async function runFixtures(
     );
     button.click();
     assert("synthetic clicks cannot bypass backoff", remaining() > 0);
-    const automaticDeadline = localStorage.getItem("carrier-rate-limit:123");
+    const automaticDeadline = localStorage.getItem("chatpane-rate-limit:123");
     retryNow();
     assert("manual attempt leaves cooldown intact", remaining() === 30 * 60_000);
     runTimer(1000);
@@ -191,15 +191,17 @@ async function runFixtures(
     report("graphql-1675004");
     assert(
       "manual rejection does not change backoff",
-      localStorage.getItem("carrier-rate-limit:123") === automaticDeadline,
+      localStorage.getItem("chatpane-rate-limit:123") === automaticDeadline,
     );
     assert("acknowledged manual retry disables button", button.disabled);
     window.dispatchEvent(
-      new CustomEvent("carrier:power-state", { detail: { sleeping: true, resume_generation: 0 } }),
+      new CustomEvent("chatpane:power-state", { detail: { sleeping: true, resume_generation: 0 } }),
     );
     assert("cancelled manual retry re-enables button", !button.disabled);
     window.dispatchEvent(
-      new CustomEvent("carrier:power-state", { detail: { sleeping: false, resume_generation: 1 } }),
+      new CustomEvent("chatpane:power-state", {
+        detail: { sleeping: false, resume_generation: 1 },
+      }),
     );
     banner()!.remove();
     tick();
@@ -233,7 +235,7 @@ async function runFixtures(
     tick();
     assert(
       "unrelated GraphQL success cannot clear the episode",
-      localStorage.getItem("carrier-rate-limit:123") !== null,
+      localStorage.getItem("chatpane-rate-limit:123") !== null,
     );
     await fetchSync();
     now += 10_000;
@@ -241,7 +243,7 @@ async function runFixtures(
     assert("successful fetch clears expired rate-limit warning", !banner());
     assert(
       "recovery removes the persisted episode",
-      localStorage.getItem("carrier-rate-limit:123") === null,
+      localStorage.getItem("chatpane-rate-limit:123") === null,
     );
     report("graphql-1675004");
     assert("a distinct episode starts at the base backoff", remaining() === 15 * 60_000);
@@ -262,7 +264,7 @@ async function runFixtures(
           _command: string,
           args: { event?: string; payload?: { rate_limit_retry?: boolean } },
         ) => {
-          if (args?.event === "carrier:webview-heartbeat" && args.payload?.rate_limit_retry)
+          if (args?.event === "chatpane:webview-heartbeat" && args.payload?.rate_limit_retry)
             probeRequests.push(true);
         },
       },
@@ -275,27 +277,27 @@ async function runFixtures(
     tick();
     assert(
       "HTTP-200 rate errors retain escalating backoff",
-      JSON.parse(localStorage.getItem("carrier-rate-limit:123")!).attempts === 2,
+      JSON.parse(localStorage.getItem("chatpane-rate-limit:123")!).attempts === 2,
     );
     now += remaining() + 1;
     draft.textContent = "";
     tick();
     runTimer(1000);
     assert("automatic retry requests native coordination", probeRequests.length === 1);
-    window.__carrierRateLimitRetry?.(42, Date.now() - 1);
+    window.__chatpaneRateLimitRetry?.(42, Date.now() - 1);
     assert(
       "stale grants leave the request queued",
       [...timers.values()].some((t) => t.delay === 8000),
     );
     draft.textContent = "new draft";
-    window.__carrierRateLimitRetry?.(42, Date.now() + 5000);
+    window.__chatpaneRateLimitRetry?.(42, Date.now() + 5000);
     assert(
       "grant rechecks draft protection",
       [...timers.values()].some((t) => t.delay === 8000),
     );
-    localStorage.removeItem("carrier-rate-limit:123");
+    localStorage.removeItem("chatpane-rate-limit:123");
     window.dispatchEvent(
-      new StorageEvent("storage", { key: "carrier-rate-limit:123", newValue: null }),
+      new StorageEvent("storage", { key: "chatpane-rate-limit:123", newValue: null }),
     );
     assert(
       "another window recovering keeps this follower queued",
@@ -307,7 +309,7 @@ async function runFixtures(
     tick();
     runTimer(1000);
     assert("new cooldown invalidates the previous grant", probeRequests.length === 2);
-    window.__CARRIER_SETTINGS__ = { hold_failures: true };
+    window.__CHATPANE_SETTINGS__ = { hold_failures: true };
     const probesBeforeHold = probeRequests.length;
     report("graphql-1675004", 1000);
     now += 1001;
@@ -317,12 +319,12 @@ async function runFixtures(
       probeRequests.length === probesBeforeHold &&
         ![...timers.values()].some((t) => t.delay === 1000),
     );
-    window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    window.__CHATPANE_SETTINGS__ = { hold_failures: false };
     tick();
     runTimer(1000);
     assert("releasing hold resumes queued retry", probeRequests.length === probesBeforeHold + 1);
     report("graphql-1675004");
-    const firstAccount = localStorage.getItem("carrier-rate-limit:123");
+    const firstAccount = localStorage.getItem("chatpane-rate-limit:123");
     // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.
     document.cookie = "c_user=456; path=/";
     init();
@@ -331,7 +333,7 @@ async function runFixtures(
     assert("new account begins at base backoff", remaining() === 15 * 60_000);
     assert(
       "other account's state remains isolated",
-      localStorage.getItem("carrier-rate-limit:123") === firstAccount,
+      localStorage.getItem("chatpane-rate-limit:123") === firstAccount,
     );
     // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.
     document.cookie = "c_user=123; path=/";

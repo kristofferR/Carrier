@@ -102,7 +102,7 @@ export function initUnreadBadge() {
   // visible links in the navigation list (`/t/<id>`), excluding duplicate or
   // unrelated thread links elsewhere in the page.
   const unreadConversationState = () => {
-    const ignoreMuted = badgeIgnoresMutedConversations(window.__CARRIER_SETTINGS__);
+    const ignoreMuted = badgeIgnoresMutedConversations(window.__CHATPANE_SETTINGS__);
     const openId = threadIdFromHref(location.pathname);
     if (openId) {
       observeOpenThreadMute(openId, [
@@ -196,7 +196,7 @@ export function initUnreadBadge() {
   let filteredUnreadBaseline: number | null = null;
   const knownMutedUnreads = new MutedUnreadStore(
     accountStorageKey ? unreadStorage : null,
-    accountStorageKey || "__carrier_muted_unreads_anonymous__",
+    accountStorageKey || "__chatpane_muted_unreads_anonymous__",
   );
   let ignoreMutedPolicy: boolean | null = null;
   const setBadge = (n: number, force: boolean) => {
@@ -209,7 +209,7 @@ export function initUnreadBadge() {
     // Use a single setter on macOS so an unread update cannot race ERR away.
     // Dot mode shows that something is unread, never how much. Off macOS the
     // native side draws the dot itself (tray, taskbar overlay).
-    const dot = window.__CARRIER_SETTINGS__?.badge_mode === "dot";
+    const dot = window.__CHATPANE_SETTINGS__?.badge_mode === "dot";
     const command = isMac ? "plugin:window|set_badge_label" : "plugin:window|set_badge_count";
     const value = isMac
       ? dockError
@@ -223,8 +223,8 @@ export function initUnreadBadge() {
         ? n
         : null;
     invoke(command, { value })?.catch?.(() => diag("badge.set", "badge update failed"));
-    invoke("plugin:event|emit", { event: "carrier:unread", payload: n })?.catch?.(() =>
-      diag("badge.emit", "carrier:unread emit failed"),
+    invoke("plugin:event|emit", { event: "chatpane:unread", payload: n })?.catch?.(() =>
+      diag("badge.emit", "chatpane:unread emit failed"),
     );
   };
 
@@ -232,7 +232,7 @@ export function initUnreadBadge() {
   // applications, which must survive the async macOS badge-authorization grant
   // (it lands shortly after launch) and the chat list's first render.
   const apply = (force: boolean) => {
-    const s = window.__CARRIER_SETTINGS__ || {};
+    const s = window.__CHATPANE_SETTINGS__ || {};
     const ignoreMuted = badgeIgnoresMutedConversations(s);
     if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
       filteredUnreadBaseline = null;
@@ -282,7 +282,7 @@ export function initUnreadBadge() {
     setBadge(n, force);
   };
 
-  window.addEventListener("carrier:thread-mute", (event) => {
+  window.addEventListener("chatpane:thread-mute", (event) => {
     const detail = (event as CustomEvent<{ id?: unknown; muted?: unknown }>).detail;
     if (typeof detail?.muted !== "boolean" || typeof detail.id !== "string") return;
     if (!detail.muted) knownMutedUnreads.invalidate(detail.id);
@@ -333,7 +333,7 @@ export function initUnreadBadge() {
     waitForHead.observe(document.documentElement, { childList: true, subtree: true });
   }
   window.addEventListener(RATE_LIMIT_EVENT, () => apply(true));
-  window.addEventListener("carrier:settings", () => apply(true));
+  window.addEventListener("chatpane:settings", () => apply(true));
   // Fallback poll behind the title observer above (which stays armed while
   // hidden — badge freshness in the background is the feature). Poll slowly
   // when the window is hidden, snappily when visible, and catch up the moment

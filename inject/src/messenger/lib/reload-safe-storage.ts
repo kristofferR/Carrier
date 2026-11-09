@@ -4,7 +4,7 @@ type KeyValueStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
  * Storage for page state that must outlive a reload.
  *
  * Facebook's macOS client deletes localStorage keys it does not recognise on
- * every page load, so localStorage alone forgets Carrier's notification memory
+ * every page load, so localStorage alone forgets Chatpane's notification memory
  * at each reload and an old unread message notifies again. sessionStorage
  * survives reloads of the same window, so every write is mirrored there and
  * reads fall back to it. localStorage stays first: where Facebook leaves it

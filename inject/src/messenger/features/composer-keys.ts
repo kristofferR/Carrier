@@ -1,5 +1,5 @@
 /* -------------------- Composer Enter-key handling -------------------- */
-// Carrier runs at document start, before Messenger registers its handlers.
+// Chatpane runs at document start, before Messenger registers its handlers.
 // Stopping propagation here keeps a composing Enter from reaching Messenger's
 // send handler while preserving the browser default that commits the IME text.
 import {
@@ -33,7 +33,7 @@ function voiceClipCancelButton(): HTMLElement | undefined {
 }
 
 // Escape discards a voice clip being recorded or replayed, like its X button.
-// Dialogs, menus, Carrier's zoom overlay and fullscreen media keep Escape.
+// Dialogs, menus, Chatpane's zoom overlay and fullscreen media keep Escape.
 function onVoiceClipEscape(event: KeyboardEvent) {
   if (event.key !== "Escape") return;
   const target = event.target;
@@ -89,7 +89,7 @@ export function initComposerKeys() {
           isComposing: event.isComposing,
           compositionActive,
           keyCode: event.keyCode,
-          requireAccelerator: window.__CARRIER_SETTINGS__?.send_with_accelerator === true,
+          requireAccelerator: window.__CHATPANE_SETTINGS__?.send_with_accelerator === true,
           acceleratorPressed: isMac ? event.metaKey : event.ctrlKey,
           shiftKey: event.shiftKey,
         })

@@ -9,9 +9,9 @@ import {
   SYSTEM_EMOJI_GLYPH_ATTR,
 } from "../lib/emoji";
 
-const SOURCE_ATTR = "data-carrier-emoji-sprite";
+const SOURCE_ATTR = "data-chatpane-emoji-sprite";
 const GLYPH_ATTR = SYSTEM_EMOJI_GLYPH_ATTR;
-const REACTION_ATTR = "data-carrier-reaction-emoji";
+const REACTION_ATTR = "data-chatpane-reaction-emoji";
 const CANDIDATE_SEL = "img[alt], [aria-label]";
 const INTERACTIVE_SEL =
   'button, a[href], input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]';
@@ -22,7 +22,7 @@ export function initSystemEmoji() {
   let pending = false;
   const queuedRoots = new Set<Element>();
 
-  const on = () => window.__CARRIER_SETTINGS__?.system_emoji === true;
+  const on = () => window.__CHATPANE_SETTINGS__?.system_emoji === true;
 
   function sourceGlyph(el: Element) {
     if (el?.nodeType !== 1 || el.hasAttribute(GLYPH_ATTR)) return "";
@@ -40,10 +40,10 @@ export function initSystemEmoji() {
   }
 
   function clearGlyph(el: Element) {
-    el.__carrierSystemEmojiGlyph?.remove?.();
+    el.__chatpaneSystemEmojiGlyph?.remove?.();
     el.removeAttribute(SOURCE_ATTR);
-    el.removeAttribute("data-carrier-emoji-glyph");
-    delete el.__carrierSystemEmojiGlyph;
+    el.removeAttribute("data-chatpane-emoji-glyph");
+    delete el.__chatpaneSystemEmojiGlyph;
   }
 
   function ensureGlyph(el: Element) {
@@ -53,13 +53,13 @@ export function initSystemEmoji() {
       return;
     }
     el.setAttribute(SOURCE_ATTR, "");
-    el.setAttribute("data-carrier-emoji-glyph", glyph);
-    let span = el.__carrierSystemEmojiGlyph;
+    el.setAttribute("data-chatpane-emoji-glyph", glyph);
+    let span = el.__chatpaneSystemEmojiGlyph;
     if (!span?.isConnected) {
       span = document.createElement("span");
       span.setAttribute(GLYPH_ATTR, "");
       span.setAttribute("role", "img");
-      el.__carrierSystemEmojiGlyph = span;
+      el.__chatpaneSystemEmojiGlyph = span;
       el.after(span);
     }
     if (span.previousSibling !== el) el.after(span);
@@ -78,7 +78,7 @@ export function initSystemEmoji() {
       const source = glyph.previousElementSibling;
       if (
         !source?.hasAttribute(SOURCE_ATTR) ||
-        source.__carrierSystemEmojiGlyph !== glyph ||
+        source.__chatpaneSystemEmojiGlyph !== glyph ||
         !source.isConnected
       ) {
         glyph.remove();
@@ -157,7 +157,7 @@ export function initSystemEmoji() {
   }
 
   const apply = () => {
-    html.toggleAttribute("data-carrier-system-emoji", on());
+    html.toggleAttribute("data-chatpane-system-emoji", on());
     if (on()) {
       start();
       schedule();
@@ -167,7 +167,7 @@ export function initSystemEmoji() {
   };
 
   apply();
-  window.addEventListener("carrier:settings", apply);
+  window.addEventListener("chatpane:settings", apply);
   if (document.readyState === "loading")
     document.addEventListener("DOMContentLoaded", () => on() && schedule(), { once: true });
 }

@@ -3,7 +3,7 @@
  * Source: inject/src/settings/update-consent.ts (bundled by inject/build.ts via `bun run build:inject`).
  */
 "use strict";
-var CarrierSettingsUpdate = (() => {
+var ChatpaneSettingsUpdate = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -43,11 +43,11 @@ var CarrierSettingsUpdate = (() => {
     }
     throw new Error("invalid update install mode");
   }
-  function availableState(version, installMode, status = `Carrier ${version} is available.`) {
+  function availableState(version, installMode, status = `Chatpane ${version} is available.`) {
     const manual = installMode.kind === "manual";
     return {
       phase: "available",
-      buttonLabel: manual ? installMode.buttonLabel : `Install Carrier ${version}`,
+      buttonLabel: manual ? installMode.buttonLabel : `Install Chatpane ${version}`,
       status: manual ? `${status} ${installMode.instructions}` : status,
       busy: false,
       version
@@ -146,7 +146,7 @@ var CarrierSettingsUpdate = (() => {
           return this.publish({
             phase: "up-to-date",
             buttonLabel: "Check for updates",
-            status: "Carrier is up to date.",
+            status: "Chatpane is up to date.",
             busy: false
           });
         }
@@ -168,7 +168,7 @@ var CarrierSettingsUpdate = (() => {
       }
       this.publish({
         phase: "installing",
-        buttonLabel: `Install Carrier ${this.version}`,
+        buttonLabel: `Install Chatpane ${this.version}`,
         status: "Downloading and installing update…",
         busy: true,
         version: this.version
@@ -179,7 +179,7 @@ var CarrierSettingsUpdate = (() => {
         return this.publish({
           phase: "up-to-date",
           buttonLabel: "Check for updates",
-          status: "Carrier is already up to date.",
+          status: "Chatpane is already up to date.",
           busy: false
         });
       }
@@ -190,7 +190,7 @@ var CarrierSettingsUpdate = (() => {
       const detail = failureDetail(error);
       return this.publish({
         phase: this.version ? "available" : "idle",
-        buttonLabel: this.version && this.installMode?.kind === "manual" ? this.installMode.buttonLabel : this.version ? `Install Carrier ${this.version}` : "Check for updates",
+        buttonLabel: this.version && this.installMode?.kind === "manual" ? this.installMode.buttonLabel : this.version ? `Install Chatpane ${this.version}` : "Check for updates",
         status: detail ? `${action} ${detail}` : action,
         busy: false,
         version: this.version || void 0

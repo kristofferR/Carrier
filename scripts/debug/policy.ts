@@ -66,7 +66,7 @@ export function debugDraft(value: unknown): { tag: string; revision: string } | 
   )
     return null;
   const tag = /^debug-v\d+\.\d+\.\d+-([0-9a-f]{12})$/.exec(value.tag_name);
-  const body = /^Carrier debug ready\nCommit: ([0-9a-f]{40})$/.exec(value.body);
+  const body = /^Chatpane debug ready\nCommit: ([0-9a-f]{40})$/.exec(value.body);
   if (!tag || !body || !body[1]!.startsWith(tag[1]!)) return null;
   return { tag: value.tag_name, revision: body[1]! };
 }

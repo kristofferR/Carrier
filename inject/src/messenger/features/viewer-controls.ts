@@ -5,9 +5,9 @@ import { reportMediaViewer, windowControlsInset } from "./title-bar";
 const DIALOG = '[role="dialog"]';
 const BANNER = 'div[role="banner"]';
 const CONTROL = 'a[href], button, [role="button"]';
-const BANNER_ATTR = "data-carrier-media-controls";
-const ACTIONS_ATTR = "data-carrier-media-actions";
-const OFFSET = "--carrier-media-controls-offset";
+const BANNER_ATTR = "data-chatpane-media-controls";
+const ACTIONS_ATTR = "data-chatpane-media-actions";
+const OFFSET = "--chatpane-media-controls-offset";
 
 const visibleControls = (root: HTMLElement) =>
   [...root.querySelectorAll<HTMLElement>(CONTROL)]
@@ -17,7 +17,7 @@ const visibleControls = (root: HTMLElement) =>
         rect.width >= 16 &&
         rect.height >= 16 &&
         rect.bottom > 0 &&
-        // Controls sit near the top; Carrier's strip (and the offset clearing
+        // Controls sit near the top; Chatpane's strip (and the offset clearing
         // it) can move them further down, so the band grows with it.
         rect.top < 96 + windowControlsInset() &&
         rect.right > 0 &&

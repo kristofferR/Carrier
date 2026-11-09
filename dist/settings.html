@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Carrier Settings</title>
+    <title>Chatpane Settings</title>
     <script>
       // Before the first paint, so the tab bar doesn't move.
       if (/Mac/.test(navigator.platform || "")) document.documentElement.classList.add("mac-title-bar");
-      // Windows and Linux: Carrier's close button and drag strip. Settings
+      // Windows and Linux: Chatpane's close button and drag strip. Settings
       // can't be minimized or maximized, so close is the only control.
       (() => {
         const root = document.documentElement;
@@ -48,8 +48,8 @@
           if (document.body) attach();
           else document.addEventListener("DOMContentLoaded", attach, { once: true });
         };
-        window.__carrierTitleBar = apply;
-        apply(window.__CARRIER_TITLE_BAR__);
+        window.__chatpaneTitleBar = apply;
+        apply(window.__CHATPANE_TITLE_BAR__);
       })();
     </script>
     <style>
@@ -57,7 +57,7 @@
       /* macOS: the window buttons float over the tab bar (no separate title
          bar), so the bar keeps a 28pt strip free for them. */
       html.mac-title-bar .tabs { padding-top: 40px; }
-      /* Windows and Linux: Carrier draws the close button (src-tauri/src/title_bar.rs),
+      /* Windows and Linux: Chatpane draws the close button (src-tauri/src/title_bar.rs),
          over a strip at the top of the tab bar that drags the window. */
       html[data-controls] .tabs { padding-top: calc(12px + var(--inset)); }
       #title-strip { position: fixed; top: 0; left: 0; right: 0; height: var(--inset); z-index: 2; }
@@ -280,7 +280,7 @@
     <main id="rows" role="tabpanel"></main>
     <footer>
       <div>
-        <div class="ver" id="version">Carrier</div>
+        <div class="ver" id="version">Chatpane</div>
         <div id="status"></div>
         <details id="update-notes" hidden>
           <summary></summary>
@@ -298,10 +298,10 @@
       // Per-field metadata: [key, label, hint]. Grouping into tabs is below.
       const FIELDS = [
         ["always_on_top", "Always on Top", "Keep the window above other apps."],
-        ["global_hotkey", "Global Hotkey", "Show or hide Carrier from anywhere (Cmd/Ctrl+Shift+M)."],
-        ["show_tray", "Show System Tray", "Show a Carrier icon in the system tray."],
+        ["global_hotkey", "Global Hotkey", "Show or hide Chatpane from anywhere (Cmd/Ctrl+Shift+M)."],
+        ["show_tray", "Show System Tray", "Show a Chatpane icon in the system tray."],
         ["start_to_tray", "Start to Tray", "Launch hidden, into the tray."],
-        ["autostart", "Start on System Startup", "Launch Carrier when you log in."],
+        ["autostart", "Start on System Startup", "Launch Chatpane when you log in."],
         ["hide_on_close", "Hide on Close", "Closing the window hides it instead of quitting."],
         ["unread_badge", "Unread Badge", "Show the unread count on the Dock / taskbar icon."],
         ["mute_notifications", "Mute Notifications", "Don't show desktop notifications for new messages."],
@@ -309,8 +309,8 @@
         ["notify_group_chats", "Group Chat Notifications", "Notify for messages in group chats. The unread badge counts them either way."],
         ["hide_notification_preview", "Hide Message Preview", "Notify without the sender name or message text."],
         ["group_notifications_by_conversation", "Group by Conversation", "Stack notifications from the same conversation together."],
-        ["clear_notifications_on_view", "Clear When Viewed", "Remove a conversation's notifications when you view it in Carrier."],
-        ["attention_on_message", "Bounce Dock Icon", "Bounce the Dock icon when a message arrives while Carrier is unfocused."],
+        ["clear_notifications_on_view", "Clear When Viewed", "Remove a conversation's notifications when you view it in Chatpane."],
+        ["attention_on_message", "Bounce Dock Icon", "Bounce the Dock icon when a message arrives while Chatpane is unfocused."],
         ["hide_names", "Hide Names", "Blur contact names in the conversation list and open conversation. Cmd/Ctrl+Shift+H toggles names and avatars together."],
         ["hide_avatars", "Hide Avatars", "Blur profile pictures, group pictures and read-receipt faces."],
         ["system_emoji", "System Emoji", "Your system's emoji font instead of Facebook's."],
@@ -318,12 +318,12 @@
         ["stop_media_autoplay", "Stop Media Autoplay", "Pause videos and GIFs that start automatically. Manual playback still works."],
         ["menu_bar_only", "Menu Bar Only", "Hide the Dock icon and live in the menu bar (needs the tray)."],
         ["hide_menu_bar", "Hide Top Menu", "Settings stays on the gear button and F3."],
-        ["hide_on_minimize", "Hide When Minimized", "Move Carrier into the tray instead of leaving it minimized."],
-        ["hide_on_focus_loss", "Hide When Focus Is Lost", "Move Carrier into the tray whenever another app gets focus."],
-        ["hide_taskbar_icon", "Hide Taskbar Icon", "Keep Carrier out of the taskbar and reopen it from the tray."],
-        ["automatic_update_checks", "Automatic Update Checks", "Check for signed Carrier updates on startup and on the schedule below. Carrier asks before installing or opening package-manager instructions."],
+        ["hide_on_minimize", "Hide When Minimized", "Move Chatpane into the tray instead of leaving it minimized."],
+        ["hide_on_focus_loss", "Hide When Focus Is Lost", "Move Chatpane into the tray whenever another app gets focus."],
+        ["hide_taskbar_icon", "Hide Taskbar Icon", "Keep Chatpane out of the taskbar and reopen it from the tray."],
+        ["automatic_update_checks", "Automatic Update Checks", "Check for signed Chatpane updates on startup and on the schedule below. Chatpane asks before installing or opening package-manager instructions."],
         ["hold_failures", "Hold Failures for Investigation", "Keep a broken Messenger view intact. Diagnostics continue, but automatic reloads and rebuilds pause. Manual reload still works."],
-        ["focus_composer_on_return", "Focus Message Box", "When you open a conversation or switch back to Carrier with one open, put the cursor in the message box."],
+        ["focus_composer_on_return", "Focus Message Box", "When you open a conversation or switch back to Chatpane with one open, put the cursor in the message box."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
         ["strip_link_tracking", "Remove Facebook link tracking", "Strip Facebook tracking IDs from links you copy or open in your browser."],
@@ -360,7 +360,7 @@
       if (IS_WINDOWS) {
         FIELD_META.attention_on_message = {
           label: "Flash Taskbar Icon",
-          hint: "Flash the taskbar button when a message arrives while Carrier is unfocused.",
+          hint: "Flash the taskbar button when a message arrives while Chatpane is unfocused.",
         };
       }
 
@@ -395,7 +395,15 @@
 
       let activeTab = "general";
       try {
-        const saved = localStorage.getItem("carrier:settingsTab");
+        // Chatpane was called Carrier; move the remembered tab to the new key.
+        const legacyTab = localStorage.getItem("carrier:settingsTab");
+        if (legacyTab !== null) {
+          if (localStorage.getItem("chatpane:settingsTab") === null) {
+            localStorage.setItem("chatpane:settingsTab", legacyTab);
+          }
+          localStorage.removeItem("carrier:settingsTab");
+        }
+        const saved = localStorage.getItem("chatpane:settingsTab");
         if (saved && TABS.some((t) => t.id === saved)) activeTab = saved;
       } catch (_) {}
 
@@ -993,7 +1001,7 @@
           "update_check_hours", "4",
           [["1", "Every hour"], ["4", "Every 4 hours"], ["24", "Once a day"]],
           "Check for updates",
-          "How often Carrier looks for a new signed release while it runs.",
+          "How often Chatpane looks for a new signed release while it runs.",
           !settings.automatic_update_checks ||
             !runtimeCapabilities ||
             !runtimeCapabilities.automaticUpdateChecks,
@@ -1007,7 +1015,7 @@
           "badge_mode", "messages",
           [["messages", "Unread messages"], ["conversations", "Unread conversations"], ["dot", "Dot only"]],
           "Badge counts",
-          "Shows unread messages when Messenger exposes an exact total. While muted chats are filtered, Carrier uses unread conversations because Messenger exposes only the combined message total. Dot only shows that something is unread, without a number.",
+          "Shows unread messages when Messenger exposes an exact total. While muted chats are filtered, Chatpane uses unread conversations because Messenger exposes only the combined message total. Dot only shows that something is unread, without a number.",
           !settings.unread_badge,
         );
       }
@@ -1028,7 +1036,7 @@
         return selectRow(
           "download_behavior", "downloads",
           [["downloads", "Downloads folder"], ["ask", "Ask every time"]],
-          "Save downloads", "Choose whether Carrier saves automatically or asks where to put each file.",
+          "Save downloads", "Choose whether Chatpane saves automatically or asks where to put each file.",
           false,
         );
       }
@@ -1059,7 +1067,7 @@
             ["direct", "Real names in group chats"],
             ["off", "Real names everywhere"],
           ],
-          "Nicknames", "Where Carrier shows real names instead.",
+          "Nicknames", "Where Chatpane shows real names instead.",
           false,
         );
       }
@@ -1099,11 +1107,11 @@
           hint = `${hint} Required by an enabled Windows tray behavior.`;
         } else if (runtimeUnavailable) {
           if (!runtimeCapabilities) {
-            hint = "Unavailable because Carrier could not verify this runtime capability.";
+            hint = "Unavailable because Chatpane could not verify this runtime capability.";
           } else if (key === "automatic_update_checks" && runtimeCapabilities.debug) {
-            hint = "Debug drafts are managed by carrier-debug-update. Release updates are blocked.";
+            hint = "Debug drafts are managed by chatpane-debug-update. Release updates are blocked.";
           } else if (key === "multi_instance") {
-            hint = "The Snap package supports one Carrier process at a time.";
+            hint = "The Snap package supports one Chatpane process at a time.";
           } else if (runtimeCapabilities.snap) {
             hint =
               key === "autostart"
@@ -1124,7 +1132,7 @@
         if (id !== activeTab) {
           activeTab = id;
           try {
-            localStorage.setItem("carrier:settingsTab", id);
+            localStorage.setItem("chatpane:settingsTab", id);
           } catch (_) {}
           render();
         }
@@ -1181,7 +1189,7 @@
       function testNotificationRow() {
         return buttonRow(
           "Test notifications",
-          "Check that your system shows Carrier's notifications. Carrier's own mute and pause are ignored.",
+          "Check that your system shows Chatpane's notifications. Chatpane's own mute and pause are ignored.",
           "Send Test Notification",
           async (btn, row) => {
             const hint = row.querySelector(".hint");
@@ -1209,7 +1217,7 @@
           row,
           buttonRow(
             "Waiting for Approval",
-            "Allow Carrier in System Settings → General → Login Items to start it when you log in.",
+            "Allow Chatpane in System Settings → General → Login Items to start it when you log in.",
             "Open Login Items",
             () => invoke("open_login_items").catch(console.error),
           ),
@@ -1217,7 +1225,7 @@
         return rows;
       }
 
-      // Carrier logs warnings and page-integration failures to a file; this
+      // Chatpane logs warnings and page-integration failures to a file; this
       // opens its folder so the log is easy to attach to a bug report.
       function openLogsRow() {
         return buttonRow(
@@ -1243,7 +1251,7 @@
           async () => {
             try {
               await invoke("open_custom_css");
-              setStatus("Save custom.css, then reload Carrier to apply it.");
+              setStatus("Save custom.css, then reload Chatpane to apply it.");
             } catch (e) {
               setStatus("Could not open custom.css.");
               console.error(e);
@@ -1294,7 +1302,7 @@
           ["-1", "Until I turn it off"],
         ];
         let current = until === -1 ? "-1" : "0";
-        let hint = "Turn off Messenger's notifications for a while, on all your devices. Carrier stays quiet too.";
+        let hint = "Turn off Messenger's notifications for a while, on all your devices. Chatpane stays quiet too.";
         if (until === null) {
           hint = "Messenger didn't report Do Not Disturb.";
         } else if (until === -1) {
@@ -1328,7 +1336,7 @@
           el(
             "div",
             "section-hint",
-            "Your Facebook account's own Messenger settings. Changes apply wherever you use Messenger, including your phone. Carrier's own notification settings are on the Notifications tab.",
+            "Your Facebook account's own Messenger settings. Changes apply wherever you use Messenger, including your phone. Chatpane's own notification settings are on the Notifications tab.",
           ),
         );
         const { state, error, loading } = messengerAccount;
@@ -1357,7 +1365,7 @@
           accountToggleRow(
             "sounds",
             "Message Sounds",
-            "Messenger's own sounds for new messages. Carrier's notification sound is separate.",
+            "Messenger's own sounds for new messages. Chatpane's notification sound is separate.",
             state.sounds,
           ),
           dndRow(state.dndUntil),
@@ -1459,11 +1467,11 @@
           notesBox.hidden = true;
           return;
         }
-        notesBox.querySelector("summary").textContent = `What's new in Carrier ${state.version}`;
+        notesBox.querySelector("summary").textContent = `What's new in Chatpane ${state.version}`;
         notesBox.querySelector(".update-notes-text").textContent = notes;
         notesBox.hidden = false;
       }
-      const updateController = new CarrierSettingsUpdate.UpdateConsentController(
+      const updateController = new ChatpaneSettingsUpdate.UpdateConsentController(
         (command) => invoke(command),
         (state) => {
           updateButton.textContent = state.buttonLabel;
@@ -1502,7 +1510,7 @@
         }
         try {
           const v = await invoke("plugin:app|version");
-          document.getElementById("version").textContent = "Carrier " + v;
+          document.getElementById("version").textContent = "Chatpane " + v;
         } catch (_) {}
       })();
     </script>

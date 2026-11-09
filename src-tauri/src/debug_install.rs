@@ -2,19 +2,19 @@
 
 use std::path::PathBuf;
 
-pub(crate) const UPDATE_INSTRUCTIONS: &str = "This debug installation receives debug drafts through carrier-debug-update. Release updates are blocked. New debug builds install only while Carrier is quit.";
+pub(crate) const UPDATE_INSTRUCTIONS: &str = "This debug installation receives debug drafts through chatpane-debug-update. Release updates are blocked. New debug builds install only while Chatpane is quit.";
 
 fn install_dir() -> Option<PathBuf> {
     let home = PathBuf::from(std::env::var_os("HOME")?);
     Some(if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/CarrierDebug")
+        home.join("Library/Application Support/ChatpaneDebug")
     } else {
-        home.join(".local/share/carrier-debug")
+        home.join(".local/share/chatpane-debug")
     })
 }
 
 /// A build the personal updater verified and staged in `pending.json` to
-/// install once Carrier quits.
+/// install once Chatpane quits.
 #[cfg(any(feature = "diagnostics", test))]
 #[derive(Debug, PartialEq)]
 struct StagedBuild {
@@ -34,7 +34,7 @@ fn staged_build(pending: &[u8], running_revision: &str) -> Option<StagedBuild> {
     (revision != running_revision).then_some(StagedBuild { version, revision })
 }
 
-/// The updater never quits Carrier, so a session left running keeps its old
+/// The updater never quits Chatpane, so a session left running keeps its old
 /// build indefinitely. Say once per staged build that quitting installs it.
 #[cfg(feature = "diagnostics")]
 pub(crate) fn spawn_staged_build_notices(app: tauri::AppHandle) {
@@ -45,7 +45,7 @@ pub(crate) fn spawn_staged_build_notices(app: tauri::AppHandle) {
             tokio::time::sleep(INTERVAL).await;
             let Some(build) = install_dir()
                 .and_then(|dir| std::fs::read(dir.join("pending.json")).ok())
-                .and_then(|pending| staged_build(&pending, env!("CARRIER_BUILD_REVISION")))
+                .and_then(|pending| staged_build(&pending, env!("CHATPANE_BUILD_REVISION")))
             else {
                 continue;
             };
@@ -54,14 +54,14 @@ pub(crate) fn spawn_staged_build_notices(app: tauri::AppHandle) {
             }
             let short = build.revision.get(..12).unwrap_or(&build.revision);
             log::info!(
-                "debug build {} {short} is staged until Carrier quits",
+                "debug build {} {short} is staged until Chatpane quits",
                 build.version
             );
             crate::notifications::show_app_notice(
                 &app,
-                "Carrier debug update ready".into(),
+                "Chatpane debug update ready".into(),
                 format!(
-                    "Carrier {} debug ({short}) is staged. Quit Carrier to install it; the updater runs every five minutes while Carrier is closed.",
+                    "Chatpane {} debug ({short}) is staged. Quit Chatpane to install it; the updater runs every five minutes while Chatpane is closed.",
                     build.version
                 ),
             );
@@ -86,7 +86,7 @@ pub(crate) fn startup() -> bool {
             "{}",
             serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
-                "revision": env!("CARRIER_BUILD_REVISION"),
+                "revision": env!("CHATPANE_BUILD_REVISION"),
                 "debug": cfg!(debug_assertions),
                 "diagnostics": cfg!(feature = "diagnostics"),
                 "mcp": cfg!(feature = "mcp"),
@@ -99,7 +99,7 @@ pub(crate) fn startup() -> bool {
     if let Some(dir) = install_dir() {
         if dir.join("debug-only").exists() && !cfg!(feature = "diagnostics") {
             eprintln!(
-                "Carrier: this machine requires a diagnostics debug build. Run carrier-debug-update."
+                "Chatpane: this machine requires a diagnostics debug build. Run chatpane-debug-update."
             );
             std::process::exit(1);
         }
@@ -137,7 +137,7 @@ pub(crate) fn startup() -> bool {
             let lock = match lock {
                 Ok(lock) => lock,
                 Err(error) => {
-                    eprintln!("Carrier debug install lock: {error}");
+                    eprintln!("Chatpane debug install lock: {error}");
                     std::process::exit(if exclusive { 75 } else { 1 });
                 }
             };
@@ -148,7 +148,7 @@ pub(crate) fn startup() -> bool {
                 };
                 let result = std::process::Command::new(command)
                     .args(args)
-                    .env("CARRIER_DEBUG_LOCK_OWNER", std::process::id().to_string())
+                    .env("CHATPANE_DEBUG_LOCK_OWNER", std::process::id().to_string())
                     .status();
                 drop(lock);
                 std::process::exit(result.ok().and_then(|s| s.code()).unwrap_or(1));
@@ -163,21 +163,21 @@ pub(crate) fn startup() -> bool {
     }
     #[cfg(all(unix, debug_assertions))]
     if let Err(error) = capture_native_output() {
-        eprintln!("Carrier could not capture native diagnostics: {error}");
+        eprintln!("Chatpane could not capture native diagnostics: {error}");
     }
     if cfg!(debug_assertions) {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             eprintln!(
-                "Carrier panic: {info}\n{}",
+                "Chatpane panic: {info}\n{}",
                 std::backtrace::Backtrace::force_capture()
             );
             previous(info);
         }));
         eprintln!(
-            "Carrier debug {} revision={} diagnostics={}",
+            "Chatpane debug {} revision={} diagnostics={}",
             env!("CARGO_PKG_VERSION"),
-            env!("CARRIER_BUILD_REVISION"),
+            env!("CHATPANE_BUILD_REVISION"),
             cfg!(feature = "diagnostics")
         );
     }
@@ -247,7 +247,7 @@ fn capture_native_output() -> std::io::Result<()> {
         }
     }
     std::thread::Builder::new()
-        .name("carrier-native-log".into())
+        .name("chatpane-native-log".into())
         .spawn(move || {
             let mut size = output.metadata().map(|m| m.len()).unwrap_or(0);
             let mut writable = true;
@@ -260,7 +260,7 @@ fn capture_native_output() -> std::io::Result<()> {
                     Err(_) => break,
                 };
                 // Keep draining even if disk writes fail. Diagnostics must never
-                // block Carrier or close its stdout pipe and cause SIGPIPE.
+                // block Chatpane or close its stdout pipe and cause SIGPIPE.
                 if !writable {
                     continue;
                 }

@@ -4,7 +4,7 @@
 export const EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
 
 /** Marks the glyph span features/system-emoji.ts injects next to a sprite. */
-export const SYSTEM_EMOJI_GLYPH_ATTR = "data-carrier-system-emoji-glyph";
+export const SYSTEM_EMOJI_GLYPH_ATTR = "data-chatpane-system-emoji-glyph";
 
 // The bare variation selector (U+FE0F) is matched deliberately —
 // text-presentation emoji carry it as their only emoji-signalling code point.

@@ -13,7 +13,7 @@ const chromium =
 test.skipIf(!chromium)(
   "title-only conversations do not freeze Dock and tray updates",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-unread-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-unread-test-"));
     let server: ReturnType<typeof Bun.serve> | undefined;
     try {
       const entry = fileURLToPath(new URL("../features/unread-badge.ts", import.meta.url));
@@ -78,7 +78,7 @@ function runFixtures(initBadge: () => void) {
   }) as typeof window.setInterval;
   const calls: { command: string; args?: Record<string, unknown> }[] = [];
   Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
-  window.__CARRIER_SETTINGS__ = {
+  window.__CHATPANE_SETTINGS__ = {
     badge_mode: "conversations",
     unread_badge: true,
     ignore_muted_conversations: true,
@@ -97,7 +97,7 @@ function runFixtures(initBadge: () => void) {
   const tray = () =>
     calls
       .filter(
-        (call) => call.command === "plugin:event|emit" && call.args?.event === "carrier:unread",
+        (call) => call.command === "plugin:event|emit" && call.args?.event === "chatpane:unread",
       )
       .at(-1);
   const tick = (time: number) => {

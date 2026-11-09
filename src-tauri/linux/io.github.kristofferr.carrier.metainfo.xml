@@ -3,11 +3,11 @@
   <id>io.github.kristofferr.carrier</id>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
-  <name>Carrier</name>
+  <name>Chatpane</name>
   <summary>A focused desktop client for Facebook Messenger</summary>
   <description>
     <p>
-      Carrier wraps Messenger in a small native desktop window and removes the
+      Chatpane wraps Messenger in a small native desktop window and removes the
       surrounding Facebook feed, Reels, Marketplace, and other distractions.
     </p>
     <p>
@@ -15,11 +15,11 @@
       system theme integration, privacy controls, and a system tray.
     </p>
   </description>
-  <launchable type="desktop-id">Carrier.desktop</launchable>
+  <launchable type="desktop-id">Chatpane.desktop</launchable>
   <provides>
     <binary>carrier</binary>
   </provides>
-  <url type="homepage">https://kristofferr.github.io/Carrier/</url>
+  <url type="homepage">https://chatpane.app/</url>
   <url type="bugtracker">https://github.com/kristofferR/Carrier/issues</url>
   <url type="vcs-browser">https://github.com/kristofferR/Carrier</url>
   <developer id="io.github.kristofferr">
@@ -32,11 +32,11 @@
   </content_rating>
   <screenshots>
     <screenshot type="default">
-      <image>https://files.kristofferr.com/artifacts/carrier-linux-en-light.png-1788905297.858775-1lUXqXRY.png?k=391s409Xp7NZ</image>
-      <caption>Carrier on Linux with fictional English demo conversations</caption>
+      <image>https://files.kristofferr.com/artifacts/chatpane-linux-en-light.png-1788905297.858775-1lUXqXRY.png?k=391s409Xp7NZ</image>
+      <caption>Chatpane on Linux with fictional English demo conversations</caption>
     </screenshot>
     <screenshot>
-      <image>https://files.kristofferr.com/artifacts/carrier-linux-en-dark.png-1788905303.679180-1lUXqXRY.png?k=IaaOs0_Oq-KY</image>
+      <image>https://files.kristofferr.com/artifacts/chatpane-linux-en-dark.png-1788905303.679180-1lUXqXRY.png?k=IaaOs0_Oq-KY</image>
       <caption>Dark appearance with the same fictional English demo conversations</caption>
     </screenshot>
   </screenshots>
@@ -74,7 +74,7 @@
     </release>
     <release version="1.0.0" date="2026-06-27">
       <description>
-        <p>First stable Carrier release.</p>
+        <p>First stable Chatpane release.</p>
       </description>
     </release>
   </releases>

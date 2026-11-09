@@ -47,7 +47,7 @@ describe("hand-maintained injected assets", () => {
     expect(development.permissions).toContain("core:event:allow-listen");
   });
 
-  test("only Facebook and Messenger pages can reach Carrier, not user-content hosts", async () => {
+  test("only Facebook and Messenger pages can reach Chatpane, not user-content hosts", async () => {
     const release = JSON.parse(await repoAsset("src-tauri/capabilities/default.json")) as {
       remote: { urls: string[] };
     };
@@ -112,7 +112,7 @@ describe("hand-maintained injected assets", () => {
     const settings = await repoAsset("dist/settings.html");
 
     expect(settings).toContain('invoke("open_custom_css")');
-    expect(settings).toContain("Save custom.css, then reload Carrier to apply it.");
+    expect(settings).toContain("Save custom.css, then reload Chatpane to apply it.");
     expect(settings).toContain("missing or invalid CSS is safely ignored");
   });
 
@@ -136,16 +136,16 @@ describe("hand-maintained injected assets", () => {
   test("media viewer controls use a measured safe top inset", async () => {
     const css = await repoAsset("src-tauri/inject/messenger.css");
 
-    expect(css).toContain("data-carrier-media-controls");
-    expect(css).toContain("data-carrier-media-actions");
-    expect(css).toContain("translate: 0 var(--carrier-media-controls-offset");
+    expect(css).toContain("data-chatpane-media-controls");
+    expect(css).toContain("data-chatpane-media-actions");
+    expect(css).toContain("translate: 0 var(--chatpane-media-controls-offset");
   });
 
   test("macOS downloads declare a Files & Folders permission purpose", async () => {
     const info = await repoAsset("src-tauri/Info.plist");
 
     expect(info).toContain("<key>NSDownloadsFolderUsageDescription</key>");
-    expect(info).toContain("Carrier saves photos, videos, and files");
+    expect(info).toContain("Chatpane saves photos, videos, and files");
   });
 
   test("release builds bundle the pre-signed macOS share extension", async () => {
@@ -166,8 +166,8 @@ describe("hand-maintained injected assets", () => {
 
     expect(release.build.beforeBundleCommand).toBe("bun run build:share-extension");
     expect(packageJson.scripts["build:share-extension"]).toBe("bun share-extension/macos/build.ts");
-    expect(release.bundle.macOS.files["PlugIns/Carrier Share.appex"]).toBe(
-      "target/share-extension/Carrier Share.appex",
+    expect(release.bundle.macOS.files["PlugIns/Chatpane Share.appex"]).toBe(
+      "target/share-extension/Chatpane Share.appex",
     );
     expect(release.bundle.createUpdaterArtifacts).toBe(true);
     expect(buildEntrypoint).toContain('if (process.platform !== "darwin")');
@@ -179,7 +179,7 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("the share extension build rejects multiline bundle versions", async () => {
-    const outputDir = await mkdtemp(join(tmpdir(), "carrier-share-version-"));
+    const outputDir = await mkdtemp(join(tmpdir(), "chatpane-share-version-"));
     try {
       const result = Bun.spawnSync([
         "sh",

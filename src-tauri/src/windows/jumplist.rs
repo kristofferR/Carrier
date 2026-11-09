@@ -1,7 +1,7 @@
 //! Windows taskbar jump list — the recent-conversations parity of the macOS
 //! Dock menu and the Linux tray menu. Built from the same in-memory recent-thread
 //! model, so it inherits the Hide Names & Avatars redaction. Each entry launches
-//! `Carrier.exe --thread <id>`; the flag (not a `carrier://` URL) keeps it working
+//! `carrier.exe --thread <id>`; the flag (not a `chatpane://` URL) keeps it working
 //! even if protocol registration failed and avoids a quoting round-trip.
 
 use windows::Win32::Foundation::PROPERTYKEY;
@@ -45,7 +45,7 @@ pub(crate) fn rebuild_jump_list(threads: Vec<RecentThread>) {
         .fetch_add(1, Ordering::AcqRel)
         .wrapping_add(1);
     let spawned = std::thread::Builder::new()
-        .name("carrier-jump-list".into())
+        .name("chatpane-jump-list".into())
         .spawn(move || {
             let _serialized = JUMP_LIST_BUILD
                 .lock()

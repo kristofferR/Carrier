@@ -30,9 +30,9 @@ export function showMediaPermissionCard(
   const failureDescription = [...failureGroups]
     .map(([reason, group]) => captureFailureMessage(reason, group))
     .join(" ");
-  const platform: MediaPlatform = carrierMediaPlatform;
+  const platform: MediaPlatform = chatpaneMediaPlatform;
   const host = document.createElement("div");
-  host.id = "carrier-media-permission-banner";
+  host.id = "chatpane-media-permission-banner";
   const root = host.attachShadow({ mode: "closed" });
   root.innerHTML = `<style>
     :host { all: initial; position: fixed; bottom: 68px; right: 20px; z-index: 2147483646;
@@ -80,7 +80,7 @@ export function showMediaPermissionCard(
   const footer = root.querySelector("footer span")!;
   let disposed = false;
   let pending = false;
-  let snapshot: CarrierMediaPermissionSnapshot = { camera: "unknown", microphone: "unknown" };
+  let snapshot: ChatpaneMediaPermissionSnapshot = { camera: "unknown", microphone: "unknown" };
   let confirmation: ReturnType<typeof setTimeout> | undefined;
   let actionError = "";
   const rows = (["camera", "microphone"] as const).map((device) => {
@@ -100,9 +100,9 @@ export function showMediaPermissionCard(
       render();
       try {
         if (state === "not-determined" && platform === "macos") {
-          accept(await carrierMediaPermissionStatus(device));
+          accept(await chatpaneMediaPermissionStatus(device));
         } else {
-          await carrierOpenMediaPrivacy(device);
+          await chatpaneOpenMediaPrivacy(device);
         }
       } catch {
         actionError = `The action could not finish. ${mediaPrivacyGuidance(platform)}`;
@@ -134,7 +134,7 @@ export function showMediaPermissionCard(
     description.textContent = confirmation
       ? "Try your call again in Messenger."
       : permissionOnly && blocked.length
-        ? `Allow Carrier to use your ${mediaDeviceLabel(blocked)} for calls.`
+        ? `Allow Chatpane to use your ${mediaDeviceLabel(blocked)} for calls.`
         : failureDescription;
     guidance.textContent =
       actionError ||
@@ -190,7 +190,7 @@ export function showMediaPermissionCard(
         ? "Rechecks when you return"
         : "OS permission status unavailable";
   };
-  const accept = (next: CarrierMediaPermissionSnapshot) => {
+  const accept = (next: ChatpaneMediaPermissionSnapshot) => {
     if (disposed) return;
     const changed = devices.some(
       (device) => snapshot[device] === "denied" || snapshot[device] === "not-determined",
@@ -211,7 +211,7 @@ export function showMediaPermissionCard(
     pending = true;
     render();
     try {
-      accept(await carrierMediaPermissionStatus());
+      accept(await chatpaneMediaPermissionStatus());
     } catch {
       accept({ camera: "unknown", microphone: "unknown" });
     } finally {
@@ -220,7 +220,7 @@ export function showMediaPermissionCard(
     }
   };
   const theme = () => {
-    host.dataset.theme = window.__CARRIER_SETTINGS__?.theme ?? "system";
+    host.dataset.theme = window.__CHATPANE_SETTINGS__?.theme ?? "system";
   };
   const onFocus = () => {
     void refresh();
@@ -228,7 +228,7 @@ export function showMediaPermissionCard(
   root.querySelector("footer button")!.addEventListener("click", dismiss);
   window.addEventListener("focus", onFocus);
   document.addEventListener("visibilitychange", onFocus);
-  window.addEventListener("carrier:settings", theme);
+  window.addEventListener("chatpane:settings", theme);
   theme();
   render();
   (document.body ?? document.documentElement).append(host);
@@ -238,7 +238,7 @@ export function showMediaPermissionCard(
     clearTimeout(confirmation);
     window.removeEventListener("focus", onFocus);
     document.removeEventListener("visibilitychange", onFocus);
-    window.removeEventListener("carrier:settings", theme);
+    window.removeEventListener("chatpane:settings", theme);
     host.remove();
   };
 }

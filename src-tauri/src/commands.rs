@@ -1,4 +1,4 @@
-//! The `#[tauri::command]` handlers invoked by Carrier's trusted local pages
+//! The `#[tauri::command]` handlers invoked by Chatpane's trusted local pages
 //! (Settings dialog and splash).
 
 use tauri::{Manager, State, WebviewWindow};
@@ -15,7 +15,7 @@ use crate::settings::{
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
 #[cfg(any(target_os = "linux", test))]
-const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/carrier";
+const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/chatpane";
 #[cfg(any(target_os = "linux", test))]
 const RELEASES_URL: &str = "https://github.com/kristofferR/Carrier/releases/latest";
 // Autostart can beat the OS network/DNS service by a few seconds. Keep the
@@ -114,15 +114,15 @@ impl UpdateInstallMode {
     #[cfg(any(target_os = "linux", test))]
     fn aur(has_paru: bool, has_yay: bool) -> Self {
         let instructions = if has_paru {
-            "Run paru -S carrier to update."
+            "Run paru -S chatpane to update."
         } else if has_yay {
-            "Run yay -S carrier to update."
+            "Run yay -S chatpane to update."
         } else {
-            "Update the carrier package with your AUR helper."
+            "Update the chatpane package with your AUR helper."
         };
         Self {
             kind: UpdateInstallKind::Manual,
-            button_label: Some("Open Carrier on AUR".into()),
+            button_label: Some("Open Chatpane on AUR".into()),
             instructions: Some(instructions.into()),
             manual_url: Some(AUR_PACKAGE_URL),
         }
@@ -134,7 +134,7 @@ impl UpdateInstallMode {
             kind: UpdateInstallKind::Manual,
             button_label: Some("Open Snap update guide".into()),
             instructions: Some(
-                "Snap keeps Carrier up to date. To check now, run `sudo snap refresh carrier` or use your software center.".into(),
+                "Snap keeps Chatpane up to date. To check now, run `sudo snap refresh chatpane` or use your software center.".into(),
             ),
             manual_url: Some("https://snapcraft.io/docs/keeping-snaps-up-to-date"),
         }
@@ -144,9 +144,9 @@ impl UpdateInstallMode {
     fn manual_linux() -> Self {
         Self {
             kind: UpdateInstallKind::Manual,
-            button_label: Some("Open Carrier downloads".into()),
+            button_label: Some("Open Chatpane downloads".into()),
             instructions: Some(
-                "Update Carrier with the package manager or installation method you used.".into(),
+                "Update Chatpane with the package manager or installation method you used.".into(),
             ),
             manual_url: Some(RELEASES_URL),
         }
@@ -169,23 +169,23 @@ fn command_available(program: &str) -> bool {
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn pacman_owns_carrier_with(
+fn pacman_owns_chatpane_with(
     current_executable: Option<&std::path::Path>,
     mut owns: impl FnMut(&std::path::Path) -> bool,
 ) -> bool {
-    let system_carrier = std::path::Path::new("/usr/bin/carrier");
+    let system_chatpane = std::path::Path::new("/usr/bin/carrier");
     let paths = [
-        Some(system_carrier),
-        current_executable.filter(|path| *path != system_carrier),
+        Some(system_chatpane),
+        current_executable.filter(|path| *path != system_chatpane),
     ];
 
     paths.into_iter().flatten().any(&mut owns)
 }
 
 #[cfg(target_os = "linux")]
-fn pacman_owns_carrier() -> bool {
+fn pacman_owns_chatpane() -> bool {
     let current_executable = std::env::current_exe().ok();
-    pacman_owns_carrier_with(current_executable.as_deref(), |path| {
+    pacman_owns_chatpane_with(current_executable.as_deref(), |path| {
         std::process::Command::new("/usr/bin/pacman")
             .arg("-Qo")
             .arg(path)
@@ -247,7 +247,7 @@ fn is_genuine_appimage_runtime() -> bool {
 struct LinuxUpdateEvidence {
     snap: bool,
     pacman_owned: bool,
-    system_carrier_exists: bool,
+    system_chatpane_exists: bool,
     appimage_runtime: bool,
 }
 
@@ -261,7 +261,7 @@ fn linux_update_install_mode(
         UpdateInstallMode::snap()
     } else if evidence.pacman_owned {
         UpdateInstallMode::aur(has_paru, has_yay)
-    } else if evidence.system_carrier_exists || !evidence.appimage_runtime {
+    } else if evidence.system_chatpane_exists || !evidence.appimage_runtime {
         UpdateInstallMode::manual_linux()
     } else {
         UpdateInstallMode::built_in()
@@ -284,8 +284,8 @@ fn current_update_install_mode() -> UpdateInstallMode {
         linux_update_install_mode(
             LinuxUpdateEvidence {
                 snap: is_snap(),
-                pacman_owned: pacman_owns_carrier(),
-                system_carrier_exists: std::path::Path::new("/usr/bin/carrier").is_file(),
+                pacman_owned: pacman_owns_chatpane(),
+                system_chatpane_exists: std::path::Path::new("/usr/bin/carrier").is_file(),
                 appimage_runtime: is_genuine_appimage_runtime(),
             },
             command_available("paru"),
@@ -342,14 +342,14 @@ pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
     }
 }
 
-/// Whether Carrier will start at login, read from the OS. Also corrects the
+/// Whether Chatpane will start at login, read from the OS. Also corrects the
 /// stored setting, which the user may have overridden in the OS.
 #[tauri::command]
 pub(crate) async fn autostart_status(app: tauri::AppHandle) -> Option<crate::autostart::Status> {
     crate::autostart::reconcile(app).await
 }
 
-/// macOS 13+: System Settings → General → Login Items, to approve Carrier.
+/// macOS 13+: System Settings → General → Login Items, to approve Chatpane.
 #[tauri::command]
 pub(crate) fn open_login_items() {
     crate::autostart::open_login_items();
@@ -536,7 +536,7 @@ pub(crate) async fn update_install_mode() -> Result<UpdateInstallMode, String> {
 pub(crate) async fn open_manual_update() -> Result<(), String> {
     let mode = current_update_install_mode_off_main().await?;
     let Some(manual_url) = mode.manual_url else {
-        return Err("This Carrier installation supports built-in updates.".into());
+        return Err("This Chatpane installation supports built-in updates.".into());
     };
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -607,17 +607,17 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
             if remember_available_update(app, Some(update)) {
                 let body = match current_update_install_mode_off_main().await {
                     Ok(mode) if mode.is_manual() => format!(
-                        "Carrier {} is available. Open Settings for package-manager instructions.",
+                        "Chatpane {} is available. Open Settings for package-manager instructions.",
                         version
                     ),
                     Ok(_) => format!(
-                        "Carrier {} is available. Open Settings to review and install it.",
+                        "Chatpane {} is available. Open Settings to review and install it.",
                         version
                     ),
                     Err(error) => {
                         log::warn!("failed to detect the update install mode: {error}");
                         format!(
-                            "Carrier {} is available. Open Settings to review it.",
+                            "Chatpane {} is available. Open Settings to review it.",
                             version
                         )
                     }
@@ -625,7 +625,7 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
                 if let Err(error) = app
                     .notification()
                     .builder()
-                    .title("Carrier update available")
+                    .title("Chatpane update available")
                     .body(body)
                     .show()
                 {
@@ -715,7 +715,7 @@ async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
 
 /// Check GitHub releases for a macOS update and install the signed release DMG.
 ///
-/// Tauri's stock macOS installer expects an `.app.tar.gz` updater payload. Carrier
+/// Tauri's stock macOS installer expects an `.app.tar.gz` updater payload. Chatpane
 /// publishes only the user-facing DMG, so we keep Tauri's update check and
 /// minisign verification, then mount/copy the verified DMG ourselves.
 #[cfg(target_os = "macos")]
@@ -734,7 +734,7 @@ async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
             schedule_macos_relaunch(&installed_app)?;
             // `app.restart()` resolves the running executable after its bundle
             // has been moved aside and removed, so it exits without reopening
-            // Carrier. The detached helper above waits for this process to
+            // Chatpane. The detached helper above waits for this process to
             // disappear before asking LaunchServices to open the new bundle.
             app.exit(0);
             Ok("installed".into())
@@ -773,10 +773,10 @@ fn install_macos_dmg_update(bytes: &[u8]) -> Result<std::path::PathBuf, String> 
         .map_err(|e| e.to_string())?
         .as_millis();
     let work_dir =
-        std::env::temp_dir().join(format!("carrier-update-{}-{nonce}", std::process::id()));
+        std::env::temp_dir().join(format!("chatpane-update-{}-{nonce}", std::process::id()));
     let result = (|| {
         fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
-        let dmg_path = work_dir.join("Carrier-update.dmg");
+        let dmg_path = work_dir.join("Chatpane-update.dmg");
         fs::write(&dmg_path, bytes).map_err(|e| e.to_string())?;
 
         let mountpoint = work_dir.join("mount");
@@ -814,7 +814,7 @@ fn macos_relaunch_command(pid: u32, installed_app: &std::path::Path) -> std::pro
     command
         .arg("-c")
         .arg(MACOS_RELAUNCH_SCRIPT)
-        .arg("carrier-update-relaunch")
+        .arg("chatpane-update-relaunch")
         .arg(pid.to_string())
         .arg(installed_app);
     command
@@ -830,7 +830,7 @@ fn schedule_macos_relaunch(installed_app: &std::path::Path) -> Result<(), String
         .stderr(Stdio::null())
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("Could not schedule Carrier to reopen after the update: {error}"))
+        .map_err(|error| format!("Could not schedule Chatpane to reopen after the update: {error}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -866,7 +866,7 @@ fn find_app_bundle(mountpoint: &std::path::Path) -> Result<std::path::PathBuf, S
     for entry in std::fs::read_dir(mountpoint).map_err(|e| e.to_string())? {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.extension().is_some_and(|ext| ext == "app") {
-            if path.file_name().is_some_and(|name| name == "Carrier.app") {
+            if path.file_name().is_some_and(|name| name == "Chatpane.app") {
                 return Ok(path);
             }
             fallback = Some(path);
@@ -883,7 +883,7 @@ fn replace_app_bundle(
 ) -> Result<(), String> {
     let backup_dir = work_dir.join("backup");
     std::fs::create_dir(&backup_dir).map_err(|e| e.to_string())?;
-    let backup_app = backup_dir.join("Carrier.app");
+    let backup_app = backup_dir.join("Chatpane.app");
 
     match std::fs::rename(destination_app, &backup_app) {
         Ok(()) => {
@@ -936,7 +936,7 @@ fn install_with_admin_privileges(
         ),
         source = applescript_string(&source_app.display().to_string()),
         destination = applescript_string(&destination_app.display().to_string()),
-        backup = applescript_string(&format!("{}.carrier-backup", destination_app.display())),
+        backup = applescript_string(&format!("{}.chatpane-backup", destination_app.display())),
     );
     let mut command = std::process::Command::new("osascript");
     command.arg("-e").arg(script);
@@ -977,7 +977,7 @@ fn navigate_to_messenger(window: &WebviewWindow) -> MessengerLoadStatus {
         },
         Err(e) => MessengerLoadStatus::unexpected(
             "Cannot open Messenger",
-            format!("Carrier has an invalid Messenger URL: {e}"),
+            format!("Chatpane has an invalid Messenger URL: {e}"),
         ),
     }
 }
@@ -1137,7 +1137,7 @@ pub(crate) fn open_messenger_anyway(window: WebviewWindow) -> MessengerLoadStatu
     navigate_to_messenger(&window)
 }
 
-/// Open the folder holding Carrier's log file, for attaching to bug reports.
+/// Open the folder holding Chatpane's log file, for attaching to bug reports.
 /// Called from the (local-origin) Settings window.
 #[tauri::command]
 pub(crate) fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
@@ -1161,7 +1161,7 @@ mod tests {
     use super::{
         LinuxUpdateEvidence, MESSENGER_DNS_MAX_ATTEMPTS, MessengerPreflightAttempt,
         MessengerPreflightDecision, UpdateInstallGuard, UpdateInstallKind,
-        classify_messenger_preflight_attempt, linux_update_install_mode, pacman_owns_carrier_with,
+        classify_messenger_preflight_attempt, linux_update_install_mode, pacman_owns_chatpane_with,
         should_surface_update,
     };
     use crate::preflight::MessengerPreflightError;
@@ -1200,16 +1200,16 @@ mod tests {
     fn macos_relauncher_waits_for_exit_and_opens_the_installed_bundle() {
         use std::{ffi::OsStr, path::Path};
 
-        let command = macos_relaunch_command(42, Path::new("/Applications/Carrier Beta.app"));
+        let command = macos_relaunch_command(42, Path::new("/Applications/Chatpane Beta.app"));
         assert_eq!(command.get_program(), OsStr::new("/bin/sh"));
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             vec![
                 OsStr::new("-c"),
                 OsStr::new(MACOS_RELAUNCH_SCRIPT),
-                OsStr::new("carrier-update-relaunch"),
+                OsStr::new("chatpane-update-relaunch"),
                 OsStr::new("42"),
-                OsStr::new("/Applications/Carrier Beta.app"),
+                OsStr::new("/Applications/Chatpane Beta.app"),
             ]
         );
     }
@@ -1219,41 +1219,41 @@ mod tests {
         let pacman_install = LinuxUpdateEvidence {
             snap: false,
             pacman_owned: true,
-            system_carrier_exists: true,
+            system_chatpane_exists: true,
             appimage_runtime: false,
         };
         let paru = linux_update_install_mode(pacman_install, true, true);
         assert_eq!(paru.kind, UpdateInstallKind::Manual);
         assert_eq!(
             paru.instructions.as_deref(),
-            Some("Run paru -S carrier to update.")
+            Some("Run paru -S chatpane to update.")
         );
         assert_eq!(
             serde_json::to_value(&paru).unwrap(),
             serde_json::json!({
                 "kind": "manual",
-                "buttonLabel": "Open Carrier on AUR",
-                "instructions": "Run paru -S carrier to update."
+                "buttonLabel": "Open Chatpane on AUR",
+                "instructions": "Run paru -S chatpane to update."
             })
         );
 
         let yay = linux_update_install_mode(pacman_install, false, true);
         assert_eq!(
             yay.instructions.as_deref(),
-            Some("Run yay -S carrier to update.")
+            Some("Run yay -S chatpane to update.")
         );
 
         let generic = linux_update_install_mode(pacman_install, false, false);
         assert_eq!(
             generic.instructions.as_deref(),
-            Some("Update the carrier package with your AUR helper.")
+            Some("Update the chatpane package with your AUR helper.")
         );
     }
 
     #[test]
     fn shadowing_appimage_does_not_hide_the_package_owned_system_binary() {
         let shadowing_appimage = std::path::Path::new("/tmp/.mount_Carrie/usr/bin/carrier");
-        let pacman_owned = pacman_owns_carrier_with(Some(shadowing_appimage), |path| {
+        let pacman_owned = pacman_owns_chatpane_with(Some(shadowing_appimage), |path| {
             path == std::path::Path::new("/usr/bin/carrier")
         });
         assert!(pacman_owned);
@@ -1262,7 +1262,7 @@ mod tests {
             LinuxUpdateEvidence {
                 snap: false,
                 pacman_owned,
-                system_carrier_exists: true,
+                system_chatpane_exists: true,
                 appimage_runtime: true,
             },
             true,
@@ -1277,7 +1277,7 @@ mod tests {
         #[cfg(unix)]
         assert!(appimage_runtime_paths_match(
             std::path::Path::new("/tmp/.mount_Carrie/usr/bin/carrier"),
-            std::path::Path::new("/home/user/Applications/Carrier.AppImage"),
+            std::path::Path::new("/home/user/Applications/Chatpane.AppImage"),
             std::path::Path::new("/tmp/.mount_Carrie"),
             std::path::Path::new("/tmp"),
         ));
@@ -1285,7 +1285,7 @@ mod tests {
             LinuxUpdateEvidence {
                 snap: false,
                 pacman_owned: false,
-                system_carrier_exists: false,
+                system_chatpane_exists: false,
                 appimage_runtime: true,
             },
             true,
@@ -1300,7 +1300,7 @@ mod tests {
         #[cfg(unix)]
         assert!(!appimage_runtime_paths_match(
             std::path::Path::new("/usr/bin/carrier"),
-            std::path::Path::new("/home/user/Carrier.AppImage"),
+            std::path::Path::new("/home/user/Chatpane.AppImage"),
             std::path::Path::new("/tmp/.mount_Carrie"),
             std::path::Path::new("/tmp"),
         ));
@@ -1308,7 +1308,7 @@ mod tests {
             LinuxUpdateEvidence {
                 snap: false,
                 pacman_owned: false,
-                system_carrier_exists: false,
+                system_chatpane_exists: false,
                 appimage_runtime: false,
             },
             true,
@@ -1321,7 +1321,7 @@ mod tests {
             LinuxUpdateEvidence {
                 snap: false,
                 pacman_owned: false,
-                system_carrier_exists: true,
+                system_chatpane_exists: true,
                 appimage_runtime: true,
             },
             true,
@@ -1336,7 +1336,7 @@ mod tests {
             LinuxUpdateEvidence {
                 snap: true,
                 pacman_owned: true,
-                system_carrier_exists: true,
+                system_chatpane_exists: true,
                 appimage_runtime: true,
             },
             true,

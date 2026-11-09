@@ -6,7 +6,7 @@ import { threadRestoreStep } from "../lib/thread-restore";
 import { advanceThreadViewed, initialThreadViewedState } from "../lib/thread-viewed";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
 
-const RESTORED_THREAD_KEY = "carrier-restored-thread";
+const RESTORED_THREAD_KEY = "chatpane-restored-thread";
 let cancelThreadRestore = () => {};
 
 /** The open thread's header "ⓘ" button that shows/hides the details sidebar. */
@@ -36,7 +36,7 @@ export function openThreadForAction(path: string): (() => boolean) | null {
   const onRoute = () => threadIdFromHref(location.pathname) === wanted;
   if (onRoute()) return onRoute;
   const staleLog = log();
-  if (window.__carrierOpenThread?.(path) !== true) return null;
+  if (window.__chatpaneOpenThread?.(path) !== true) return null;
   return () => {
     const current = log();
     return onRoute() && current !== null && current !== staleLog;
@@ -111,7 +111,7 @@ function restoreRecycledThread(id: string) {
 export function initThreadNav() {
   // Native code sets the id in a startup script that runs after this bundle.
   setTimeout(() => {
-    const restoreId = window.__CARRIER_RESTORE_THREAD__;
+    const restoreId = window.__CHATPANE_RESTORE_THREAD__;
     if (typeof restoreId === "string" && /^\d{1,32}$/.test(restoreId)) {
       restoreRecycledThread(restoreId);
     }
@@ -120,7 +120,7 @@ export function initThreadNav() {
   // via eval from Rust). Prefer clicking the row — SPA navigation, no full
   // reload; fall back to a hard navigation when the row isn't in the list
   // (scrolled out of Facebook's virtualized list, or a fresh window).
-  window.__carrierOpenThread = (href) => {
+  window.__chatpaneOpenThread = (href) => {
     noteExplicitAction();
     const id = threadPathId(href);
     if (!id) return false;
@@ -151,7 +151,7 @@ export function initThreadNav() {
     viewed = next.state;
     if (next.emit) {
       invoke("plugin:event|emit", {
-        event: "carrier:thread-viewed",
+        event: "chatpane:thread-viewed",
         payload: { thread_path: next.emit },
       })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
     }
@@ -170,7 +170,7 @@ export function initThreadNav() {
   // defined at document-start. Match the stable aria-label rather than FB's
   // churning class names; the label is unchanged whether the panel is open or
   // closed, so one click toggles it.
-  window.__carrierToggleInfo = () => {
+  window.__chatpaneToggleInfo = () => {
     const btn = conversationInfoButton();
     if (btn) {
       btn.click();

@@ -231,7 +231,7 @@ describe("recovery inspection deadlines", () => {
     expect(await f.recovery.recover(() => true, true)).toBe("busy");
     advance(1);
     expect(await f.recovery.recover(() => true, true)).toBe("started");
-    expect(calls).toEqual([["carrier-sync-recovery", "dedicated", "carrier_recovery"]]);
+    expect(calls).toEqual([["chatpane-sync-recovery", "dedicated", "chatpane_recovery"]]);
     expect(f.terminationCalls).toHaveLength(0);
     expect(f.sharedShutdownCalls).toHaveLength(0);
     expect(f.setupCalls).toHaveLength(1);
@@ -261,7 +261,7 @@ describe("recovery inspection deadlines", () => {
     expect(await f.recovery.recover(() => true, true)).toBe("busy");
     advance(1);
     expect(await f.recovery.recover(() => true, true)).toBe("started");
-    expect(calls).toEqual([["carrier-sync-recovery", "dedicated", "carrier_recovery"]]);
+    expect(calls).toEqual([["chatpane-sync-recovery", "dedicated", "chatpane_recovery"]]);
     expect(f.setupCalls).toHaveLength(2);
     expect(f.terminationCalls).toHaveLength(1);
   });
@@ -570,7 +570,7 @@ describe("Messenger worker recovery", () => {
     expect(await f.recovery.recover()).toBe("started");
     expect(await f.recovery.recover(() => true, true)).toBe("started");
     expect(f.watchdogCalls).toHaveLength(1);
-    expect(f.sharedShutdownCalls).toEqual([[false, "carrier-sync-recovery"]]);
+    expect(f.sharedShutdownCalls).toEqual([[false, "chatpane-sync-recovery"]]);
     expect(f.setupCalls).toHaveLength(1);
     expect(f.resets).toBe(0);
     // A shutdown request is not proof that the worker died. Do not broadcast

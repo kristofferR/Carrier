@@ -56,7 +56,7 @@ export function loadFacebookModules(
             reject(error);
           }
         },
-        "carrier",
+        "chatpane",
       );
     } catch (error) {
       clearTimeout(timer);

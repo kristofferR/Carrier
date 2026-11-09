@@ -34,11 +34,11 @@
         ]
       },
       {
-        title: "View & Carrier",
+        title: "View & Chatpane",
         items: [
           { keys: chord(mod, shift, "I"), action: "Toggle conversation information" },
           { keys: chord(mod, shift, "H"), action: "Hide names and avatars" },
-          { keys: chord(mod, shift, "M"), action: "Show or hide Carrier globally" },
+          { keys: chord(mod, shift, "M"), action: "Show or hide Chatpane globally" },
           {
             keys: `${chord(mod, "-")} / ${chord(mod, "=")} / ${chord(mod, "0")}`,
             action: "Zoom out / in / reset"
@@ -102,10 +102,10 @@
       if (!action || !canActivateToastAction(event.isTrusted, navigator.userActivation?.isActive === true)) {
         return;
       }
-      if (action.kind === "reveal-download") carrierRevealDownload(action.url)?.catch?.(() => {
+      if (action.kind === "reveal-download") chatpaneRevealDownload(action.url)?.catch?.(() => {
       });
       else if (action.kind === "open-download-privacy")
-        carrierOpenDownloadPrivacy()?.catch?.(() => {
+        chatpaneOpenDownloadPrivacy()?.catch?.(() => {
         });
     });
     const showToast = (msg, nextAction, options) => {
@@ -143,7 +143,7 @@
         options?.warning ? 8e3 : action ? 6e3 : 2600
       );
     };
-    Object.defineProperty(window, "__carrierToast", {
+    Object.defineProperty(window, "__chatpaneToast", {
       value: showToast,
       writable: false,
       configurable: false
@@ -163,12 +163,12 @@
   });
   function main() {
     installToast();
-    window.__carrierCheckUpdates = () => {
-      window.__carrierToast?.("Opening Settings to check for updates…");
-      emit("carrier:open-settings");
+    window.__chatpaneCheckUpdates = () => {
+      window.__chatpaneToast?.("Opening Settings to check for updates…");
+      emit("chatpane:open-settings");
     };
-    window.__carrierToggleSettings = () => {
-      emit("carrier:open-settings");
+    window.__chatpaneToggleSettings = () => {
+      emit("chatpane:open-settings");
     };
     const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
     let shortcutOverlay = null;
@@ -186,10 +186,10 @@
       if (shortcutOverlay) return;
       shortcutReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const overlay = document.createElement("div");
-      overlay.setAttribute("data-carrier-shortcuts-overlay", "");
+      overlay.setAttribute("data-chatpane-shortcuts-overlay", "");
       overlay.setAttribute("role", "dialog");
       overlay.setAttribute("aria-modal", "true");
-      overlay.setAttribute("aria-labelledby", "carrier-shortcuts-title");
+      overlay.setAttribute("aria-labelledby", "chatpane-shortcuts-title");
       Object.assign(overlay.style, {
         position: "fixed",
         inset: "0",
@@ -222,7 +222,7 @@
         marginBottom: "16px"
       });
       const title = document.createElement("h2");
-      title.id = "carrier-shortcuts-title";
+      title.id = "chatpane-shortcuts-title";
       title.textContent = "Keyboard Shortcuts";
       Object.assign(title.style, { margin: "0", fontSize: "20px", lineHeight: "1.2" });
       const close = document.createElement("button");
@@ -319,7 +319,7 @@
       document.body.append(overlay);
       close.focus({ preventScroll: true });
     };
-    window.__carrierToggleShortcuts = () => {
+    window.__chatpaneToggleShortcuts = () => {
       if (shortcutOverlay) closeShortcuts();
       else openShortcuts();
     };

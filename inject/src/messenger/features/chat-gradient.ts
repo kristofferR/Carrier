@@ -14,7 +14,7 @@ const CHECK_MS = 1_000;
 
 export function initChatGradient() {
   const style = document.createElement("style");
-  style.id = "carrier-chat-gradient";
+  style.id = "chatpane-chat-gradient";
   const classes = new Set<string>();
   // Facebook adds rules to its sheets as it goes: a sheet is read again only
   // once it has more.

@@ -377,13 +377,16 @@ pub(crate) fn is_unsafe_download(name: &str) -> bool {
     )
 }
 
-/// True when the OS refuses to let Carrier save into `folder`: the macOS
+/// True when the OS refuses to let Chatpane save into `folder`: the macOS
 /// Downloads folder permission was denied, or the folder is read-only. Probes
 /// with a uniquely named empty file (`create_new` never touches an existing
 /// one) and removes it. Call it off the main thread: while macOS hasn't asked
 /// yet, this check shows the permission prompt and waits for the answer.
 pub(crate) fn is_folder_access_denied(folder: &Path) -> bool {
-    let probe = folder.join(format!(".carrier-access-{}", uuid::Uuid::new_v4().simple()));
+    let probe = folder.join(format!(
+        ".chatpane-access-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -397,7 +400,7 @@ pub(crate) fn is_folder_access_denied(folder: &Path) -> bool {
     }
 }
 
-/// Where the user can give Carrier folder access again.
+/// Where the user can give Chatpane folder access again.
 pub(crate) fn folder_privacy_url(platform: &str) -> Option<&'static str> {
     (platform == "macos").then_some(
         "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders",
@@ -567,7 +570,7 @@ mod tests {
     #[test]
     fn unique_path_preserves_stem_and_extension() {
         let dir = std::env::temp_dir().join(format!(
-            "carrier-unique-path-{}-{}",
+            "chatpane-unique-path-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -593,7 +596,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = std::env::temp_dir().join(format!(
-            "carrier-folder-access-{}-{}",
+            "chatpane-folder-access-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

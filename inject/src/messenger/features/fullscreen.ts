@@ -13,7 +13,7 @@ export function initFullscreenPolyfill() {
   let current: HTMLElement | null = null;
   const enter = (el: HTMLElement) => {
     current = el;
-    el.dataset.carrierPrevStyle = el.getAttribute("style") || "";
+    el.dataset.chatpanePrevStyle = el.getAttribute("style") || "";
     Object.assign(el.style, {
       position: "fixed",
       inset: "0",
@@ -27,8 +27,8 @@ export function initFullscreenPolyfill() {
   };
   const leave = () => {
     if (current) {
-      current.setAttribute("style", current.dataset.carrierPrevStyle || "");
-      delete current.dataset.carrierPrevStyle;
+      current.setAttribute("style", current.dataset.chatpanePrevStyle || "");
+      delete current.dataset.chatpanePrevStyle;
       current = null;
       document.dispatchEvent(new Event("fullscreenchange"));
     }

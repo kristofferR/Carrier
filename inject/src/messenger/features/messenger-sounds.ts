@@ -97,7 +97,7 @@ const sources = new WeakMap<HTMLMediaElement, Set<AudioBufferSourceNode>>();
 // Pauses per element, so a pause stops a sound that is still loading.
 const pauses = new WeakMap<HTMLMediaElement, number>();
 const pausesOf = (element: HTMLMediaElement) => pauses.get(element) ?? 0;
-// SoundPlayer elements Carrier muted (see the header).
+// SoundPlayer elements Chatpane muted (see the header).
 const quieted = new WeakSet<HTMLMediaElement>();
 const quiet = (element: HTMLMediaElement) => {
   if (element.muted) return;
@@ -126,7 +126,7 @@ function decoded(audio: AudioContext, src: string): Promise<AudioBuffer> {
  * Plays the element's sound through Web Audio. Resolves once it has started
  * (or a pause cancelled it); rejects when Web Audio can't play it. The
  * context sleeps between sounds, so it holds no audio route while idle
- * (#232); Carrier's Web Audio idle gate also tracks it.
+ * (#232); Chatpane's Web Audio idle gate also tracks it.
  */
 async function playThroughWebAudio(element: HTMLMediaElement): Promise<void> {
   const pausesAtStart = pausesOf(element);
@@ -184,7 +184,7 @@ export function installMessengerSoundPlayback() {
     }
     quiet(this);
     // Do Not Disturb, Pause and Mute silence all of Messenger's sounds.
-    if (notificationsGloballyMuted(window.__CARRIER_SETTINGS__)) return Promise.resolve();
+    if (notificationsGloballyMuted(window.__CHATPANE_SETTINGS__)) return Promise.resolve();
     if (pendingMessageSound && Date.now() < pendingMessageSound.until) {
       const { thread, messageId } = pendingMessageSound;
       messageSound = { thread, messageId, at: Date.now() };
@@ -257,7 +257,7 @@ function patchChatPopperCommon(exports: Record<string, unknown>): boolean {
   const playChatTabSound = exports.playChatTabSound;
   if (typeof playChatTabSound !== "function") return false;
   exports.playChatTabSound = function (this: unknown, ...args: unknown[]) {
-    const settings = window.__CARRIER_SETTINGS__;
+    const settings = window.__CHATPANE_SETTINGS__;
     const load = pageLoad();
     const message = args[0] as { timestampMs?: unknown; messageId?: unknown } | null | undefined;
     const plays = playsMessageSound({

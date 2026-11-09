@@ -1,5 +1,5 @@
-//! Start on System Startup (Ref #443). Carrier registers itself with the OS and
-//! reads the registration back, so the setting shows whether Carrier will
+//! Start on System Startup (Ref #443). Chatpane registers itself with the OS and
+//! reads the registration back, so the setting shows whether Chatpane will
 //! really start at login, including after the user switched it off in the OS:
 //!
 //! - macOS 13+: an "Open at Login" item through `SMAppService.mainApp`. The
@@ -7,13 +7,13 @@
 //!   12 keep the LaunchAgent.
 //! - Windows: the per-user `Run` value, unless Task Manager or Settings → Apps →
 //!   Startup marked it disabled under `StartupApproved\Run`. Turning it on in
-//!   Carrier clears that mark.
+//!   Chatpane clears that mark.
 //! - Linux: an XDG autostart entry that isn't `Hidden=true` and launches this
 //!   install.
 //!
-//! Every registration uses the product name ("Carrier") as its file or value
-//! name, the same name tauri-plugin-autostart used, so existing registrations
-//! carry over.
+//! Every registration uses the product name ("Chatpane") as its file or value
+//! name, as tauri-plugin-autostart did. Chatpane was called Carrier, so an entry
+//! under that name moves to the new one on the first launch after the rename.
 
 use tauri::Manager;
 
@@ -32,7 +32,7 @@ pub(crate) enum Status {
 
 /// The stored setting after reading the OS: the OS wins, and an unreadable
 /// state keeps what was stored. Waiting for approval counts as off: macOS
-/// won't open Carrier at login until the user allows it, and switching it off
+/// won't open Chatpane at login until the user allows it, and switching it off
 /// in Login Items reports the same state. Settings shows the way to approve.
 fn reconciled(stored: bool, observed: Option<Status>) -> bool {
     observed.map_or(stored, |status| status == Status::On)
@@ -57,6 +57,10 @@ pub(crate) async fn reconcile(app: tauri::AppHandle) -> Option<Status> {
 }
 
 fn reconcile_blocking(app: &tauri::AppHandle) -> Option<Status> {
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    platform::migrate_previous_entry(app);
+    #[cfg(target_os = "macos")]
+    platform::repoint_after_bundle_rename(app);
     #[cfg(target_os = "macos")]
     platform::migrate_legacy_agent(app);
     let observed = status(app)
@@ -103,6 +107,28 @@ fn entry_name(app: &tauri::AppHandle) -> String {
     app.package_info().name.clone()
 }
 
+/// The name registrations had before the app was renamed to Chatpane.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+const PREVIOUS_ENTRY_NAME: &str = "Carrier";
+
+/// Whether a startup entry under the old name launches this app, judged by the
+/// program it starts: the old executable (`carrier`, `Carrier.exe`) or an
+/// AppImage named after the app. It no longer points at this install when the
+/// installer moved the app to a new folder.
+#[cfg(any(test, target_os = "windows", target_os = "linux"))]
+fn previous_entry_is_ours(program: &str) -> bool {
+    // Split on both separators: the tests run Windows paths on every platform.
+    let name = program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    name == "carrier"
+        || name == "carrier.exe"
+        || ((name.starts_with("carrier") || name.starts_with("chatpane"))
+            && name.ends_with(".appimage"))
+}
+
 /// Whether two paths name the same program, after resolving symlinks.
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn same_program(a: &std::path::Path, b: &std::path::Path) -> bool {
@@ -122,7 +148,7 @@ fn same_program(a: &std::path::Path, b: &std::path::Path) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LegacyAgent {
     Missing,
-    /// It starts Carrier at login.
+    /// It starts Chatpane at login.
     Enabled,
     /// macOS 13+: the user switched it off under "Allow in the Background";
     /// the plist stays but doesn't run.
@@ -134,11 +160,11 @@ enum LegacyAgent {
 #[derive(Debug, PartialEq, Eq)]
 enum LegacyAgentPlan {
     Nothing,
-    /// The login item already starts Carrier, or the user switched the agent
+    /// The login item already starts Chatpane, or the user switched the agent
     /// off and removing it keeps it off.
     Remove,
     /// Register the login item, and remove the agent once the login item is
-    /// enabled. Until then the agent keeps starting Carrier.
+    /// enabled. Until then the agent keeps starting Chatpane.
     Register,
 }
 
@@ -154,7 +180,7 @@ fn legacy_agent_plan(agent: LegacyAgent, service: Status) -> LegacyAgentPlan {
 }
 
 /// macOS 13+: an agent kept while the login item can't run still starts
-/// Carrier.
+/// Chatpane.
 #[cfg(any(test, target_os = "macos"))]
 fn macos_status(service: Status, agent: LegacyAgent) -> Status {
     if agent == LegacyAgent::Enabled {
@@ -173,7 +199,8 @@ mod platform {
     use objc2_foundation::NSURL;
 
     use super::{
-        LegacyAgent, LegacyAgentPlan, Status, entry_name, legacy_agent_plan, macos_status,
+        LegacyAgent, LegacyAgentPlan, PREVIOUS_ENTRY_NAME, Status, entry_name, legacy_agent_plan,
+        macos_status,
     };
 
     fn has_login_items() -> bool {
@@ -204,27 +231,38 @@ mod platform {
         result.map_err(|e| e.localizedDescription().to_string())
     }
 
-    fn legacy_agent(app: &tauri::AppHandle) -> Option<PathBuf> {
+    fn agent_path(name: &str) -> Option<PathBuf> {
         let home = std::env::var_os("HOME")?;
         Some(
             PathBuf::from(home)
                 .join("Library/LaunchAgents")
-                .join(format!("{}.plist", entry_name(app))),
+                .join(format!("{name}.plist")),
         )
     }
 
-    fn remove_legacy_agent(app: &tauri::AppHandle) -> Result<(), String> {
-        let Some(path) = legacy_agent(app) else {
-            return Ok(());
-        };
-        match std::fs::remove_file(&path) {
-            Ok(()) => {
-                log::info!("removed the old Start on System Startup LaunchAgent");
-                Ok(())
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!("couldn't remove {}: {e}", path.display())),
+    /// The agent under the current name, else one still named after Carrier.
+    fn legacy_agent(app: &tauri::AppHandle) -> Option<PathBuf> {
+        let current = agent_path(&entry_name(app))?;
+        if current.exists() {
+            return Some(current);
         }
+        agent_path(PREVIOUS_ENTRY_NAME)
+            .filter(|path| path.exists())
+            .or(Some(current))
+    }
+
+    fn remove_legacy_agent(app: &tauri::AppHandle) -> Result<(), String> {
+        for path in [entry_name(app).as_str(), PREVIOUS_ENTRY_NAME]
+            .into_iter()
+            .filter_map(agent_path)
+        {
+            match std::fs::remove_file(&path) {
+                Ok(()) => log::info!("removed the old Start on System Startup LaunchAgent"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("couldn't remove {}: {e}", path.display())),
+            }
+        }
+        Ok(())
     }
 
     /// Whether the agent exists and, on macOS 13+, whether the user allows it.
@@ -247,8 +285,48 @@ mod platform {
         }
     }
 
+    /// The first launch after `Carrier.app` became `Chatpane.app`: the login
+    /// item or agent still opens the old path, so register this one instead,
+    /// if Start on System Startup was on.
+    pub(super) fn repoint_after_bundle_rename(app: &tauri::AppHandle) {
+        use tauri::Manager;
+        if !crate::bundle_rename::take_launched_after_rename()
+            || !app
+                .state::<crate::settings::AppState>()
+                .settings
+                .lock()
+                .unwrap()
+                .autostart
+        {
+            return;
+        }
+        let result = if has_login_items() {
+            // Unregistering forgets the old path; failing it is harmless.
+            let _ = register(false);
+            register(true)
+        } else if legacy_agent(app).is_some_and(|path| path.exists()) {
+            write_legacy_agent(app)
+        } else {
+            Ok(())
+        };
+        match result {
+            Ok(()) => log::info!("Start on System Startup now opens Chatpane.app"),
+            Err(e) => log::warn!("couldn't move Start on System Startup to Chatpane.app: {e}"),
+        }
+    }
+
     pub(super) fn migrate_legacy_agent(app: &tauri::AppHandle) {
         if !has_login_items() {
+            // macOS 10.15 to 12 keep the agent: rewrite one named after Carrier
+            // under the current name, pointing at this app.
+            if let Some(previous) = agent_path(PREVIOUS_ENTRY_NAME).filter(|path| path.exists())
+                && let Err(e) = write_legacy_agent(app).and_then(|()| {
+                    std::fs::remove_file(&previous)
+                        .map_err(|e| format!("couldn't remove {}: {e}", previous.display()))
+                })
+            {
+                log::warn!("couldn't rename the Start on System Startup LaunchAgent: {e}");
+            }
             return;
         }
         let remove = match legacy_agent_plan(legacy_agent_state(app), service_status()) {
@@ -300,16 +378,16 @@ mod platform {
         match service_status() {
             Status::On => remove_legacy_agent(app),
             Status::NeedsApproval => Err(
-                "Allow Carrier in System Settings → General → Login Items to start it when you log in."
+                "Allow Chatpane in System Settings → General → Login Items to start it when you log in."
                     .into(),
             ),
-            Status::Off => Err("macOS didn't add Carrier to Login Items.".into()),
+            Status::Off => Err("macOS didn't add Chatpane to Login Items.".into()),
         }
     }
 
-    /// macOS 10.15 to 12: a LaunchAgent that runs Carrier once at login.
+    /// macOS 10.15 to 12: a LaunchAgent that runs Chatpane once at login.
     fn write_legacy_agent(app: &tauri::AppHandle) -> Result<(), String> {
-        let path = legacy_agent(app).ok_or("HOME is not set")?;
+        let path = agent_path(&entry_name(app)).ok_or("HOME is not set")?;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let escape = |s: &str| {
             s.replace('&', "&amp;")
@@ -373,7 +451,10 @@ mod platform {
         RegGetValueW, RegSetKeyValueW,
     };
 
-    use super::{Status, entry_name, run_command_program, same_program, startup_approved};
+    use super::{
+        PREVIOUS_ENTRY_NAME, Status, entry_name, previous_entry_is_ours, run_command_program,
+        same_program, startup_approved,
+    };
 
     const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const STARTUP_APPROVED: &str =
@@ -434,19 +515,49 @@ mod platform {
         }
     }
 
+    /// A `Run` value's command, or `None` when it is missing.
+    fn run_command(name: &str) -> Result<Option<String>, String> {
+        Ok(read(RUN, name, RRF_RT_REG_SZ)?.map(|bytes| {
+            let units: Vec<u16> = bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes(*pair))
+                .take_while(|unit| *unit != 0)
+                .collect();
+            String::from_utf16_lossy(&units)
+        }))
+    }
+
+    /// Move a startup entry still named "Carrier" to the current name, keeping
+    /// it off when Task Manager or Settings had switched it off.
+    pub(super) fn migrate_previous_entry(app: &tauri::AppHandle) {
+        let result = (|| {
+            let Some(command) = run_command(PREVIOUS_ENTRY_NAME)? else {
+                return Ok(());
+            };
+            if !previous_entry_is_ours(run_command_program(&command)) {
+                return Ok(());
+            }
+            let approved = read(STARTUP_APPROVED, PREVIOUS_ENTRY_NAME, RRF_RT_REG_BINARY)?;
+            if startup_approved(approved.as_deref()) {
+                set(app, true)?;
+            }
+            delete(RUN, PREVIOUS_ENTRY_NAME)?;
+            delete(STARTUP_APPROVED, PREVIOUS_ENTRY_NAME)?;
+            log::info!("moved the Start on System Startup entry to the new app name");
+            Ok::<(), String>(())
+        })();
+        if let Err(e) = result {
+            log::warn!("couldn't move the Start on System Startup entry: {e}");
+        }
+    }
+
     pub(super) fn status(app: &tauri::AppHandle) -> Result<Status, String> {
         let name = entry_name(app);
-        let Some(command) = read(RUN, &name, RRF_RT_REG_SZ)? else {
+        let Some(command) = run_command(&name)? else {
             return Ok(Status::Off);
         };
-        let units: Vec<u16> = command
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| u16::from_le_bytes(*pair))
-            .take_while(|unit| *unit != 0)
-            .collect();
-        let command = String::from_utf16_lossy(&units);
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         if !same_program(run_command_program(&command).as_ref(), &exe) {
             return Ok(Status::Off);
@@ -577,21 +688,53 @@ mod platform {
 
     use tauri::Manager;
 
-    use super::{Status, autostart_entry_program, entry_name, exec_quote, same_program};
+    use super::{
+        PREVIOUS_ENTRY_NAME, Status, autostart_entry_program, entry_name, exec_quote,
+        previous_entry_is_ours, same_program,
+    };
 
-    fn entry_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    fn named_entry_path(name: &str) -> Result<PathBuf, String> {
         let config = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .filter(|dir| dir.is_absolute())
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
             .ok_or("HOME is not set")?;
-        Ok(config
-            .join("autostart")
-            .join(format!("{}.desktop", entry_name(app))))
+        Ok(config.join("autostart").join(format!("{name}.desktop")))
+    }
+
+    fn entry_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+        named_entry_path(&entry_name(app))
+    }
+
+    /// Move an enabled autostart entry still named "Carrier" to the current
+    /// name and program. One the user switched off is left alone, still off.
+    pub(super) fn migrate_previous_entry(app: &tauri::AppHandle) {
+        let result = (|| {
+            let previous = named_entry_path(PREVIOUS_ENTRY_NAME)?;
+            let Ok(contents) = std::fs::read_to_string(&previous) else {
+                return Ok(());
+            };
+            let Some(program) = autostart_entry_program(&contents) else {
+                return Ok(());
+            };
+            let ours = previous_entry_is_ours(&program)
+                || same_program(program.as_ref(), &self::program(app)?);
+            if !ours {
+                return Ok(());
+            }
+            set(app, true)?;
+            std::fs::remove_file(&previous)
+                .map_err(|e| format!("couldn't remove {}: {e}", previous.display()))?;
+            log::info!("moved the Start on System Startup entry to the new app name");
+            Ok::<(), String>(())
+        })();
+        if let Err(e) = result {
+            log::warn!("couldn't move the Start on System Startup entry: {e}");
+        }
     }
 
     /// The AppImage when running from one, since its mounted executable is
-    /// gone after Carrier exits.
+    /// gone after Chatpane exits.
     fn program(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         match app.env().appimage {
             Some(appimage) => Ok(appimage.into()),
@@ -717,6 +860,28 @@ mod tests {
         assert_eq!(run_command_program(&format!("\"{exe}\" --hidden")), exe);
         // tauri-plugin-autostart's unquoted value with a trailing space.
         assert_eq!(run_command_program(&format!("{exe} ")), exe);
+    }
+
+    #[test]
+    fn only_the_old_apps_startup_entries_are_moved() {
+        for ours in [
+            r"C:\Users\A B\AppData\Local\Carrier\carrier.exe",
+            r"C:\Users\A B\AppData\Local\Carrier\Carrier.exe",
+            "/usr/bin/carrier",
+            "/home/a/.local/bin/carrier",
+            "/home/a/Apps/Carrier_3.0.1_amd64.AppImage",
+            "/home/a/Apps/Chatpane_3.1.0_amd64.AppImage",
+        ] {
+            assert!(previous_entry_is_ours(ours), "{ours}");
+        }
+        for theirs in [
+            r"C:\Program Files\Carrier Corp\hvac.exe",
+            "/usr/bin/carrier-agent",
+            "/opt/carrier-hvac/bin/agent",
+            "/home/a/Apps/Other.AppImage",
+        ] {
+            assert!(!previous_entry_is_ours(theirs), "{theirs}");
+        }
     }
 
     #[test]

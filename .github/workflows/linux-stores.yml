@@ -40,11 +40,11 @@ jobs:
             sudo apt-get install -y squashfs-tools
           fi
           # GNOME needs the normal launcher for window/badge matching and a
-          # hidden, preserved snap.carrier identity for exported portal actions.
-          unsquashfs -cat "$SNAP_PACKAGE" meta/gui/carrier.desktop > /dev/null
-          unsquashfs -cat "$SNAP_PACKAGE" meta/gui/snap.carrier.desktop | grep -qx 'NoDisplay=true'
+          # hidden, preserved snap.chatpane identity for exported portal actions.
+          unsquashfs -cat "$SNAP_PACKAGE" meta/gui/chatpane.desktop > /dev/null
+          unsquashfs -cat "$SNAP_PACKAGE" meta/gui/snap.chatpane.desktop | grep -qx 'NoDisplay=true'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: carrier-snap-${{ matrix.arch }}
+          name: chatpane-snap-${{ matrix.arch }}
           path: ${{ steps.snapcraft.outputs.snap }}
           if-no-files-found: error

@@ -70,15 +70,15 @@ export function initAutoRefresh() {
     clearTimeout(timer);
     timer = undefined;
   };
-  const heartbeatId = window.__CARRIER_HEARTBEAT_ID__;
+  const heartbeatId = window.__CHATPANE_HEARTBEAT_ID__;
   try {
-    delete window.__CARRIER_HEARTBEAT_ID__;
+    delete window.__CHATPANE_HEARTBEAT_ID__;
   } catch (_) {
-    window.__CARRIER_HEARTBEAT_ID__ = undefined;
+    window.__CHATPANE_HEARTBEAT_ID__ = undefined;
   }
   let lastHeartbeatProtection: boolean | undefined;
   const heartbeatProtection = () =>
-    isComposerDeliveryActive() || hasComposerDraft() || !!window.__carrierInCall;
+    isComposerDeliveryActive() || hasComposerDraft() || !!window.__chatpaneInCall;
   // Constructed before the first emitHeartbeat() call below. Non-content paths
   // (login, checkpoint) report "pending": the native watchdog must neither act
   // there nor treat them as proof the transport works.
@@ -170,7 +170,7 @@ export function initAutoRefresh() {
     const visible = !document.hidden && !systemSleeping;
     lastHeartbeatProtection = protectedNow;
     invoke("plugin:event|emit", {
-      event: "carrier:webview-heartbeat",
+      event: "chatpane:webview-heartbeat",
       payload: {
         id: heartbeatId,
         protected: protectedNow,
@@ -202,7 +202,7 @@ export function initAutoRefresh() {
     if (heartbeatProtection() !== lastHeartbeatProtection) emitHeartbeat();
   };
   window.addEventListener("input", emitProtectionChange, true);
-  window.addEventListener("carrier:protection-change", emitProtectionChange);
+  window.addEventListener("chatpane:protection-change", emitProtectionChange);
   emitHeartbeat();
   const processingActive = () =>
     !systemSleeping &&
@@ -216,16 +216,16 @@ export function initAutoRefresh() {
     const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()} processing=${JSON.stringify(processing)}`;
     await Promise.race([
       invoke("plugin:event|emit", {
-        event: "carrier:diag",
+        event: "chatpane:diag",
         payload: { key: "recovery.snapshot", msg: snapshot },
       })?.catch?.(() => {}),
       new Promise<void>((resolve) => nativeSetTimeout(resolve, 500)),
     ]);
   };
-  window.__carrierCaptureRecovery = captureRecovery;
+  window.__chatpaneCaptureRecovery = captureRecovery;
   let capturingRecovery = false;
   const recoveryHeld = () =>
-    window.__CARRIER_SETTINGS__?.hold_failures &&
+    window.__CHATPANE_SETTINGS__?.hold_failures &&
     pendingReason !== "rate-limit-manual" &&
     pendingReason !== "manual";
   const cancelRecoveredStuckReload = () => {
@@ -302,12 +302,12 @@ export function initAutoRefresh() {
     }
     location.reload();
   };
-  window.addEventListener("carrier:settings", () => {
+  window.addEventListener("chatpane:settings", () => {
     if (pending && timer === undefined && !recoveryHeld()) {
       timer = setTimeout(maybeReload, 0);
     }
   });
-  window.__carrierRateLimitRetry = (expectedId, expires) => {
+  window.__chatpaneRateLimitRetry = (expectedId, expires) => {
     if (expectedId !== heartbeatId || !Number.isFinite(expires) || expires <= Date.now()) return;
     if (!pending || pendingReason !== "rate-limit") return;
     rateLimitRetryGrantUntil = expires;
@@ -341,7 +341,7 @@ export function initAutoRefresh() {
 
   const silentRecovery = createSilentRecovery({
     blocked: (manual) =>
-      (!manual && !!window.__CARRIER_SETTINGS__?.hold_failures) ||
+      (!manual && !!window.__CHATPANE_SETTINGS__?.hold_failures) ||
       systemSleeping ||
       !navigator.onLine ||
       heartbeatProtection() ||
@@ -363,7 +363,7 @@ export function initAutoRefresh() {
     sampleSyncProcessing(processingActive());
     if (!systemSleeping && navigator.onLine && rateLimitRemainingMs() <= 0) realtime.check();
   };
-  window.__carrierHeartbeat = (expectedId) => {
+  window.__chatpaneHeartbeat = (expectedId) => {
     if (expectedId !== heartbeatId) return;
     // Native pings continue when hidden-page timers are throttled.
     noteLifecycle();
@@ -375,7 +375,7 @@ export function initAutoRefresh() {
   window.addEventListener("online", noteLifecycle);
   window.addEventListener("offline", noteLifecycle);
   const powerState = new PowerStateTracker(performance.timeOrigin);
-  window.addEventListener("carrier:power-state", (event) => {
+  window.addEventListener("chatpane:power-state", (event) => {
     const snapshot = (event as CustomEvent<PowerSnapshot>).detail;
     if (
       !snapshot ||
@@ -396,7 +396,7 @@ export function initAutoRefresh() {
     }
   });
 
-  window.__carrierOnNotification = noteLifecycle;
+  window.__chatpaneOnNotification = noteLifecycle;
 
   window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1000, "rate-limit-manual"));
   window.addEventListener(SILENT_RECOVERY_RELOAD_EVENT, () => schedule(0, "manual"));
@@ -442,7 +442,7 @@ export function initAutoRefresh() {
       emitHeartbeat();
       return;
     }
-    if (waitingForRateLimit && !window.__CARRIER_SETTINGS__?.hold_failures) {
+    if (waitingForRateLimit && !window.__CHATPANE_SETTINGS__?.hold_failures) {
       waitingForRateLimit = false;
       window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
       diag(

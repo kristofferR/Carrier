@@ -67,7 +67,7 @@ export function registerAddedNodeSweep(fn: (root: Element) => void) {
 
 export function initDownloadAnchors() {
   sweepDlAnchors(document.documentElement);
-  watchDeniedDownloads(window, carrierVerifyResult, toastDownloadAccessDenied);
+  watchDeniedDownloads(window, chatpaneVerifyResult, toastDownloadAccessDenied);
 
   if (!document.hidden) observeSweeps();
   document.addEventListener("visibilitychange", () => {
@@ -92,7 +92,7 @@ export function initDownloadAnchors() {
       // downloadSrc() creates this one-shot anchor to enter Tauri's native
       // download pipeline. Intercepting it again would recurse forever, never
       // reach the WebView hook, and continuously reset the success toast.
-      if (a.hasAttribute("data-carrier-native-download")) return;
+      if (a.hasAttribute("data-chatpane-native-download")) return;
       // A remote script must not be able to manufacture a click that opens a
       // native save dialog. Its direct download still reaches Rust, where ask
       // mode rejects anything without a picker reservation.

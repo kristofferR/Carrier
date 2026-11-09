@@ -50,11 +50,11 @@ test("native heartbeats keep hidden-worker verification fresh without page inter
   };
   const window = Object.assign(new EventTarget(), {
     WebSocket: class extends EventTarget {},
-    __CARRIER_HEARTBEAT_ID__: 42,
-    __carrierHeartbeat: undefined as ((id: number) => void) | undefined,
+    __CHATPANE_HEARTBEAT_ID__: 42,
+    __chatpaneHeartbeat: undefined as ((id: number) => void) | undefined,
     __TAURI_INTERNALS__: {
       invoke: async (_cmd: string, args?: { event?: string; payload?: { realtime?: string } }) => {
-        if (args?.event === "carrier:webview-heartbeat") reports.push(args.payload!.realtime!);
+        if (args?.event === "chatpane:webview-heartbeat") reports.push(args.payload!.realtime!);
       },
     },
     require: (name: string) => modules[name],
@@ -92,7 +92,7 @@ test("native heartbeats keep hidden-worker verification fresh without page inter
     for (let i = 0; i < 24; i++) await Promise.resolve();
   };
   const heartbeat = async (id = 42) => {
-    window.__carrierHeartbeat!(id);
+    window.__chatpaneHeartbeat!(id);
     await flush();
   };
   const advance = async (ms: number) => {

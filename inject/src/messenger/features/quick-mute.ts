@@ -3,7 +3,7 @@
 // driving Messenger's own info-pane controls and duration dialog. One
 // Messenger variant offers "Mute notifications" directly; another nests Mute
 // inside "Chat notifications". Success is read from an Unmute label, the
-// confirmed dialog closing, or Carrier's own muted-thread tracking.
+// confirmed dialog closing, or Chatpane's own muted-thread tracking.
 
 import { diag } from "../bridge";
 import { actionTargetFor } from "../lib/action-target";
@@ -209,7 +209,7 @@ async function mute(path: string, deadline: number): Promise<boolean> {
           if (kept !== undefined) muteExpiries.delete(wantedThread);
           // Dispatched first so the listener does not catch the expiry set next.
           window.dispatchEvent(
-            new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } }),
+            new CustomEvent("chatpane:thread-mute", { detail: { id: wantedThread, muted: true } }),
           );
           if (kept !== undefined) muteExpiries.set(wantedThread, kept);
           // A mute this flow applied lasts 8 hours; don't keep suppressing past
@@ -222,7 +222,7 @@ async function mute(path: string, deadline: number): Promise<boolean> {
                 mutedThreads.invalidateMute(wantedThread);
                 // The unread badge keeps its own muted set; tell it too.
                 window.dispatchEvent(
-                  new CustomEvent("carrier:thread-mute", {
+                  new CustomEvent("chatpane:thread-mute", {
                     detail: { id: wantedThread, muted: false },
                   }),
                 );
@@ -261,16 +261,16 @@ async function mute(path: string, deadline: number): Promise<boolean> {
 export function initQuickMute() {
   // Any later mute change (a manual unmute or re-mute, or another quick mute)
   // replaces the state a pending quick-mute expiry would clear.
-  window.addEventListener("carrier:thread-mute", (event) => {
+  window.addEventListener("chatpane:thread-mute", (event) => {
     const id = (event as CustomEvent<{ id?: unknown }>).detail?.id;
     if (typeof id !== "string") return;
     clearTimeout(muteExpiries.get(id));
     muteExpiries.delete(id);
   });
-  window.__carrierQuickMute = (path, target, id, attempt, budgetMs) => {
+  window.__chatpaneQuickMute = (path, target, id, attempt, budgetMs) => {
     noteExplicitAction();
     const report = (ok: boolean) =>
-      carrierReplyResult(id, attempt, ok).catch(() =>
+      chatpaneReplyResult(id, attempt, ok).catch(() =>
         diag("quick-mute.ack", "mute acknowledgement emit failed"),
       );
     // Act only under the account the notification arrived for.

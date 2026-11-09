@@ -28,7 +28,7 @@ export interface ReturnState {
 }
 
 /**
- * Coming back to Carrier with a conversation open should let you type at once
+ * Coming back to Chatpane with a conversation open should let you type at once
  * (Ref #359). Only take focus when nothing meaningful holds it: a search
  * field, dialog, viewer or the composer itself keeps it. A chat-list row
  * counts as nothing, since clicking a chat is how the conversation opened.

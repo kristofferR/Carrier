@@ -1,0 +1,51 @@
+name: Snap Store
+
+# Uploads release snaps to a pre-stable channel. Inert until the repository
+# variable SNAP_STORE_PUBLISH is "true" and the snap-store environment holds
+# SNAPCRAFT_STORE_CREDENTIALS (see packaging/snap/README.md). Promotion to
+# stable stays a manual `snapcraft release` after testing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Channel for the uploaded revisions
+        type: choice
+        options: [edge, beta, candidate]
+        default: candidate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snap-store-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Upload (${{ matrix.arch }})
+    if: vars.SNAP_STORE_PUBLISH == 'true'
+    environment: snap-store
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
+        id: snapcraft
+      - name: Upload to the Snap Store
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAP_PACKAGE: ${{ steps.snapcraft.outputs.snap }}
+          CHANNEL: ${{ inputs.channel || 'candidate' }}
+        # action-build has already installed snapcraft.
+        run: snapcraft upload --release="$CHANNEL" "$SNAP_PACKAGE"

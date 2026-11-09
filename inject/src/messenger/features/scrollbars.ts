@@ -1,6 +1,6 @@
 /* ------------------------------ Scroll bars ----------------------------- */
 // Thin scroll bars that stay out of the way. Where the engine draws overlay
-// scroll bars (macOS, where Carrier asks AppKit for them, and GTK's overlay
+// scroll bars (macOS, where Chatpane asks AppKit for them, and GTK's overlay
 // scrolling), messenger.css only makes them thin, and the engine keeps moving
 // them on its scrolling thread. Where it draws classic always-on tracks
 // (Windows), they take room from the panes, so in the chats they are hidden
@@ -10,9 +10,9 @@
 import { indicatorPlace } from "../lib/scrollbars";
 
 /** "overlay" or "classic" on <html>: which scroll bars the engine draws. */
-const KIND_ATTR = "data-carrier-scrollbars";
-const INDICATOR_ID = "carrier-scroll-indicator";
-const CHATS_ATTR = "data-carrier-chats";
+const KIND_ATTR = "data-chatpane-scrollbars";
+const INDICATOR_ID = "chatpane-scroll-indicator";
+const CHATS_ATTR = "data-chatpane-chats";
 // Finding what covers a point is costly: a few times a second while scrolling.
 const COVER_CHECK_MS = 250;
 const HIDE_AFTER_MS = 800;

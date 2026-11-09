@@ -1,8 +1,8 @@
-//! Requests that Messenger's own page answers for Carrier: reading and
+//! Requests that Messenger's own page answers for Chatpane: reading and
 //! changing the account's Messenger settings (Active Status, message sounds,
 //! Do Not Disturb; Ref #358). Native asks the main Messenger window through
-//! `window.__carrierAccount`, and the page reports back on
-//! `carrier:account-result`.
+//! `window.__chatpaneAccount`, and the page reports back on
+//! `chatpane:account-result`.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Listener;
 use tokio::sync::oneshot;
 
-const RESULT_EVENT: &str = "carrier:account-result";
+const RESULT_EVENT: &str = "chatpane:account-result";
 /// Reading may first load the code of Messenger's Preferences dialog.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -63,10 +63,10 @@ pub(crate) async fn page_request(
     let (sender, receiver) = oneshot::channel();
     pending().lock().unwrap().insert(request.clone(), sender);
     let args = serde_json::json!([request, action, value]);
-    // The page may be loading or showing an error page without Carrier's
+    // The page may be loading or showing an error page without Chatpane's
     // scripts; answer for it then, so Settings doesn't wait for the timeout.
     let script = format!(
-        "(() => {{ const a = {args}; if (window.__carrierAccount) window.__carrierAccount(...a); \
+        "(() => {{ const a = {args}; if (window.__chatpaneAccount) window.__chatpaneAccount(...a); \
          else window.__TAURI_INTERNALS__?.invoke('plugin:event|emit', {{ event: '{RESULT_EVENT}', \
          payload: {{ request: a[0], ok: false, error: 'Messenger is still loading.' }} }}); }})()"
     );

@@ -1,7 +1,7 @@
 //! Native supervision for Messenger's renderer process.
 //!
 //! A JavaScript timer cannot detect that its own WebView is suspended until it
-//! wakes up again. Carrier therefore pings the injected page from the native
+//! wakes up again. Chatpane therefore pings the injected page from the native
 //! process and reloads a Messenger window when its content-free heartbeat stops.
 
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ use crate::render_recovery::{
 use crate::renderer_memory::RendererMemory;
 use crate::url_rules::{is_messenger_content_url, is_messenger_web_url};
 
-const HEARTBEAT_EVENT: &str = "carrier:webview-heartbeat";
+const HEARTBEAT_EVENT: &str = "chatpane:webview-heartbeat";
 
 #[cfg(target_os = "linux")]
 static MEMORY_WINDOW_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -150,9 +150,11 @@ fn recovery_coordinator() -> &'static Mutex<RecoveryCoordinator> {
 fn rate_limit_account(value: Option<&str>) -> &str {
     value
         .filter(|value| {
-            value.strip_prefix("carrier-rate-limit:").is_some_and(|id| {
-                !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_digit())
-            })
+            value
+                .strip_prefix("chatpane-rate-limit:")
+                .is_some_and(|id| {
+                    !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_digit())
+                })
         })
         .unwrap_or("")
 }
@@ -761,7 +763,7 @@ impl WebviewWatchdog {
 
     /// Install one watchdog task for this Messenger window generation.
     ///
-    /// The watchdog arms only after the injected page answers once, so Carrier's
+    /// The watchdog arms only after the injected page answers once, so Chatpane's
     /// local connectivity screen and a page that has not loaded yet are never put
     /// into a reload loop. A destroyed window stops its task; this matters when a
     /// macOS theme change rebuilds a window under the same label.
@@ -883,7 +885,7 @@ impl WebviewWatchdog {
                     + 5000;
                 if listener_window
                     .eval(format!(
-                        "window.__carrierRateLimitRetry?.({watchdog_id}, {expires});"
+                        "window.__chatpaneRateLimitRetry?.({watchdog_id}, {expires});"
                     ))
                     .is_err()
                 {
@@ -963,7 +965,7 @@ impl WebviewWatchdog {
                 // the page actually executed it; a successful eval call alone only
                 // proves that WebKit accepted the request.
                 let _ =
-                    watchdog_window.eval(format!("window.__carrierHeartbeat?.({watchdog_id});"));
+                    watchdog_window.eval(format!("window.__chatpaneHeartbeat?.({watchdog_id});"));
                 tokio::time::sleep(PING_RESPONSE_GRACE).await;
                 #[cfg(target_os = "macos")]
                 if crate::macos::power::is_system_sleeping()
@@ -1030,7 +1032,7 @@ impl WebviewWatchdog {
                                 );
                                 drop(snapshot);
                                 let _ =
-                                    watchdog_window.eval("window.__carrierCaptureRecovery?.();");
+                                    watchdog_window.eval("window.__chatpaneCaptureRecovery?.();");
                                 held_reported = true;
                             }
                             continue;
@@ -1049,7 +1051,7 @@ impl WebviewWatchdog {
                             continue;
                         };
                         // Auth providers and captcha pages intentionally do not run
-                        // Carrier's injection. Forget the Messenger heartbeat rather
+                        // Chatpane's injection. Forget the Messenger heartbeat rather
                         // than reloading a user out of an in-progress login flow.
                         if !is_messenger_web_url(&url) {
                             state.lock().unwrap().disarm();
@@ -1108,7 +1110,7 @@ impl WebviewWatchdog {
                         crate::linux::log_messenger_webview_state(&watchdog_window);
                         // Give a responsive renderer a bounded chance to persist
                         // its content-free snapshot before destroying evidence.
-                        let _ = watchdog_window.eval("window.__carrierCaptureRecovery?.();");
+                        let _ = watchdog_window.eval("window.__chatpaneCaptureRecovery?.();");
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         #[cfg(target_os = "macos")]
                         if crate::macos::power::is_system_sleeping()

@@ -15,18 +15,18 @@ import {
   previewIdentity,
 } from "../lib/privacy";
 
-const IDENTITY_ATTR = "data-carrier-private-identity";
-const AVATAR_ATTR = "data-carrier-private-avatar";
+const IDENTITY_ATTR = "data-chatpane-private-identity";
+const AVATAR_ATTR = "data-chatpane-private-avatar";
 const THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
 const TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
 const VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
 // Sender names that share a text node with the message, hidden through the
 // CSS Custom Highlight API so React-owned text is never split (messenger.css).
-const PREFIX_HIGHLIGHT = "carrier-private-identity";
+const PREFIX_HIGHLIGHT = "chatpane-private-identity";
 // WebKit paints no highlight on user-select: none text and keeps an explicit
 // -webkit-text-fill-color, both of which Messenger sets on previews. The text
 // elements under a name range get those reset (messenger.css).
-const PREFIX_HOST_ATTR = "data-carrier-private-prefix";
+const PREFIX_HOST_ATTR = "data-chatpane-private-prefix";
 
 export function initHideNames() {
   const html = document.documentElement;
@@ -34,8 +34,8 @@ export function initHideNames() {
   let pending = false;
   let suppressMutations = false;
 
-  const namesHidden = () => hidesNames(window.__CARRIER_SETTINGS__);
-  const avatarsHidden = () => hidesAvatars(window.__CARRIER_SETTINGS__);
+  const namesHidden = () => hidesNames(window.__CHATPANE_SETTINGS__);
+  const avatarsHidden = () => hidesAvatars(window.__CHATPANE_SETTINGS__);
   const on = () => namesHidden() || avatarsHidden();
 
   function textValue(el: Element | null | undefined) {
@@ -465,8 +465,8 @@ export function initHideNames() {
   }
 
   const apply = () => {
-    html.toggleAttribute("data-carrier-hide-names", namesHidden());
-    html.toggleAttribute("data-carrier-hide-avatars", avatarsHidden());
+    html.toggleAttribute("data-chatpane-hide-names", namesHidden());
+    html.toggleAttribute("data-chatpane-hide-avatars", avatarsHidden());
     if (on()) {
       start();
       schedule();
@@ -475,5 +475,5 @@ export function initHideNames() {
     }
   };
   apply();
-  window.addEventListener("carrier:settings", apply);
+  window.addEventListener("chatpane:settings", apply);
 }

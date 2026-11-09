@@ -19,8 +19,8 @@ const WATCHED_SELECTORS = [
   // Mounted from a requestAnimationFrame callback, which a hidden webview
   // never runs — so a hidden window says nothing about whether the selector
   // still works, and checking one would report a break every interval for as
-  // long as Carrier sits in the background.
-  { key: "settings-button", sel: "[data-carrier-settings-button]", needsVisible: true },
+  // long as Chatpane sits in the background.
+  { key: "settings-button", sel: "[data-chatpane-settings-button]", needsVisible: true },
 ];
 
 export function initSelectorHealth() {
@@ -50,7 +50,7 @@ export function initSelectorHealth() {
       diag(`selector.${key}`, "core selector matched nothing on a logged-in Messenger page");
       if (!warnedUser) {
         warnedUser = true;
-        toast("A Messenger update may have broken part of Carrier — check for updates (F2).");
+        toast("A Messenger update may have broken part of Chatpane — check for updates (F2).");
       }
     }
   };

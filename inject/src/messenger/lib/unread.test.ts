@@ -174,7 +174,7 @@ describe("reconcileMutedUnreadIds", () => {
 describe("mutedUnreadStorageKey", () => {
   test("scopes persisted evidence to the Facebook account cookie", () => {
     expect(mutedUnreadStorageKey("locale=en; c_user=12345; xs=secret")).toBe(
-      "__carrier_muted_unreads__:12345",
+      "__chatpane_muted_unreads__:12345",
     );
     expect(mutedUnreadStorageKey("locale=en")).toBeNull();
     expect(mutedUnreadStorageKey("c_user=not-an-id")).toBeNull();
@@ -243,11 +243,11 @@ describe("MutedUnreadStore", () => {
 
   test("isolates persisted evidence between Facebook accounts", () => {
     const storage = memoryStorage();
-    const first = new MutedUnreadStore(storage, "__carrier_muted_unreads__:1");
+    const first = new MutedUnreadStore(storage, "__chatpane_muted_unreads__:1");
     first.reconcile([{ id: "123", unread: true, muted: true }]);
 
-    expect(new MutedUnreadStore(storage, "__carrier_muted_unreads__:1").size).toBe(1);
-    expect(new MutedUnreadStore(storage, "__carrier_muted_unreads__:2").size).toBe(0);
+    expect(new MutedUnreadStore(storage, "__chatpane_muted_unreads__:1").size).toBe(1);
+    expect(new MutedUnreadStore(storage, "__chatpane_muted_unreads__:2").size).toBe(0);
   });
 
   test("immediately persists explicit unmute invalidation", () => {
@@ -272,7 +272,7 @@ describe("MutedUnreadStore", () => {
   test("rejects malformed persisted thread identities", () => {
     const storage = memoryStorage();
     storage.setItem(
-      "__carrier_muted_unreads__",
+      "__chatpane_muted_unreads__",
       JSON.stringify({ version: 1, ids: ["123", "group-name", "", 456] }),
     );
 

@@ -15,7 +15,7 @@ use crate::notifications::{
 };
 
 /// Reply alone, for a notification with no quick actions.
-const REPLY_CATEGORY_ID: &str = "carrier.message.reply";
+const REPLY_CATEGORY_ID: &str = "chatpane.message.reply";
 const REPLY_ACTION_ID: &str = "reply";
 
 /// The category of a notification offering Reply plus `actions`. Each entry of
@@ -25,7 +25,7 @@ fn category_id(actions: &[NotificationAction]) -> String {
         return REPLY_CATEGORY_ID.into();
     }
     let ids: Vec<&str> = actions.iter().map(|action| action.id()).collect();
-    format!("carrier.message.{}", ids.join("."))
+    format!("chatpane.message.{}", ids.join("."))
 }
 
 /// Set once the notification centre is set up; categories registered before
@@ -108,7 +108,7 @@ struct NotifyDelegateIvars {
 // The `UNUserNotificationCenter` delegate. It does two jobs:
 //
 // - `willPresentNotification` returns `Banner | Sound | List` so a new-message
-//   notification is shown even while Carrier is frontmost/focused (without a
+//   notification is shown even while Chatpane is frontmost/focused (without a
 //   delegate, macOS suppresses banners for the active app — a required product
 //   behaviour here).
 // - `didReceiveNotificationResponse` recovers the conversation id and persisted
@@ -132,7 +132,7 @@ objc2::define_class!(
             >,
         ) {
             use objc2_user_notifications::UNNotificationPresentationOptions as Opts;
-            // Show even when Carrier is the active app (Banner), play the sound,
+            // Show even when Chatpane is the active app (Banner), play the sound,
             // and keep it in Notification Centre (List).
             completion_handler.call((Opts::Banner | Opts::Sound | Opts::List,));
         }
@@ -227,7 +227,7 @@ objc2::define_class!(
 /// Notifications) without an Alert grant (issue #5). The grant is persisted by
 /// the OS, so later launches resolve without a prompt.
 ///
-/// Delegate — installs [`NotifyDelegate`] so notifications present while Carrier
+/// Delegate — installs [`NotifyDelegate`] so notifications present while Chatpane
 /// is frontmost and clicks route back to the page. `setDelegate:` does not
 /// retain, so the delegate is leaked (it lives for the whole process); a static
 /// `OnceLock` can't hold it because `Retained<…>` is neither `Send` nor `Sync`,
@@ -448,7 +448,7 @@ pub(crate) fn deliver_notification_macos(
     }
 
     // Present it as a message from its sender when possible: macOS shows
-    // their face (and the group's name) in place of Carrier's icon. Without
+    // their face (and the group's name) in place of Chatpane's icon. Without
     // the communication-notifications entitlement this fails and the plain
     // content is delivered, with the avatar attached as before.
     // A route-less notification has no conversation yet and stays plain;
@@ -569,7 +569,7 @@ pub(crate) fn update_pending_notification_route_macos(
 
 /// Remove delivered notifications belonging to one validated conversation.
 /// Querying Notification Center instead of keeping another process-local map
-/// also clears entries delivered before Carrier restarted.
+/// also clears entries delivered before Chatpane restarted.
 pub(crate) fn clear_delivered_for_thread(thread_id: &str, late_route_ids: &[u64]) {
     use core::ptr::NonNull;
     use std::collections::HashSet;
@@ -619,7 +619,7 @@ pub(crate) fn clear_delivered_for_thread(thread_id: &str, late_route_ids: &[u64]
         .getDeliveredNotificationsWithCompletionHandler(&handler);
 }
 
-/// Why macOS would not show Carrier's banners, from its notification settings
+/// Why macOS would not show Chatpane's banners, from its notification settings
 /// (Ref #259). None when banners are allowed or macOS does not answer in time.
 pub(crate) fn notification_blocker() -> Option<String> {
     use objc2_user_notifications::{UNNotificationSettings, UNUserNotificationCenter};
@@ -702,7 +702,7 @@ fn communication_content(
     }
 
     // INSendMessageIntent and contentByUpdatingWithProvider: need macOS 12;
-    // Carrier supports 10.15, where the plain notification stays.
+    // Chatpane supports 10.15, where the plain notification stays.
     if !objc2::available!(macos = 12.0) {
         return None;
     }
@@ -769,7 +769,7 @@ fn communication_content(
     }
 }
 
-/// Remove every delivered Carrier notification (Log Out; Ref #356).
+/// Remove every delivered Chatpane notification (Log Out; Ref #356).
 pub(crate) fn clear_all_delivered() {
     objc2_user_notifications::UNUserNotificationCenter::currentNotificationCenter()
         .removeAllDeliveredNotifications();

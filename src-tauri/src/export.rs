@@ -19,13 +19,13 @@ use crate::download::{
 use crate::settings::AppState;
 use crate::{NativeResultPhase, SignedAction, result_signature, signed_action_window};
 
-pub(crate) const EVENT: &str = "carrier:export-conversation";
+pub(crate) const EVENT: &str = "chatpane:export-conversation";
 /// The request carries the whole conversation model. The page refuses models
 /// over 32 MiB before JSON-escaping them into the signed message.
 pub(crate) const MESSAGE_MAX: usize = 64 * 1024 * 1024;
-const REVEAL_PREFIX: &str = "carrier-export:";
+const REVEAL_PREFIX: &str = "chatpane-export:";
 
-const FORMAT_NAME: &str = "carrier-conversation-export";
+const FORMAT_NAME: &str = "chatpane-conversation-export";
 const FORMAT_VERSION: u32 = 1;
 const MESSAGE_LIMIT: usize = 50_000;
 const PARTICIPANT_LIMIT: usize = 1_000;
@@ -101,7 +101,7 @@ impl Format {
     /// The page call the native menu item makes.
     pub(crate) fn page_script(self) -> String {
         format!(
-            "window.__carrierExportConversation && window.__carrierExportConversation('{}')",
+            "window.__chatpaneExportConversation && window.__chatpaneExportConversation('{}')",
             self.extension()
         )
     }
@@ -583,7 +583,7 @@ fn render_html(document: &ExportDocument) -> String {
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <meta name=\"generator\" content=\"Carrier\">\n<title>{title}</title>\n<style>{STYLE}</style>\n\
+         <meta name=\"generator\" content=\"Chatpane\">\n<title>{title}</title>\n<style>{STYLE}</style>\n\
          </head>\n<body>\n<header>\n<h1>{title}</h1>\n\
          <p class=\"meta\">{count} {noun}, exported {exported}</p>\n",
         noun = if count == 1 { "message" } else { "messages" },
@@ -786,7 +786,7 @@ fn send_result(
     outcome: Outcome,
     phase: NativeResultPhase,
 ) {
-    // Field order must match the result object carrierNativeCall verifies.
+    // Field order must match the result object chatpaneNativeCall verifies.
     #[derive(Serialize)]
     struct ExportResult<'a> {
         request: &'a str,
@@ -906,7 +906,7 @@ pub(crate) fn install(app: &tauri::AppHandle) {
             .hides_names();
 
         let dialog = window.dialog().file();
-        // macOS shows a parented dialog as a sheet, and Carrier destroys
+        // macOS shows a parented dialog as a sheet, and Chatpane destroys
         // Messenger windows on a theme change; AppKit can drop a sheet with
         // its window without calling back, which would hold the export
         // permit until restart. A free-standing panel always calls back.
@@ -1107,7 +1107,7 @@ mod tests {
 
         let text = rendered(Format::Json, model);
         assert!(text.starts_with(
-            "{\n  \"format\": \"carrier-conversation-export\",\n  \"version\": 1,\n  \"exportedAt\": "
+            "{\n  \"format\": \"chatpane-conversation-export\",\n  \"version\": 1,\n  \"exportedAt\": "
         ));
         let saved: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(saved["format"], FORMAT_NAME);
@@ -1238,7 +1238,7 @@ mod tests {
     fn accepts_only_opaque_reveal_keys() {
         let key = format!("{REVEAL_PREFIX}{}", "a".repeat(32));
         assert_eq!(reveal_url(&key).map(|url| url.to_string()), Some(key));
-        assert!(reveal_url("carrier-export:short").is_none());
+        assert!(reveal_url("chatpane-export:short").is_none());
         assert!(reveal_url(&format!("https://{}", "a".repeat(32))).is_none());
         assert!(reveal_url(&format!("{REVEAL_PREFIX}{}", "g".repeat(32))).is_none());
     }

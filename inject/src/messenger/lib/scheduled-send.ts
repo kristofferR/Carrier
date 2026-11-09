@@ -104,7 +104,7 @@ const composerWaiters: Array<() => void> = [];
 export const isComposerDeliveryActive = () => composerBusy;
 const setComposerBusy = (busy: boolean) => {
   composerBusy = busy;
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("carrier:protection-change"));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("chatpane:protection-change"));
 };
 async function runComposerDelivery<T>(run: () => Promise<T>): Promise<T> {
   try {

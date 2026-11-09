@@ -13,7 +13,7 @@ const chromium =
 test.skipIf(!chromium)(
   "capacity eviction waits for thread kinds and suppresses groups in a reconnect burst",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-notification-capacity-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-notification-capacity-"));
     try {
       const bundle = await build({
         stdin: {
@@ -68,10 +68,10 @@ async function runFixture(init: () => void) {
   const delivered: string[] = [];
   const reads = new Set<string>();
   try {
-    window.__CARRIER_SETTINGS__ = { notify_group_chats: false, hide_notification_preview: true };
+    window.__CHATPANE_SETTINGS__ = { notify_group_chats: false, hide_notification_preview: true };
     window.__TAURI_INTERNALS__ = {
       invoke: async (_cmd: string, args?: Record<string, unknown>) => {
-        if (args?.event === "carrier:notify") {
+        if (args?.event === "chatpane:notify") {
           delivered.push((args.payload as { thread_path: string }).thread_path);
         }
         return true;

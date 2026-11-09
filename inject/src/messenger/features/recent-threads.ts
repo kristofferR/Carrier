@@ -52,7 +52,7 @@ export function initRecentThreads() {
     let names: Map<string, string> | undefined;
     return readRecentThreads((window as unknown as { require?: unknown }).require, {
       viewer,
-      mode: nicknameMode(window.__CARRIER_SETTINGS__),
+      mode: nicknameMode(window.__CHATPANE_SETTINGS__),
       limit: MAX_THREADS,
       fallbackName: (id) => (names ??= rowNames()).get(id) ?? "",
     });
@@ -82,7 +82,7 @@ export function initRecentThreads() {
   let emptySince = 0;
   let pushing = false;
   let pushAgain = false;
-  const hidden = () => hidesNames(window.__CARRIER_SETTINGS__);
+  const hidden = () => hidesNames(window.__CHATPANE_SETTINGS__);
   // One read at a time; a request made during a read (a settings change, say)
   // runs once it finishes.
   const push = async () => {
@@ -124,7 +124,7 @@ export function initRecentThreads() {
     const key = JSON.stringify(threads);
     if (key === lastSent) return;
     lastSent = key;
-    invoke("plugin:event|emit", { event: "carrier:recent-threads", payload: threads })?.catch?.(
+    invoke("plugin:event|emit", { event: "chatpane:recent-threads", payload: threads })?.catch?.(
       () => {},
     );
   };
@@ -142,7 +142,7 @@ export function initRecentThreads() {
     startPoll();
     if (!document.hidden) push();
   });
-  window.addEventListener("carrier:settings", push);
+  window.addEventListener("chatpane:settings", push);
   startPoll();
   setTimeout(push, 1500);
   setTimeout(push, 4000);

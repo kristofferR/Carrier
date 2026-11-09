@@ -113,7 +113,7 @@ export function patchNicknameContext(
 
   const { createElement, useSyncExternalStore, useContext } = runtime;
   const context = threadContext(react, runtime);
-  const provider = function CarrierNicknameProvider(props: unknown) {
+  const provider = function ChatpaneNicknameProvider(props: unknown) {
     const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
     const group = context && useContext ? useContext(context) : undefined;
     const enabled = showNicknames(mode, group);

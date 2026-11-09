@@ -57,7 +57,7 @@ fn notify_download_finished(
         "signature": signature,
     });
     let script = format!(
-        "window.dispatchEvent(new CustomEvent('carrier:download-finished', {{ detail: {detail} }}));"
+        "window.dispatchEvent(new CustomEvent('chatpane:download-finished', {{ detail: {detail} }}));"
     );
     let _ = webview.eval(script);
 }
@@ -104,7 +104,7 @@ pub(crate) fn show_title_bar(s: &Settings) -> bool {
 }
 
 /// Linux: whether a Messenger or Settings window keeps the GTK header bar. Only "show"
-/// does: "auto" draws Carrier's own controls instead, in windows the
+/// does: "auto" draws Chatpane's own controls instead, in windows the
 /// compositor doesn't tile (crate::title_bar).
 #[cfg(target_os = "linux")]
 pub(crate) fn native_decorations(s: &Settings) -> bool {
@@ -145,7 +145,7 @@ fn allow_navigation(url: &Url) -> bool {
 /// A window a page opened with `window.open`. Messenger starts a call this way
 /// (Ref #335): it opens a blank window, then loads the call page into it, and
 /// does nothing when no window comes back. The window shares its opener's web
-/// session, so the call runs signed in. Carrier's own features stay out of it
+/// session, so the call runs signed in. Chatpane's own features stay out of it
 /// (see `init_script`).
 fn open_popup(
     app: &tauri::AppHandle,
@@ -222,12 +222,12 @@ fn open_popup(
     }
 }
 
-/// Which encrypted engine Messenger windows run on macOS. Carrier normally
+/// Which encrypted engine Messenger windows run on macOS. Chatpane normally
 /// keeps one engine per window (#295): macOS discards the shared engine's
 /// separate process under memory pressure. Facebook lets only one per-window
 /// engine hold the session, and a newly loaded window takes it over, so two
 /// windows would keep reloading each other. Once a session has a second
-/// window, every window uses Facebook's shared engine until Carrier restarts.
+/// window, every window uses Facebook's shared engine until Chatpane restarts.
 #[cfg(target_os = "macos")]
 static SHARED_MESSENGER_ENGINE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -423,7 +423,7 @@ async fn move_windows_to_shared_engine(app: &tauri::AppHandle) -> bool {
     !failed
 }
 
-/// Build a Carrier window (used for the main window and any extra windows).
+/// Build a Chatpane window (used for the main window and any extra windows).
 pub(crate) fn build_app_window(
     app: &tauri::AppHandle,
     label: &str,
@@ -474,16 +474,16 @@ fn build_app_window_with_render_budget(
         // window is hidden or fully occluded and reactivates it on every native
         // eval into the page (watchdog ping, IPC responses) — a flip every few
         // seconds that makes audioaccessoryd re-evaluate Bluetooth routing and
-        // silences AirPods system-wide (#232). Carrier wants the page alive in
+        // silences AirPods system-wide (#232). Chatpane wants the page alive in
         // the background anyway (sync, notifications, badge), so opt out.
         .background_throttling(BackgroundThrottlingPolicy::Disabled)
         // Tauri's drag-drop handler consumes OS file drops before the page sees
         // them, so files dragged from Finder/Explorer never reached Messenger's
-        // composer. Carrier has no native drop handling; let the page have them.
+        // composer. Chatpane has no native drop handling; let the page have them.
         .disable_drag_drop_handler()
         // Messenger owns Web Audio contexts in child frames, including a
         // cross-origin fbsbx.com frame. Keep this origin-scoped audio script
-        // separate so privileged Carrier code remains main-frame-only.
+        // separate so privileged Chatpane code remains main-frame-only.
         .initialization_script_for_all_frames(audio_init_script())
         .initialization_script(init_script(
             settings,
@@ -606,7 +606,7 @@ fn build_app_window_with_render_budget(
                         );
                         return false;
                     }
-                    // The path came from Carrier's native save dialog and never
+                    // The path came from Chatpane's native save dialog and never
                     // crossed the remote-origin page. Honor it exactly, including
                     // the user's overwrite decision.
                     *destination = chosen;
@@ -686,7 +686,7 @@ fn build_app_window_with_render_budget(
                 tauri::async_runtime::spawn_blocking(move || {
                     let denied = folder.is_some_and(|folder| is_folder_access_denied(&folder));
                     if denied {
-                        log::warn!("a download failed because Carrier may not access its folder");
+                        log::warn!("a download failed because Chatpane may not access its folder");
                     }
                     notify_download_finished(&handle, &webview, &download_id, &url, false, denied);
                 });
@@ -700,7 +700,7 @@ fn build_app_window_with_render_budget(
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
-    // Windows: Carrier draws the window controls (see crate::title_bar).
+    // Windows: Chatpane draws the window controls (see crate::title_bar).
     #[cfg(target_os = "windows")]
     let builder = builder.decorations(false);
     // Linux: drop the GTK header bar on tiling WMs (or by explicit setting).
@@ -714,7 +714,7 @@ fn build_app_window_with_render_budget(
     };
     let builder = match restore_thread {
         Some(id) => builder.initialization_script(format!(
-            "window.__CARRIER_RESTORE_THREAD__ = {};",
+            "window.__CHATPANE_RESTORE_THREAD__ = {};",
             serde_json::to_string(&id).expect("thread id serialises")
         )),
         None => builder,
@@ -722,7 +722,7 @@ fn build_app_window_with_render_budget(
     // Read when Facebook defines its modules, after every init script has run.
     #[cfg(target_os = "macos")]
     let builder = if SHARED_MESSENGER_ENGINE.load(std::sync::atomic::Ordering::SeqCst) {
-        builder.initialization_script("window.__CARRIER_SHARED_ENGINE__ = true;")
+        builder.initialization_script("window.__CHATPANE_SHARED_ENGINE__ = true;")
     } else {
         builder
     };
@@ -916,7 +916,7 @@ pub(crate) fn should_hide_on_close(hide_on_close: bool, has_tray: bool) -> bool 
 ///   the window actually goes away, or a themed rebuild's zero-window gap).
 /// - `code: Some(n)` — `AppHandle::exit(n)` (tray Quit, updater relaunch).
 ///
-/// Native Carrier menu Quit / Cmd+Q do **not** hit this predicate. They use
+/// Native Chatpane menu Quit / Cmd+Q do **not** hit this predicate. They use
 /// muda's predefined `.quit()`, which on macOS is `[NSApp terminate:]` and
 /// never emits `ExitRequested` (tauri#9198, tauri#13778).
 pub(crate) fn should_prevent_app_exit(
@@ -961,8 +961,8 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
                     match handle
                         .notification()
                         .builder()
-                        .title("Carrier is still running")
-                        .body("Use the tray icon to reopen or quit Carrier.")
+                        .title("Chatpane is still running")
+                        .body("Use the tray icon to reopen or quit Chatpane.")
                         .show()
                     {
                         Ok(()) => {
@@ -1180,7 +1180,7 @@ pub(crate) fn recreate_messenger_window(
         if memory_recycle || render_budget.used() {
             // Frame recovery and optional recycling are bounded to this window.
             log::error!(
-                "failed to construct replacement Messenger window {label}; reopen Carrier from the tray or relaunch manually"
+                "failed to construct replacement Messenger window {label}; reopen Chatpane from the tray or relaunch manually"
             );
             crate::webview_watchdog::realtime_window_rebuild_failed(&label);
             app.state::<AppState>()
@@ -1194,7 +1194,7 @@ pub(crate) fn recreate_messenger_window(
         // the same persisted cookies/settings as an ordinary app launch.
         log::error!(
             "failed to rebuild blank Messenger webview {label} after \
-             {MAX_BUILD_ATTEMPTS} attempts; restarting Carrier"
+             {MAX_BUILD_ATTEMPTS} attempts; restarting Chatpane"
         );
         crate::webview_watchdog::realtime_window_rebuild_failed(&label);
         app.restart();
@@ -1233,7 +1233,7 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
-    // Windows and Linux: Carrier's title bar, as in the Messenger windows
+    // Windows and Linux: Chatpane's title bar, as in the Messenger windows
     // (crate::title_bar): the page draws the close button.
     let builder = {
         let state = app.state::<AppState>();
@@ -1318,37 +1318,37 @@ fn init_script(
     let title_bar_inset = crate::title_bar::initial_script(settings, true);
     format!(
         r#"(function () {{
-  var carrierHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
+  var chatpaneHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
   // WebView2 currently ignores Tauri's main-frame-only flag. Enforce it here
   // too so native bridges never initialize in child frames.
   if (window.top !== window.self) return;
   // A window Messenger opened (a call). On macOS it shares its opener's
-  // scripts, but Carrier's features and bridges belong to its own windows.
+  // scripts, but Chatpane's features and bridges belong to its own windows.
   if (window.opener) return;
-  var carrierInjectable =
-    carrierHost === 'facebook.com' ||
-    carrierHost.endsWith('.facebook.com') ||
-    carrierHost === 'messenger.com' ||
-    carrierHost.endsWith('.messenger.com');
+  var chatpaneInjectable =
+    chatpaneHost === 'facebook.com' ||
+    chatpaneHost.endsWith('.facebook.com') ||
+    chatpaneHost === 'messenger.com' ||
+    chatpaneHost.endsWith('.messenger.com');
 {title_bar_inset}
-  if (!carrierInjectable) {{
-    // Keep normal feature injection off Carrier's trusted local pages. Debug
+  if (!chatpaneInjectable) {{
+    // Keep normal feature injection off Chatpane's trusted local pages. Debug
     // builds still need their MCP responder there so the connectivity screen
     // can be exercised when Messenger itself is unreachable.
-    if (carrierHost === 'tauri.localhost') {{
+    if (chatpaneHost === 'tauri.localhost') {{
 {INJECT_MCP_BRIDGE}
     }}
     return;
   }}
 
-  window.__CARRIER_HEARTBEAT_ID__ = {watchdog_id};
-  window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = {scheduled_send_available};
+  window.__CHATPANE_HEARTBEAT_ID__ = {watchdog_id};
+  window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ = {scheduled_send_available};
 
   // Import the per-window secret as a non-extractable key. Only signed request
   // data crosses Tauri's page-visible serializer, so a hostile inherited
   // toJSON hook can observe or corrupt a request but cannot recover the key or
   // create a different valid request. One-time nonces prevent replay.
-  var carrierAuthorizedEmit = (function (invoke, secret) {{
+  var chatpaneAuthorizedEmit = (function (invoke, secret) {{
     if (!invoke || !crypto.subtle) return;
     var nativeArrayIsArray = Array.isArray.bind(Array);
     var nativeDefineProperty = Object.defineProperty;
@@ -1434,7 +1434,7 @@ fn init_script(
       : undefined,
     {reveal_token_literal}
   );
-  var carrierVerifyResult = carrierAuthorizedEmit && carrierAuthorizedEmit.verifyResult;
+  var chatpaneVerifyResult = chatpaneAuthorizedEmit && chatpaneAuthorizedEmit.verifyResult;
 
   var nativeWindowAddEventListener = EventTarget.prototype.addEventListener;
   var nativeWindowRemoveEventListener = EventTarget.prototype.removeEventListener;
@@ -1445,7 +1445,7 @@ fn init_script(
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
   var NativeUint8Array = Uint8Array;
   var nativeReflectApply = Reflect.apply;
-  var carrierNativeRequest = function () {{
+  var chatpaneNativeRequest = function () {{
     var bytes = new NativeUint8Array(16);
     nativeGetRandomValues(bytes);
     var alphabet = '0123456789abcdef';
@@ -1464,15 +1464,15 @@ fn init_script(
   // specific failure message.
   // Blocking native UI can acknowledge presentation first, clearing the
   // timeout, then send its final result after the blocking call returns.
-  var carrierNativeCall = function (
+  var chatpaneNativeCall = function (
     requestEvent, field, failedMessage, timedOutMessage, payload, acknowledgesBeforeFinal,
     failureField, alternateFailedMessage
   ) {{
-    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
+    if (!chatpaneAuthorizedEmit || !chatpaneVerifyResult) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     var resultEvent = requestEvent + '-result';
-    var request = carrierNativeRequest();
+    var request = chatpaneNativeRequest();
     return new NativePromise(function (resolve, reject) {{
       var acknowledged = false;
       var finish = async function (event) {{
@@ -1496,7 +1496,7 @@ fn init_script(
         result[field] = value;
         if (acknowledgesBeforeFinal) result.phase = phase;
         if (failureField) result[failureField] = failureValue;
-        var authenticated = await carrierVerifyResult(resultEvent, result, detail.signature);
+        var authenticated = await chatpaneVerifyResult(resultEvent, result, detail.signature);
         if (!authenticated) return;
         if (acknowledgesBeforeFinal && phase === 'presented') {{
           if (!acknowledged) {{
@@ -1519,50 +1519,50 @@ fn init_script(
       }};
       nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
       payload.request = request;
-      carrierAuthorizedEmit(requestEvent, payload).catch(function (error) {{
+      chatpaneAuthorizedEmit(requestEvent, payload).catch(function (error) {{
         cleanup();
         reject(error);
       }});
     }});
   }};
 
-  var carrierRevealDownload = function (url) {{
-    if (!carrierAuthorizedEmit) {{
+  var chatpaneRevealDownload = function (url) {{
+    if (!chatpaneAuthorizedEmit) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
-    return carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
+    return chatpaneAuthorizedEmit('chatpane:reveal-download', {{ url: url }});
   }};
-  var carrierOpenDownloadPrivacy = function () {{
-    if (!carrierAuthorizedEmit) {{
+  var chatpaneOpenDownloadPrivacy = function () {{
+    if (!chatpaneAuthorizedEmit) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
-    return carrierAuthorizedEmit('carrier:open-download-privacy', {{}});
+    return chatpaneAuthorizedEmit('chatpane:open-download-privacy', {{}});
   }};
-  // Carrier's title bar (title_bar.rs): signed, so a page can only act on its
+  // Chatpane's title bar (title_bar.rs): signed, so a page can only act on its
   // own window.
-  var carrierWindowControl = function (action) {{
-    if (!carrierAuthorizedEmit) {{
+  var chatpaneWindowControl = function (action) {{
+    if (!chatpaneAuthorizedEmit) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
-    return carrierAuthorizedEmit('carrier:window-control', {{ action: action }});
+    return chatpaneAuthorizedEmit('chatpane:window-control', {{ action: action }});
   }};
-  var carrierMediaViewer = function (open) {{
-    if (!carrierAuthorizedEmit) {{
+  var chatpaneMediaViewer = function (open) {{
+    if (!chatpaneAuthorizedEmit) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
-    return carrierAuthorizedEmit('carrier:media-viewer', {{ open: open }});
+    return chatpaneAuthorizedEmit('chatpane:media-viewer', {{ open: open }});
   }};
-  var carrierClaimContextAction = function (action) {{
-    if (!carrierAuthorizedEmit) {{
+  var chatpaneClaimContextAction = function (action) {{
+    if (!chatpaneAuthorizedEmit) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
-    return carrierAuthorizedEmit('carrier:claim-context-action', {{ action: action }});
+    return chatpaneAuthorizedEmit('chatpane:claim-context-action', {{ action: action }});
   }};
-  var carrierMediaPlatform = {platform_literal};
-  var carrierMediaPermissionStatus = function (device) {{
-    if (!carrierAuthorizedEmit || !carrierVerifyResult) return NativePromise.reject(new Error('native bridge unavailable'));
-    var request = carrierNativeRequest();
-    var resultEvent = 'carrier:media-permission-status-result';
+  var chatpaneMediaPlatform = {platform_literal};
+  var chatpaneMediaPermissionStatus = function (device) {{
+    if (!chatpaneAuthorizedEmit || !chatpaneVerifyResult) return NativePromise.reject(new Error('native bridge unavailable'));
+    var request = chatpaneNativeRequest();
+    var resultEvent = 'chatpane:media-permission-status-result';
     return new NativePromise(function (resolve, reject) {{
       var valid = function (value) {{
         return value === 'unknown' || value === 'not-determined' || value === 'restricted' || value === 'denied' || value === 'allowed';
@@ -1575,7 +1575,7 @@ fn init_script(
         var detail = event && event.detail;
         if (!detail || detail.request !== request || !valid(detail.camera) || !valid(detail.microphone)) return;
         var result = {{ request: request, camera: detail.camera, microphone: detail.microphone }};
-        if (!await carrierVerifyResult(resultEvent, result, detail.signature)) return;
+        if (!await chatpaneVerifyResult(resultEvent, result, detail.signature)) return;
         cleanup();
         resolve({{ camera: result.camera, microphone: result.microphone }});
       }};
@@ -1583,68 +1583,68 @@ fn init_script(
       nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
       var payload = {{ request: request }};
       if (device) payload.device = device;
-      carrierAuthorizedEmit('carrier:media-permission-status', payload).catch(function (error) {{ cleanup(); reject(error); }});
+      chatpaneAuthorizedEmit('chatpane:media-permission-status', payload).catch(function (error) {{ cleanup(); reject(error); }});
     }});
   }};
-  var carrierOpenMediaPrivacy = function (device) {{
-    return carrierNativeCall(
-      'carrier:open-media-privacy', 'opened',
+  var chatpaneOpenMediaPrivacy = function (device) {{
+    return chatpaneNativeCall(
+      'chatpane:open-media-privacy', 'opened',
       'privacy settings could not open', 'privacy settings timed out',
       {{ device: device }}
     );
   }};
-  var carrierPrepareDownload = function (action, url) {{
-    if (!carrierAuthorizedEmit) {{
+  var chatpanePrepareDownload = function (action, url) {{
+    if (!chatpaneAuthorizedEmit) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
-    return carrierAuthorizedEmit('carrier:prepare-download', {{ action: action, url: url }});
+    return chatpaneAuthorizedEmit('chatpane:prepare-download', {{ action: action, url: url }});
   }};
-  var carrierChooseDownload = function (url, name) {{
-    return carrierNativeCall(
-      'carrier:choose-download', 'chosen',
+  var chatpaneChooseDownload = function (url, name) {{
+    return chatpaneNativeCall(
+      'chatpane:choose-download', 'chosen',
       'download cancelled', 'download picker timed out',
       {{ url: url, name: name }}, true, 'cancelled', 'download rejected'
     );
   }};
-  var carrierExportConversation = function (payload) {{
-    return carrierNativeCall(
-      'carrier:export-conversation', 'saved',
+  var chatpaneExportConversation = function (payload) {{
+    return chatpaneNativeCall(
+      'chatpane:export-conversation', 'saved',
       'export cancelled', 'export timed out',
       {{ format: payload.format, conversation: payload.conversation, reveal: payload.reveal }},
       true, 'cancelled', 'export failed'
     );
   }};
-  var carrierShareDownload = function (downloadId, x, y, action) {{
-    return carrierNativeCall(
-      'carrier:share-download', 'shown',
+  var chatpaneShareDownload = function (downloadId, x, y, action) {{
+    return chatpaneNativeCall(
+      'chatpane:share-download', 'shown',
       'native share picker failed', 'native share picker timed out',
       {{ download_id: downloadId, x: x, y: y, action: action }}
     );
   }};
-  var carrierCopyImage = function (dataUrl, action) {{
-    return carrierNativeCall(
-      'carrier:copy-image', 'copied',
+  var chatpaneCopyImage = function (dataUrl, action) {{
+    return chatpaneNativeCall(
+      'chatpane:copy-image', 'copied',
       'native clipboard write failed', 'native clipboard write timed out',
       {{ data_url: dataUrl, action: action }}
     );
   }};
-  var carrierShowContextMenu = function (items, position) {{
-    return carrierNativeCall(
-      'carrier:context-menu', 'shown',
+  var chatpaneShowContextMenu = function (items, position) {{
+    return chatpaneNativeCall(
+      'chatpane:context-menu', 'shown',
       'native context menu was not shown', 'native context menu timed out',
       position ? {{ items: items, position: position }} : {{ items: items }}, true
     );
   }};
-  var carrierReplyResult = function (id, attempt, ok) {{
-    if (!carrierAuthorizedEmit) {{
+  var chatpaneReplyResult = function (id, attempt, ok) {{
+    if (!chatpaneAuthorizedEmit) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
-    return carrierAuthorizedEmit('carrier:reply-result', {{ id: id, attempt: attempt, ok: ok }});
+    return chatpaneAuthorizedEmit('chatpane:reply-result', {{ id: id, attempt: attempt, ok: ok }});
   }};
-  var carrierScheduledSend = function (payload) {{
-    if (!carrierAuthorizedEmit || !carrierVerifyResult) return NativePromise.reject(new Error('native bridge unavailable'));
-    var request = carrierNativeRequest();
-    var resultEvent = 'carrier:scheduled-send-result';
+  var chatpaneScheduledSend = function (payload) {{
+    if (!chatpaneAuthorizedEmit || !chatpaneVerifyResult) return NativePromise.reject(new Error('native bridge unavailable'));
+    var request = chatpaneNativeRequest();
+    var resultEvent = 'chatpane:scheduled-send-result';
     return new NativePromise(function (resolve, reject) {{
       var cleanup = function () {{
         nativeClearTimeout(timeout);
@@ -1654,14 +1654,14 @@ fn init_script(
         var detail = event && event.detail;
         if (!detail || detail.request !== request || typeof detail.data !== 'string') return;
         var result = {{ request: request, data: detail.data }};
-        if (!await carrierVerifyResult(resultEvent, result, detail.signature)) return;
+        if (!await chatpaneVerifyResult(resultEvent, result, detail.signature)) return;
         cleanup();
         try {{ resolve(JSON.parse(result.data)); }} catch (error) {{ reject(error); }}
       }};
-      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error('Scheduled messages did not respond. Restart Carrier to retry.')); }}, 15000);
+      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error('Scheduled messages did not respond. Restart Chatpane to retry.')); }}, 15000);
       nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
       payload.request = request;
-      carrierAuthorizedEmit('carrier:scheduled-send', payload).catch(function (error) {{ cleanup(); reject(error); }});
+      chatpaneAuthorizedEmit('chatpane:scheduled-send', payload).catch(function (error) {{ cleanup(); reject(error); }});
     }});
   }};
 
@@ -1674,7 +1674,7 @@ fn init_script(
     // Merge the cache onto the baked defaults (rather than replacing) so a stale
     // or partial cached object can't drop fields the current build expects, and
     // sanitise enum-like settings.
-    var stored = JSON.parse(localStorage.getItem('__carrier_settings') || 'null');
+    var stored = JSON.parse(localStorage.getItem('__chatpane_settings') || 'null');
     if (stored && typeof stored === 'object' && !Array.isArray(stored)) {{
       var merged = Object.assign({{}}, baked, stored);
       if (merged.badge_mode !== 'messages' && merged.badge_mode !== 'conversations' && merged.badge_mode !== 'dot') {{
@@ -1688,31 +1688,31 @@ fn init_script(
       }}
       var mz = Math.round(Number(merged.zoom));
       merged.zoom = isFinite(mz) ? Math.min({ZOOM_MAX}, Math.max({ZOOM_MIN}, mz)) : baked.zoom;
-      window.__CARRIER_SETTINGS__ = merged;
+      window.__CHATPANE_SETTINGS__ = merged;
     }} else {{
-      window.__CARRIER_SETTINGS__ = baked;
+      window.__CHATPANE_SETTINGS__ = baked;
     }}
   }} catch (e) {{
-    window.__CARRIER_SETTINGS__ = baked;
+    window.__CHATPANE_SETTINGS__ = baked;
   }}
   var css = {css_literal};
   function inject() {{
     if (!document.head) return false;
-    if (document.head.querySelector('style[data-carrier]')) return true;
+    if (document.head.querySelector('style[data-chatpane]')) return true;
     var s = document.createElement('style');
-    s.setAttribute('data-carrier', '');
+    s.setAttribute('data-chatpane', '');
     s.textContent = css;
     document.head.appendChild(s);
     return true;
   }}
-  var carrierStarted = false;
-  function startCarrier() {{
+  var chatpaneStarted = false;
+  function startChatpane() {{
     // WebView2 runs document-created scripts before the HTML document is
     // parsed. In that phase documentElement and head are both null; observing
     // documentElement would throw and abort the entire injected bundle.
     if (!document.documentElement) return false;
-    if (carrierStarted) return true;
-    carrierStarted = true;
+    if (chatpaneStarted) return true;
+    chatpaneStarted = true;
     if (!inject()) {{
       new MutationObserver(function (_, obs) {{ if (inject()) obs.disconnect(); }})
         .observe(document.documentElement, {{ childList: true, subtree: true }});
@@ -1722,11 +1722,11 @@ fn init_script(
 {INJECT_MCP_BRIDGE}
     return true;
   }}
-  if (!startCarrier()) {{
+  if (!startChatpane()) {{
     // Document itself already exists in WebView2's pre-parse phase and is a
     // valid MutationObserver target. Start the bundle as soon as <html> lands.
     new MutationObserver(function (_, obs) {{
-      if (startCarrier()) obs.disconnect();
+      if (startChatpane()) obs.disconnect();
     }}).observe(document, {{ childList: true, subtree: true }});
   }}
 }})();"#
@@ -1908,21 +1908,21 @@ mod tests {
     #[test]
     fn init_script_waits_for_webview2_document_element() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
-        assert!(script.contains("window.__CARRIER_HEARTBEAT_ID__ = 42;"));
-        assert!(script.contains("window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = true;"));
+        assert!(script.contains("window.__CHATPANE_HEARTBEAT_ID__ = 42;"));
+        assert!(script.contains("window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ = true;"));
         assert!(
             init_script(&Settings::default(), 42, "test-reveal-token", false)
-                .contains("window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = false;")
+                .contains("window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ = false;")
         );
         assert!(script.contains("test-reveal-token"));
         assert!(script.contains("if (window.top !== window.self) return;"));
         assert!(script.contains("if (!document.documentElement) return false;"));
         assert!(script.contains(").observe(document, { childList: true, subtree: true });"));
 
-        let start = script.find("function startCarrier() {").unwrap();
+        let start = script.find("function startChatpane() {").unwrap();
         let messenger = script.find("Source: inject/src/messenger/").unwrap();
         let fallback = script
-            .find("if (!startCarrier()) {\n    // Document itself")
+            .find("if (!startChatpane()) {\n    // Document itself")
             .unwrap();
         assert!(start < messenger);
         assert!(messenger < fallback);
@@ -1934,12 +1934,12 @@ mod tests {
 
         assert!(script.contains("isMessengerHost"));
         assert!(script.contains("\"fbsbx.com\""));
-        assert!(script.contains("carrier:web-audio-call-state:v1"));
+        assert!(script.contains("chatpane:web-audio-call-state:v1"));
         assert!(script.contains("event.source !== window.parent"));
         assert!(script.contains("Source: inject/src/web-audio-idle.ts"));
         assert!(script.find("\"use strict\";").unwrap() < script.find("isMessengerHost").unwrap());
-        assert!(!script.contains("__CARRIER_HEARTBEAT_ID__"));
-        assert!(!script.contains("carrierAuthorizedEmit"));
+        assert!(!script.contains("__CHATPANE_HEARTBEAT_ID__"));
+        assert!(!script.contains("chatpaneAuthorizedEmit"));
         assert!(!script.contains("test-reveal-token"));
     }
 
@@ -1956,8 +1956,8 @@ mod tests {
         );
         assert!(script.contains("event + '\\n' + timestamp + '\\n' + nonce + '\\n' + message"));
         assert!(!script.contains("authorization: authorization"));
-        assert!(!script.contains("__carrierDispatchContextAction"));
-        assert!(script.contains("carrierAuthorizedEmit('carrier:open-download-privacy', {})"));
+        assert!(!script.contains("__chatpaneDispatchContextAction"));
+        assert!(script.contains("chatpaneAuthorizedEmit('chatpane:open-download-privacy', {})"));
     }
 
     #[test]
@@ -1973,7 +1973,7 @@ mod tests {
         // token, '<event>-result' listener, signature verification, timeout.
         assert!(script.contains("var resultEvent = requestEvent + '-result';"));
         assert!(script.contains("payload.request = request;"));
-        assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
+        assert!(script.contains("chatpaneAuthorizedEmit.verifyResult"));
         assert!(script.contains("detail.signature"));
     }
 
@@ -1981,15 +1981,15 @@ mod tests {
     fn quick_reply_results_use_the_authenticated_emit_bridge() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
-        assert!(script.contains("return carrierAuthorizedEmit('carrier:reply-result'"));
-        assert!(script.contains("carrierReplyResult(id, attempt, ok)"));
+        assert!(script.contains("return chatpaneAuthorizedEmit('chatpane:reply-result'"));
+        assert!(script.contains("chatpaneReplyResult(id, attempt, ok)"));
     }
 
     #[test]
     fn copy_image_bridge_goes_through_the_native_call_factory() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
-        assert!(script.contains("'carrier:copy-image', 'copied'"));
+        assert!(script.contains("'chatpane:copy-image', 'copied'"));
         assert!(script.contains("data_url: dataUrl, action: action"));
         assert!(script.contains("native clipboard write failed"));
     }
@@ -1998,10 +1998,10 @@ mod tests {
     fn share_download_bridge_goes_through_the_native_call_factory() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
-        assert!(script.contains("carrier:claim-context-action"));
-        assert!(script.contains("carrier:prepare-download"));
+        assert!(script.contains("chatpane:claim-context-action"));
+        assert!(script.contains("chatpane:prepare-download"));
         // The share result reports presentation, not a completed share.
-        assert!(script.contains("'carrier:share-download', 'shown'"));
+        assert!(script.contains("'chatpane:share-download', 'shown'"));
         assert!(script.contains("download_id: downloadId, x: x, y: y, action: action"));
         assert!(script.contains("native share picker failed"));
     }
@@ -2010,7 +2010,7 @@ mod tests {
     fn choose_download_bridge_goes_through_the_native_call_factory() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
-        assert!(script.contains("'carrier:choose-download', 'chosen'"));
+        assert!(script.contains("'chatpane:choose-download', 'chosen'"));
         assert!(script.contains("{ url: url, name: name }, true, 'cancelled'"));
         assert!(script.contains("download cancelled"));
         assert!(script.contains("download rejected"));
@@ -2021,7 +2021,7 @@ mod tests {
     fn context_menu_bridge_goes_through_the_native_call_factory() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
-        assert!(script.contains("'carrier:context-menu', 'shown'"));
+        assert!(script.contains("'chatpane:context-menu', 'shown'"));
         assert!(script.contains("{ items: items }, true"));
         assert!(script.contains("native context menu was not shown"));
     }
@@ -2031,18 +2031,18 @@ mod tests {
     fn mcp_init_script_can_inspect_the_local_connectivity_screen() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
         let local_branch = script
-            .find("if (carrierHost === 'tauri.localhost')")
+            .find("if (chatpaneHost === 'tauri.localhost')")
             .unwrap();
         let first_bridge = script.find("tauri-mcp guest bridge").unwrap();
         let injectable_return = script
-            .find("    return;\n  }\n\n  window.__CARRIER_HEARTBEAT_ID__")
+            .find("    return;\n  }\n\n  window.__CHATPANE_HEARTBEAT_ID__")
             .unwrap();
 
         assert!(local_branch < first_bridge);
         assert!(first_bridge < injectable_return);
         assert_eq!(
             script
-                .matches("if (window.__CARRIER_MCP_BRIDGE__) return;")
+                .matches("if (window.__CHATPANE_MCP_BRIDGE__) return;")
                 .count(),
             2
         );

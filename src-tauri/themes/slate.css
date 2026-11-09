@@ -1,47 +1,47 @@
-/* Carrier theme
+/* Chatpane theme
    name: Slate
-   author: Carrier
+   author: Chatpane
    preview: #dfe4ec #f3f5f9 #fbfcfe #4a6fa5 #e7ebf2
 */
 
 /* Cool blue-grays with a dusty blue accent, light and dark. */
 :root {
-  --carrier-wash: #dfe4ec;
-  --carrier-page: #f3f5f9;
-  --carrier-chat: #fbfcfe;
-  --carrier-field: #e6eaf1;
-  --carrier-hover: rgba(30, 50, 80, 0.05);
-  --carrier-line: rgba(30, 50, 80, 0.1);
-  --carrier-text: #1d2633;
-  --carrier-text-2: #64718a;
-  --carrier-icon: #34435a;
-  --carrier-brand: #4a6fa5;
-  --carrier-brand-soft: #dde6f3;
-  --carrier-brand-soft-text: #2c4c7c;
-  --carrier-out: #4a6fa5;
-  --carrier-out-text: #ffffff;
-  --carrier-in: #e7ebf2;
-  --carrier-in-text: #1d2633;
-  --carrier-selection: rgba(74, 111, 165, 0.22);
+  --chatpane-wash: #dfe4ec;
+  --chatpane-page: #f3f5f9;
+  --chatpane-chat: #fbfcfe;
+  --chatpane-field: #e6eaf1;
+  --chatpane-hover: rgba(30, 50, 80, 0.05);
+  --chatpane-line: rgba(30, 50, 80, 0.1);
+  --chatpane-text: #1d2633;
+  --chatpane-text-2: #64718a;
+  --chatpane-icon: #34435a;
+  --chatpane-brand: #4a6fa5;
+  --chatpane-brand-soft: #dde6f3;
+  --chatpane-brand-soft-text: #2c4c7c;
+  --chatpane-out: #4a6fa5;
+  --chatpane-out-text: #ffffff;
+  --chatpane-in: #e7ebf2;
+  --chatpane-in-text: #1d2633;
+  --chatpane-selection: rgba(74, 111, 165, 0.22);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --carrier-wash: #161b23;
-    --carrier-page: #1e2430;
-    --carrier-chat: #222937;
-    --carrier-field: #2b3343;
-    --carrier-hover: rgba(200, 220, 255, 0.06);
-    --carrier-line: rgba(200, 220, 255, 0.09);
-    --carrier-text: #e3e9f2;
-    --carrier-text-2: #96a3b8;
-    --carrier-icon: #cdd6e4;
-    --carrier-brand: #88a9d8;
-    --carrier-brand-soft: #2c3749;
-    --carrier-brand-soft-text: #bcd0ee;
-    --carrier-out: #4f73a8;
-    --carrier-out-text: #ffffff;
-    --carrier-in: #2f3747;
-    --carrier-in-text: #e3e9f2;
-    --carrier-selection: rgba(136, 169, 216, 0.3);
+    --chatpane-wash: #161b23;
+    --chatpane-page: #1e2430;
+    --chatpane-chat: #222937;
+    --chatpane-field: #2b3343;
+    --chatpane-hover: rgba(200, 220, 255, 0.06);
+    --chatpane-line: rgba(200, 220, 255, 0.09);
+    --chatpane-text: #e3e9f2;
+    --chatpane-text-2: #96a3b8;
+    --chatpane-icon: #cdd6e4;
+    --chatpane-brand: #88a9d8;
+    --chatpane-brand-soft: #2c3749;
+    --chatpane-brand-soft-text: #bcd0ee;
+    --chatpane-out: #4f73a8;
+    --chatpane-out-text: #ffffff;
+    --chatpane-in: #2f3747;
+    --chatpane-in-text: #e3e9f2;
+    --chatpane-selection: rgba(136, 169, 216, 0.3);
   }
 }

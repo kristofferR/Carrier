@@ -22,10 +22,10 @@ const inside = (rect: DOMRect, x: number, y: number) =>
   x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 
 export function initLinuxCallNotice() {
-  if (carrierMediaPlatform !== "linux" || engineSupportsCalls(window)) return;
+  if (chatpaneMediaPlatform !== "linux" || engineSupportsCalls(window)) return;
 
   const host = document.createElement("div");
-  host.id = "carrier-linux-call-notice";
+  host.id = "chatpane-linux-call-notice";
   const root = host.attachShadow({ mode: "closed" });
   root.innerHTML = `<style>
     :host { all: initial; color-scheme: light dark;
@@ -46,7 +46,7 @@ export function initLinuxCallNotice() {
     button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 3px; }
   </style><section role="note">
     <strong>Calls don't work on Linux yet</strong>
-    <p>The browser engine Carrier uses on Linux is missing the calling support Messenger
+    <p>The browser engine Chatpane uses on Linux is missing the calling support Messenger
       needs, so voice and video calls can't start here.</p>
     <button type="button">Read more about it</button>
   </section>`;
@@ -84,7 +84,7 @@ export function initLinuxCallNotice() {
     const rect = button.getBoundingClientRect();
     const left = Math.max(GAP, Math.min(rect.right - WIDTH, innerWidth - WIDTH - GAP));
     host.style.cssText = `position: fixed; top: ${rect.bottom + GAP}px; left: ${left}px; z-index: 2147483646;`;
-    host.dataset.theme = window.__CARRIER_SETTINGS__?.theme ?? "system";
+    host.dataset.theme = window.__CHATPANE_SETTINGS__?.theme ?? "system";
     (document.body ?? document.documentElement).append(host);
     (document.head ?? document.documentElement).append(hideFacebookTooltips);
     document.addEventListener("pointermove", track, true);

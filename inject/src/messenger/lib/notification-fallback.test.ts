@@ -286,7 +286,7 @@ describe("NotifiedSignatureStore", () => {
   test("loads version 3 handled entries as delivered", () => {
     const storage = memoryStorage();
     storage.setItem(
-      "__carrier_notified_previews__",
+      "__chatpane_notified_previews__",
       JSON.stringify({ version: 3, entries: [["1", "aaaa", false, "body"]], retired: [] }),
     );
 
@@ -299,7 +299,7 @@ describe("NotifiedSignatureStore", () => {
     const storage = memoryStorage();
     const placeholder = notificationDedupeKey("Jane", "New message");
     const hydrated = notificationDedupeKey("Jane", "Actual preview");
-    storage.setItem("__carrier_notified_previews__", JSON.stringify([["1", placeholder]]));
+    storage.setItem("__chatpane_notified_previews__", JSON.stringify([["1", placeholder]]));
 
     const store = new NotifiedSignatureStore(storage);
     expect(store.reconcileFingerprint("1", "Jane", hydrated)).toBe("migrated");
@@ -311,7 +311,7 @@ describe("NotifiedSignatureStore", () => {
     const storage = memoryStorage();
     const placeholder = notificationDedupeKey("Messenger", "New message");
     const hydrated = notificationDedupeKey("Jane", "Actual preview");
-    storage.setItem("__carrier_notified_previews__", JSON.stringify([["1", placeholder]]));
+    storage.setItem("__chatpane_notified_previews__", JSON.stringify([["1", placeholder]]));
 
     expect(new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", hydrated)).toBe(
       "migrated",
@@ -333,7 +333,7 @@ describe("NotifiedSignatureStore", () => {
     const storage = memoryStorage();
     const literal = notificationDedupeKey("Jane", "New message");
     const next = notificationDedupeKey("Jane", "Actual preview");
-    storage.setItem("__carrier_notified_previews__", JSON.stringify([["1", literal]]));
+    storage.setItem("__chatpane_notified_previews__", JSON.stringify([["1", literal]]));
 
     const store = new NotifiedSignatureStore(storage);
     expect(store.reconcileFingerprint("1", "Jane", literal)).toBe("matched");
@@ -585,18 +585,18 @@ describe("NotifiedSignatureStore", () => {
   test("trims oversized persisted state to the newest entries and persists the trim", () => {
     const storage = memoryStorage();
     const oversized = Array.from({ length: 301 }, (_, n) => [`k${n}`, "f"]);
-    storage.setItem("__carrier_notified_previews__", JSON.stringify(oversized));
+    storage.setItem("__chatpane_notified_previews__", JSON.stringify(oversized));
     const store = new NotifiedSignatureStore(storage);
     expect(store.alreadyNotified("k0", "f")).toBe(false);
     expect(store.alreadyNotified("k300", "f")).toBe(true);
-    const persisted = JSON.parse(storage.getItem("__carrier_notified_previews__")!);
+    const persisted = JSON.parse(storage.getItem("__chatpane_notified_previews__")!);
     expect(persisted.version).toBe(4);
     expect(persisted.entries).toHaveLength(300);
   });
 
   test("tolerates malformed persisted state", () => {
     const storage = memoryStorage();
-    storage.setItem("__carrier_notified_previews__", "{not json");
+    storage.setItem("__chatpane_notified_previews__", "{not json");
     const store = new NotifiedSignatureStore(storage);
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
     store.markNotified("1", "aaaa");
@@ -665,7 +665,9 @@ describe("PageNotificationReceiptStore", () => {
       receipts.retainForDraft(id, "1");
     }
     const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 2_000);
-    expect(JSON.parse(storage.getItem("__carrier_page_notification_receipts__")!)).toHaveLength(20);
+    expect(JSON.parse(storage.getItem("__chatpane_page_notification_receipts__")!)).toHaveLength(
+      20,
+    );
     expect(
       reloaded.consumeMatching({ key: "1", title: "Jane", body: "Message 1" }, 2_000),
     ).toBeNull();
@@ -818,7 +820,7 @@ describe("PageNotificationReceiptStore", () => {
       42,
       1_000,
     );
-    const persisted = storage.getItem("__carrier_page_notification_receipts__")!;
+    const persisted = storage.getItem("__chatpane_page_notification_receipts__")!;
     expect(persisted).not.toContain("Project group");
     expect(persisted).not.toContain("Deployment finished");
 
@@ -966,7 +968,7 @@ describe("PageNotificationReceiptStore", () => {
   test("ignores malformed persisted receipts", () => {
     const storage = memoryStorage();
     storage.setItem(
-      "__carrier_page_notification_receipts__",
+      "__chatpane_page_notification_receipts__",
       JSON.stringify([{ at: 1_000, nativeId: 42, identity: { title: "raw content" } }]),
     );
     expect(
@@ -1010,7 +1012,7 @@ describe("PendingPageNotificationStore", () => {
     const storage = memoryStorage();
     const pending = new PendingPageNotificationStore(storage, undefined, undefined, 1_000);
     pending.add("Project group", "Jane: Deployment finished", 42, 1_000);
-    const persisted = storage.getItem("__carrier_pending_page_notifications__")!;
+    const persisted = storage.getItem("__chatpane_pending_page_notifications__")!;
     expect(persisted).not.toContain("Project group");
     expect(persisted).not.toContain("Deployment finished");
 
@@ -1816,7 +1818,7 @@ describe("notificationTextMatches", () => {
 describe("NotifiedSignatureStore across the preview-text change", () => {
   const v2 = (entries: unknown[]) => {
     const storage = memoryStorage();
-    storage.setItem("__carrier_notified_previews__", JSON.stringify({ version: 2, entries }));
+    storage.setItem("__chatpane_notified_previews__", JSON.stringify({ version: 2, entries }));
     return storage;
   };
 

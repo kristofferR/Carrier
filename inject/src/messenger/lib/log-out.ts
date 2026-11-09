@@ -1,6 +1,6 @@
 /*
  * Facebook's own Log Out (Ref #356): what its account menu does, so the
- * server ends the session rather than Carrier just dropping cookies.
+ * server ends the session rather than Chatpane just dropping cookies.
  * Facebook's handler (CometLogoutHandler.react) posts a logout token from
  * CometLogoutHandlerQuery to /logout.php.
  */

@@ -1,5 +1,5 @@
 /* ------------------- Focus the message box on return ------------------- */
-// Switching back to Carrier (Cmd/Alt+Tab, Dock, tray, global hotkey) with a
+// Switching back to Chatpane (Cmd/Alt+Tab, Dock, tray, global hotkey) with a
 // conversation open, or opening a conversation from the chat list or search,
 // puts the cursor in the message box, unless something else the user chose
 // already has focus (Ref #359). A native action that reveals the window to
@@ -35,7 +35,7 @@ function currentFocus(): ReturnFocus {
 
 function returnState() {
   return {
-    enabled: window.__CARRIER_SETTINGS__?.focus_composer_on_return !== false,
+    enabled: window.__CHATPANE_SETTINGS__?.focus_composer_on_return !== false,
     threadOpen: !!threadIdFromHref(location.pathname),
     dialogOpen: [...document.querySelectorAll('[role="dialog"]')].some(isShown),
     focus: currentFocus(),

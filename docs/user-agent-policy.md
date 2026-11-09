@@ -2,13 +2,13 @@
 
 Ref #258, #335.
 
-Carrier leaves the user agent unset so the embedded engine maintains its own
+Chatpane leaves the user agent unset so the embedded engine maintains its own
 identity, with one recorded exception: macOS identifies as the system Safari.
 `src-tauri/src/user_agent.rs` is the only compatibility-policy module;
 `window::build_app_window` applies it to initial, extra, and recreated Messenger
 windows. Local Settings windows retain their defaults too.
 
-| Platform | Engine | Carrier override |
+| Platform | Engine | Chatpane override |
 | --- | --- | --- |
 | macOS | OS-provided WKWebView | Safari identity for the running WebKit |
 | Windows | Installed WebView2 runtime | None |
@@ -18,7 +18,7 @@ windows. Local Settings windows retain their defaults too.
 
 This removed the fixed Safari 17.4 and Chrome 124 identities, including Linux's
 claim to be Chromium despite running WebKit. Native UA tokens can themselves be
-frozen or contain compatibility tokens; Carrier passes through the engine's own
+frozen or contain compatibility tokens; Chatpane passes through the engine's own
 policy rather than deriving browser versions from those tokens or the OS version.
 
 ## macOS exception: calls need a Safari identity
@@ -41,14 +41,14 @@ and video calls stopped working (#335).
 - Native versus override: calls worked under the previous fixed Safari 17.4
   identity, including the camera and microphone fixes made with it.
 
-Carrier therefore appends Safari's own suffix, `Version/<version> Safari/605.1.15`,
+Chatpane therefore appends Safari's own suffix, `Version/<version> Safari/605.1.15`,
 to the frozen identity, naming the Safari release of the WebKit that provides
-`WKWebView` in Carrier's process, so the version describes this engine's real
+`WKWebView` in Chatpane's process, so the version describes this engine's real
 capabilities:
 
 - When the system Safari (`/Applications/Safari.app`, a link into the system
   cryptex on macOS 13+) has the same build number (`CFBundleVersion`) as that
-  WebKit, Carrier uses Safari's `CFBundleShortVersionString`. This is the normal
+  WebKit, Chatpane uses Safari's `CFBundleShortVersionString`. This is the normal
   case on the current macOS.
 - On older macOS, a newer Safari installs its own staged WebKit under
   `/System/Cryptexes/App/System/Library/StagedFrameworks/Safari/` that only
@@ -62,7 +62,7 @@ capabilities:
   engine's own build: its release family (`<major>.<minor>` after the OS prefix,
   e.g. `621.3` in `20621.3.11.11.3`) maps to the Safari release that shipped it,
   using the table in `user_agent.rs`. A family missing from the table takes the
-  newest listed release below it, so Carrier never claims a newer Safari than the
+  newest listed release below it, so Chatpane never claims a newer Safari than the
   engine. The table starts at Safari 16 (Messenger's calling minimum); an older
   engine without a matching Safari keeps the native UA.
 
@@ -119,15 +119,15 @@ there is no tested Windows/Linux minimum implied by this table.
 | Linux AppImage / bundled WebKitGTK | Pending | Pending | Pending | Pending | Pending | Pending |
 
 Linux calls depend on how WebKitGTK was built. On 2026-11-05 Omarchy's Arch
-WebKitGTK 2.54.1 granted Carrier's microphone requests, but Messenger greyed out
+WebKitGTK 2.54.1 granted Chatpane's microphone requests, but Messenger greyed out
 calls in end-to-end encrypted chats. Arch builds WebKitGTK with upstream
 defaults, which leave WebRTC off for the GTK port, so `RTCPeerConnection` and
 `RTCRtpScriptTransform` stay undefined even with the `enable-webrtc` setting on.
 Messenger needs one of those transforms (`ZenonE2eeTransformGate`) before it
-offers encrypted calls. Carrier turns WebRTC on for WebKitGTK builds that
+offers encrypted calls. Chatpane turns WebRTC on for WebKitGTK builds that
 include it.
 
-For each row, use an actual Carrier build with native UA, record OS, architecture,
+For each row, use an actual Chatpane build with native UA, record OS, architecture,
 engine/runtime version and package format, then check:
 
 1. Fresh login, any authentication challenge, and session persistence after restart.
@@ -136,7 +136,7 @@ engine/runtime version and package format, then check:
 3. Upload/open an image and play audio/video.
 4. Start and receive voice/video calls with a consenting test partner; exercise
    microphone/camera permissions and record unsupported engine features separately.
-5. Download an image and an attachment through Carrier's existing download flow.
+5. Download an image and an attachment through Chatpane's existing download flow.
 6. Log out and confirm the login form is usable again.
 7. Repeat in an extra window and after a watchdog window recreation.
 

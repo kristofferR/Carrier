@@ -1,13 +1,13 @@
 #!/bin/sh
-# Build and sign "Carrier Share.appex" (Ref #211/#212).
+# Build and sign "Chatpane Share.appex" (Ref #211/#212).
 #
 # Usage: build.sh <output-dir> [arch] [signing-identity] [version]
 #   arch defaults to the host architecture (arm64 or x86_64)
 #   signing-identity defaults to ad-hoc ("-")
 #   version, when set, becomes both appex bundle version fields
 #
-# The result at "<output-dir>/Carrier Share.appex" is ready to be copied into
-# Carrier.app/Contents/PlugIns/ before the outer app is signed.
+# The result at "<output-dir>/Chatpane Share.appex" is ready to be copied into
+# Chatpane.app/Contents/PlugIns/ before the outer app is signed.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -26,7 +26,7 @@ case "$ARCH" in
     ;;
 esac
 
-APPEX="$OUT_DIR/Carrier Share.appex"
+APPEX="$OUT_DIR/Chatpane Share.appex"
 rm -rf "$APPEX"
 mkdir -p "$APPEX/Contents/MacOS"
 
@@ -56,7 +56,7 @@ xcrun clang \
   -framework AppKit \
   -framework CoreServices \
   -Wl,-e,_NSExtensionMain \
-  -o "$APPEX/Contents/MacOS/Carrier Share" \
+  -o "$APPEX/Contents/MacOS/Chatpane Share" \
   "$SCRIPT_DIR/main.m"
 
 # Nested code signs before the outer app does. Developer ID signatures require

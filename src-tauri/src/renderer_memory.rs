@@ -207,13 +207,13 @@ mod linux {
     }
 
     /// WebKitGTK exposes no web-process ID, so count every WebKit web process
-    /// under Carrier, including a split-out SharedWorker; bubblewrap may sit
+    /// under Chatpane, including a split-out SharedWorker; bubblewrap may sit
     /// in between. The caller samples only while one Messenger window exists.
     #[cfg(target_os = "linux")]
     pub(super) fn web_processes_footprint() -> Option<u64> {
         let status = |pid: u32| std::fs::read_to_string(format!("/proc/{pid}/status")).ok();
         let carrier = std::process::id();
-        let descends_from_carrier = |mut parent: u32| {
+        let descends_from_chatpane = |mut parent: u32| {
             for _ in 0..4 {
                 if parent == carrier {
                     return true;
@@ -236,7 +236,7 @@ mod linux {
             .filter_map(|pid| {
                 let status = status(pid)?;
                 let (name, parent, bytes) = parse_status(&status)?;
-                (name == "WebKitWebProces" && descends_from_carrier(parent)).then_some(bytes)
+                (name == "WebKitWebProces" && descends_from_chatpane(parent)).then_some(bytes)
             })
             .reduce(|total, bytes| total + bytes)
     }
@@ -271,7 +271,7 @@ mod macos {
     pub(super) fn physical_footprint(pid: libc::pid_t) -> Option<u64> {
         let mut usage = MaybeUninit::<libc::rusage_info_v4>::zeroed();
         // SAFETY: proc_pid_rusage writes an rusage_info_v4 into this correctly
-        // sized buffer. The PID came from Carrier's own WKWebView.
+        // sized buffer. The PID came from Chatpane's own WKWebView.
         let result = unsafe {
             libc::proc_pid_rusage(
                 pid,

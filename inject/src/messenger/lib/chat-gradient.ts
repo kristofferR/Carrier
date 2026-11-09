@@ -43,7 +43,7 @@ export function collectBubbleClasses(rules: ArrayLike<unknown>, into: Set<string
  */
 export function chatGradientCss(bubbleClasses: readonly string[]): string {
   if (!bubbleClasses.length) return "";
-  const chat = `html[data-carrier-chats] [role="main"] [style*="${GRADIENT_VAR}"]`;
+  const chat = `html[data-chatpane-chats] [role="main"] [style*="${GRADIENT_VAR}"]`;
   return `${chat} :is(${bubbleClasses.join(", ")}) {
   background-image: var(${GRADIENT_VAR}) !important;
   background-attachment: fixed !important;

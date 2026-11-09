@@ -178,7 +178,7 @@ export function initCookieAutoDecline() {
 
   const decline = (button: HTMLElement) => {
     done = true;
-    document.documentElement.setAttribute("data-carrier-cookie-decline", "attempted");
+    document.documentElement.setAttribute("data-chatpane-cookie-decline", "attempted");
     stop();
     button.dispatchEvent(
       new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }),

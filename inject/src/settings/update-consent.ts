@@ -48,12 +48,12 @@ function parseInstallMode(value: unknown): UpdateInstallMode {
 function availableState(
   version: string,
   installMode: UpdateInstallMode,
-  status = `Carrier ${version} is available.`,
+  status = `Chatpane ${version} is available.`,
 ): UpdateUiState {
   const manual = installMode.kind === "manual";
   return {
     phase: "available",
-    buttonLabel: manual ? installMode.buttonLabel : `Install Carrier ${version}`,
+    buttonLabel: manual ? installMode.buttonLabel : `Install Chatpane ${version}`,
     status: manual ? `${status} ${installMode.instructions}` : status,
     busy: false,
     version,
@@ -172,7 +172,7 @@ export class UpdateConsentController {
         return this.publish({
           phase: "up-to-date",
           buttonLabel: "Check for updates",
-          status: "Carrier is up to date.",
+          status: "Chatpane is up to date.",
           busy: false,
         });
       }
@@ -198,7 +198,7 @@ export class UpdateConsentController {
 
     this.publish({
       phase: "installing",
-      buttonLabel: `Install Carrier ${this.version}`,
+      buttonLabel: `Install Chatpane ${this.version}`,
       status: "Downloading and installing update…",
       busy: true,
       version: this.version,
@@ -209,7 +209,7 @@ export class UpdateConsentController {
       return this.publish({
         phase: "up-to-date",
         buttonLabel: "Check for updates",
-        status: "Carrier is already up to date.",
+        status: "Chatpane is already up to date.",
         busy: false,
       });
     }
@@ -230,7 +230,7 @@ export class UpdateConsentController {
         this.version && this.installMode?.kind === "manual"
           ? this.installMode.buttonLabel
           : this.version
-            ? `Install Carrier ${this.version}`
+            ? `Install Chatpane ${this.version}`
             : "Check for updates",
       status: detail ? `${action} ${detail}` : action,
       busy: false,

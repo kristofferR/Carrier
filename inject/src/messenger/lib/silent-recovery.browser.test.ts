@@ -12,7 +12,7 @@ const chromium =
 test.skipIf(!chromium)(
   "silent recovery preserves the DOM, protects drafts and holds, and verifies worker health",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-silent-recovery-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-silent-recovery-test-"));
     let server: ReturnType<typeof Bun.serve> | undefined;
     try {
       const bundle = await build({
@@ -162,8 +162,8 @@ async function runFixtures(
   };
   Object.assign(window, {
     require: (name: string) => modules[name],
-    __CARRIER_SETTINGS__: { hold_failures: true },
-    __CARRIER_HEARTBEAT_ID__: 1,
+    __CHATPANE_SETTINGS__: { hold_failures: true },
+    __CHATPANE_HEARTBEAT_ID__: 1,
     __TAURI_INTERNALS__: {
       invoke: async (
         _command: string,
@@ -194,7 +194,7 @@ async function runFixtures(
     initRecovery();
     for (let i = 0; i < 30; i++) await tick();
     assert("hold leaves failed backend untouched", recoveries === 0);
-    window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    window.__CHATPANE_SETTINGS__ = { hold_failures: false };
     for (let i = 0; i < 8; i++) await tick();
     assert(
       "draft prevents worker mutation",
@@ -221,9 +221,9 @@ async function runFixtures(
     );
     window.dispatchEvent(new Event("online"));
     window.dispatchEvent(new Event("focus"));
-    window.__carrierOnNotification?.();
+    window.__chatpaneOnNotification?.();
     window.dispatchEvent(
-      new CustomEvent("carrier:power-state", {
+      new CustomEvent("chatpane:power-state", {
         detail: {
           sleeping: false,
           resume_generation: 2,
@@ -267,10 +267,10 @@ async function runFixtures(
     await tick();
     assert("fatal dialog retains draft protection", reports.at(-1) === "error" && protectedReport);
     composer.textContent = "";
-    window.__carrierInCall = true;
+    window.__chatpaneInCall = true;
     await tick();
     assert("fatal dialog retains call protection", reports.at(-1) === "error" && protectedReport);
-    window.__carrierInCall = false;
+    window.__chatpaneInCall = false;
     online = false;
     window.dispatchEvent(new Event("offline"));
     await tick();
@@ -360,7 +360,7 @@ async function runFixtures(
     connected = successful = false;
     supported = false;
     for (let i = 0; i < 10; i++) await tick();
-    const banner = document.getElementById("carrier-sync-banner");
+    const banner = document.getElementById("chatpane-sync-banner");
     assert(
       "unsupported recovery offers reconnect and reload",
       !!banner &&
@@ -373,12 +373,12 @@ async function runFixtures(
       ["stale", "never"].includes(reports.at(-1) ?? ""),
     );
     supported = true;
-    window.__CARRIER_SETTINGS__ = { hold_failures: true };
-    window.dispatchEvent(new Event("carrier:sync-recovery-retry"));
+    window.__CHATPANE_SETTINGS__ = { hold_failures: true };
+    window.dispatchEvent(new Event("chatpane:sync-recovery-retry"));
     for (let i = 0; i < 5; i++) await tick();
     assert("explicit reconnect works while automatic recovery is held", recoveries === 2);
     assert("explicit reconnect verifies health", connected && reports.at(-1) === "ok");
-    window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    window.__CHATPANE_SETTINGS__ = { hold_failures: false };
     connected = successful = false;
     supported = false;
     for (let i = 0; i < 12; i++) await tick();
@@ -394,7 +394,7 @@ async function runFixtures(
     for (let i = 0; i < 4; i++) await tick();
     assert("one extra worker repair follows real network restoration", recoveries === 3);
     assert("restoration keeps the same document", performance.timeOrigin === origin);
-    window.__CARRIER_SETTINGS__ = { hold_failures: true };
+    window.__CHATPANE_SETTINGS__ = { hold_failures: true };
     modules.MAWBridgeSendAndReceive = {
       sendAndReceive: async (_namespace: string, route: string) => {
         if (route === "resendWorkerStateManagerValuesToMainThread") {
@@ -424,19 +424,19 @@ async function runFixtures(
     };
     processing.observeLogger(logger);
     logger.start(1);
-    window.__carrierOnNotification?.();
+    window.__chatpaneOnNotification?.();
     for (let i = 0; i < 25; i++) await tick();
-    const processingBanner = document.getElementById("carrier-sync-banner");
+    const processingBanner = document.getElementById("chatpane-sync-banner");
     assert("stalled processing is visible despite healthy transport", !!processingBanner);
     assert(
       "processing warning does not claim a broken connection",
       processingBanner?.textContent?.includes("slow to update") === true,
     );
-    const reload = processingBanner?.querySelector<HTMLButtonElement>("[data-carrier-reload]");
+    const reload = processingBanner?.querySelector<HTMLButtonElement>("[data-chatpane-reload]");
     assert("processing stall offers manual reload", !!reload && !reload.hidden && !reload.disabled);
     assert(
       "processing stall does not offer an ineffective worker reconnect",
-      !processingBanner?.querySelector("button:not([hidden]):not([data-carrier-reload])"),
+      !processingBanner?.querySelector("button:not([hidden]):not([data-chatpane-reload])"),
     );
     assert(
       "processing stall never reloads or repairs automatically",
@@ -446,23 +446,23 @@ async function runFixtures(
     await tick();
     assert("processing reload protects drafts", reload?.disabled === true);
     composer.textContent = "";
-    window.__carrierInCall = true;
+    window.__chatpaneInCall = true;
     await tick();
     assert("processing reload protects calls", reload?.disabled === true);
-    window.__carrierInCall = false;
+    window.__chatpaneInCall = false;
     logger.start(2);
     logger.endSuccess(2);
     await tick();
     assert(
       "unrelated completion cannot clear the processing warning",
-      !!document.getElementById("carrier-sync-banner"),
+      !!document.getElementById("chatpane-sync-banner"),
     );
     logger.endSuccess(1);
     await tick();
     await tick();
     assert(
       "draining the stalled batch clears the warning",
-      !document.getElementById("carrier-sync-banner"),
+      !document.getElementById("chatpane-sync-banner"),
     );
     modules.MAWBridgeSendAndReceive = { sendAndReceive: async () => {} };
     for (let i = 0; i < 16; i++) await tick();
@@ -471,7 +471,7 @@ async function runFixtures(
       getWorkerRecoveryForWatchdog: () => () => bridgeRepairs++,
     };
     workerId = "unverified-replacement";
-    window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    window.__CHATPANE_SETTINGS__ = { hold_failures: false };
     await tick();
     assert(
       "replacement does not inherit the expired global-health settle window",

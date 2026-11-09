@@ -2,9 +2,9 @@
 // Drag the edge between the chat list and the chat, or between the chat and
 // its details, as in the old desktop app; double-click an edge for Facebook's
 // width again. Widths persist natively (Facebook clears unknown localStorage
-// on Mac page loads): a drag reports both widths with a carrier:pane-widths
+// on Mac page loads): a drag reports both widths with a chatpane:pane-widths
 // event, Rust stores them in settings and pushes them back through
-// __CARRIER_SETTINGS__ on every load. Adapted from fMess
+// __CHATPANE_SETTINGS__ on every load. Adapted from fMess
 // (https://github.com/toanbku/fmess, MIT, src-tauri/src/inject/08-panes.js).
 
 import { invoke } from "../bridge";
@@ -20,10 +20,10 @@ import {
 } from "../lib/pane-resize";
 import { isMessengerContentPath } from "../lib/threads";
 
-const PANE_ATTR = "data-carrier-pane";
-const CHAT_ROW_ATTR = "data-carrier-chat-row";
-const RESIZING_ATTR = "data-carrier-resizing";
-const EDGE_CLASS = "carrier-pane-edge";
+const PANE_ATTR = "data-chatpane-pane";
+const CHAT_ROW_ATTR = "data-chatpane-chat-row";
+const RESIZING_ATTR = "data-chatpane-resizing";
+const EDGE_CLASS = "chatpane-pane-edge";
 const SELECTORS: Record<Pane, string> = {
   list: `[role="navigation"][${PANE_ATTR}="list"]`,
   details: `[${CHAT_ROW_ATTR}] > :nth-child(2)`,
@@ -52,20 +52,20 @@ const EDGE_CSS = `
 `;
 
 function storedWidths(): PaneWidths {
-  return sanitizePaneWidths(window.__CARRIER_SETTINGS__?.pane_widths);
+  return sanitizePaneWidths(window.__CHATPANE_SETTINGS__?.pane_widths);
 }
 
 /** Keep the page-side settings snapshot and its reload cache in step with a drag. */
 function rememberLocally(widths: PaneWidths) {
   try {
-    const settings = window.__CARRIER_SETTINGS__;
+    const settings = window.__CHATPANE_SETTINGS__;
     if (settings && typeof settings === "object") settings.pane_widths = { ...widths };
     const cached = JSON.parse(
-      localStorage.getItem("__carrier_settings") || "null",
-    ) as CarrierSettings | null;
+      localStorage.getItem("__chatpane_settings") || "null",
+    ) as ChatpaneSettings | null;
     if (cached && typeof cached === "object" && !Array.isArray(cached)) {
       cached.pane_widths = { ...widths };
-      localStorage.setItem("__carrier_settings", JSON.stringify(cached));
+      localStorage.setItem("__chatpane_settings", JSON.stringify(cached));
     }
   } catch (_) {}
 }
@@ -98,7 +98,7 @@ const SIZE_PROPS = ["flex", "width", "max-width"] as const;
 export function initPaneResize() {
   let widths = storedWidths();
   const widthStyle = document.createElement("style");
-  widthStyle.setAttribute("data-carrier-pane-widths", "");
+  widthStyle.setAttribute("data-chatpane-pane-widths", "");
   const edgeStyle = document.createElement("style");
   edgeStyle.textContent = EDGE_CSS;
   const showWidths = () => {
@@ -117,7 +117,7 @@ export function initPaneResize() {
     showWidths();
     rememberLocally(widths);
     invoke("plugin:event|emit", {
-      event: "carrier:pane-widths",
+      event: "chatpane:pane-widths",
       payload: { list: widths.list, details: widths.details },
     })?.catch?.(() => {});
   };
@@ -128,8 +128,8 @@ export function initPaneResize() {
     widths = next;
     showWidths();
   };
-  window.addEventListener("carrier:settings", followSettings);
-  window.addEventListener("carrier:pane-widths", followSettings);
+  window.addEventListener("chatpane:settings", followSettings);
+  window.addEventListener("chatpane:pane-widths", followSettings);
 
   const chatRow = () => document.querySelector<HTMLElement>(`[${CHAT_ROW_ATTR}]`);
   const chatBox = () =>

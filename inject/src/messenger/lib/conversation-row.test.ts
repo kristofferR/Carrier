@@ -165,12 +165,12 @@ describe("conversationNodeText", () => {
     expect(conversationNodeText(element("SPAN", { "aria-label": "Kim Andersen" }))).toBe("");
   });
 
-  test("ignores Carrier's injected system-emoji glyphs", () => {
+  test("ignores Chatpane's injected system-emoji glyphs", () => {
     expect(
       conversationNodeText(
         element("SPAN", {}, [
           emojiSprite("😢"),
-          element("SPAN", { "data-carrier-system-emoji-glyph": "" }, [textNode("😢")]),
+          element("SPAN", { "data-chatpane-system-emoji-glyph": "" }, [textNode("😢")]),
         ]),
       ),
     ).toBe("😢");
@@ -185,8 +185,8 @@ describe("hasCandidateTextChild", () => {
   });
 
   test("keeps a sprite leaf a candidate, glyph span and all", () => {
-    // What System emoji renders: "Kim: " + sprite + Carrier's own glyph span.
-    const glyph = element("SPAN", { "data-carrier-system-emoji-glyph": "" }, [
+    // What System emoji renders: "Kim: " + sprite + Chatpane's own glyph span.
+    const glyph = element("SPAN", { "data-chatpane-system-emoji-glyph": "" }, [
       textNode("\u{1F622}"),
     ]);
     expect(

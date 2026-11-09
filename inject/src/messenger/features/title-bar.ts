@@ -2,12 +2,12 @@
 // Messenger windows have no separate title bar (src-tauri/src/title_bar.rs).
 // The native side owns the strip's state and restates it as the window
 // enters or leaves full screen, zooms or maximizes; the first state arrives
-// before the page's first paint (window.__CARRIER_TITLE_BAR__).
+// before the page's first paint (window.__CHATPANE_TITLE_BAR__).
 //
 // - macOS: the native window buttons float over the top of the chat list,
 //   which keeps the strip free under them (messenger.css). The photo viewer is
 //   reported, as it gets a title bar of its own while it's open.
-// - Windows, and Linux windows the compositor doesn't tile: Carrier draws
+// - Windows, and Linux windows the compositor doesn't tile: Chatpane draws
 //   minimize, maximize and close at the top right, over a strip above the chat that drags the
 //   window: natively on Windows (WebView2 app-region), through the native side
 //   on Linux. The chat list starts at the top.
@@ -24,16 +24,16 @@ interface TitleBarState {
   maximized: boolean;
 }
 
-const INSET_VAR = "--carrier-title-bar-inset";
-const KIND_ATTR = "data-carrier-title-bar";
-const STRIP_ID = "carrier-title-strip";
-const CONTROLS_ID = "carrier-window-controls";
+const INSET_VAR = "--chatpane-title-bar-inset";
+const KIND_ATTR = "data-chatpane-title-bar";
+const STRIP_ID = "chatpane-title-strip";
+const CONTROLS_ID = "chatpane-window-controls";
 
 let state: TitleBarState | null = null;
 
-function control(action: Parameters<typeof carrierWindowControl>[0]) {
-  carrierWindowControl(action)?.catch?.(() =>
-    diag("title-bar.control", "carrier:window-control emit failed"),
+function control(action: Parameters<typeof chatpaneWindowControl>[0]) {
+  chatpaneWindowControl(action)?.catch?.(() =>
+    diag("title-bar.control", "chatpane:window-control emit failed"),
   );
 }
 
@@ -151,9 +151,9 @@ export function windowControlsInset(): number {
 }
 
 export function initTitleBar() {
-  const initial = window.__CARRIER_TITLE_BAR__;
+  const initial = window.__CHATPANE_TITLE_BAR__;
   if (!initial) return;
-  window.__carrierTitleBar = (next) => apply(next as TitleBarState);
+  window.__chatpaneTitleBar = (next) => apply(next as TitleBarState);
   // Before the first paint, so Messenger's first layout keeps the strip; the
   // controls follow once <body> is there.
   const root = document.documentElement;
@@ -181,10 +181,10 @@ let viewerReported: boolean | null = null;
 
 /** macOS: tell the native side whether Messenger's photo viewer is open. */
 export function reportMediaViewer(open: boolean) {
-  if (!/Mac/.test(navigator.platform) || !window.__CARRIER_TITLE_BAR__) return;
+  if (!/Mac/.test(navigator.platform) || !window.__CHATPANE_TITLE_BAR__) return;
   if (open === viewerReported) return;
   viewerReported = open;
-  carrierMediaViewer(open)?.catch?.(() =>
-    diag("title-bar.viewer", "carrier:media-viewer emit failed"),
+  chatpaneMediaViewer(open)?.catch?.(() =>
+    diag("title-bar.viewer", "chatpane:media-viewer emit failed"),
   );
 }

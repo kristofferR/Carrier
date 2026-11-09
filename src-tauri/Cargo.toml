@@ -10,7 +10,7 @@ rust-version = "1.95"
 
 [lib]
 # The Tauri app logic lives in a lib so it can be shared with mobile targets.
-name = "carrier_lib"
+name = "chatpane_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -39,7 +39,7 @@ tauri-plugin-log = "2"
 # The `log` macros behind tauri-plugin-log; failures that used to vanish into
 # `let _ =` / eprintln! go through these so release builds capture them.
 log = "0.4"
-# Global summon hotkey (Settings → Global Hotkey): show/hide Carrier from
+# Global summon hotkey (Settings → Global Hotkey): show/hide Chatpane from
 # anywhere. Registered purely from Rust, so it needs no capability entry.
 tauri-plugin-global-shortcut = "2"
 # New-message notifications are built natively (not via the notification plugin)
@@ -146,16 +146,16 @@ muda = "0.20"
 # monochrome tray tint (SystemUsesLightTheme, which the dark-light crate does
 # NOT read — it reads AppsUseLightTheme, and the two diverge under Win11 Custom).
 # Win32_UI_HiDpi: render at the notification area's DPI when its monitor differs
-# from the one containing Carrier's window.
+# from the one containing Chatpane's window.
 # Win32_Media_Audio: PlaySound for a notification sound file chosen in Settings
 # (an unpackaged app's toast can't play one) and for Preview.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
-# Register the carrier:// URL scheme in HKCU (per-user, no admin) so protocol
-# launches reach Carrier as argv and are parsed in one audited place by
+# Register the chatpane:// URL scheme in HKCU (per-user, no admin) so protocol
+# launches reach Chatpane as argv and are parsed in one audited place by
 # actions::action_from_argv. Registration only — the plugin's JS API capability
 # and single-instance's deep-link feature are intentionally left off.
 tauri-plugin-deep-link = "2"
-# WebView2 settings wry doesn't expose: draggable regions for Carrier's own
+# WebView2 settings wry doesn't expose: draggable regions for Chatpane's own
 # title bar (title_bar.rs). The version wry already uses, so no new build cost.
 webview2-com = "0.39"
 # Raw WinRT for the toast module (text input, toast tag/group, Action Center

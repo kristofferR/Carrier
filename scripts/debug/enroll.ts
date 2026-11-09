@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { chmod, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 // Run after the first verified debug installation. Never changes package-manager state.
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -10,10 +10,10 @@ if (!mac && process.platform !== "linux") throw new Error("Unsupported platform"
 const home = homedir();
 const root = join(
   home,
-  mac ? "Library/Application Support/CarrierDebug" : ".local/share/carrier-debug",
+  mac ? "Library/Application Support/ChatpaneDebug" : ".local/share/chatpane-debug",
 );
 const binary = mac
-  ? "/Applications/Carrier.app/Contents/MacOS/carrier"
+  ? "/Applications/Chatpane.app/Contents/MacOS/carrier"
   : join(home, ".local/bin/carrier");
 const config = mac
   ? join(home, "Library/Application Support")
@@ -27,7 +27,7 @@ async function loadSettings() {
   });
   const settings: unknown = JSON.parse(original);
   if (!settings || typeof settings !== "object" || Array.isArray(settings))
-    throw new Error("Invalid Carrier settings");
+    throw new Error("Invalid Chatpane settings");
   return { original, settings };
 }
 const installed = buildInfo(JSON.parse(await readFile(join(root, "installed.json"), "utf8")));
@@ -44,16 +44,16 @@ if (account.exitCode !== 0 || account.stdout.toString().trim().toLowerCase() !==
   );
 }
 
-if (
-  mac &&
-  Bun.spawnSync(["brew", "list", "--cask", "carrier"], { stderr: "ignore" }).exitCode === 0
-)
-  throw new Error("Remove the Homebrew Carrier cask before enrolling");
-if (!mac && Bun.spawnSync(["pacman", "-Q", "carrier"], { stderr: "ignore" }).exitCode === 0)
-  throw new Error("Remove the AUR carrier package before enrolling");
+// The cask and AUR package were called carrier before the rename to Chatpane.
+for (const name of ["carrier", "chatpane"]) {
+  if (mac && Bun.spawnSync(["brew", "list", "--cask", name], { stderr: "ignore" }).exitCode === 0)
+    throw new Error(`Remove the Homebrew ${name} cask before enrolling`);
+  if (!mac && Bun.spawnSync(["pacman", "-Q", name], { stderr: "ignore" }).exitCode === 0)
+    throw new Error(`Remove the AUR ${name} package before enrolling`);
+}
 if (process.argv.includes("--hold-failures")) {
   const active = Bun.spawnSync(["pgrep", "-u", String(userInfo().uid), "-x", "carrier"]);
-  if (active.exitCode !== 1) throw new Error("Quit Carrier before enrolling with --hold-failures");
+  if (active.exitCode !== 1) throw new Error("Quit Chatpane before enrolling with --hold-failures");
   const { original, settings } = await loadSettings();
   await mkdir(dirname(settingsFile), { recursive: true });
   await writeFile(join(root, "settings-before-enrollment.json"), original, {
@@ -70,7 +70,7 @@ if (process.argv.includes("--hold-failures")) {
   await rename(`${settingsFile}.debug-install.tmp`, settingsFile);
 }
 await mkdir(join(home, ".local/bin"), { recursive: true });
-const wrapper = join(home, ".local/bin/carrier-debug-update");
+const wrapper = join(home, ".local/bin/chatpane-debug-update");
 const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
 const path = [
   join(home, ".local/bin"),
@@ -96,13 +96,13 @@ if (mac) {
     s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
   const agents = join(home, "Library/LaunchAgents");
   await mkdir(agents, { recursive: true });
-  const plist = join(agents, "io.github.kristofferr.carrier.debug-update.plist");
+  const plist = join(agents, "io.github.kristofferr.chatpane.debug-update.plist");
   await writeFile(
     plist,
     `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>Label</key><string>io.github.kristofferr.carrier.debug-update</string>
+<key>Label</key><string>io.github.kristofferr.chatpane.debug-update</string>
 <key>ProgramArguments</key><array><string>${xml(wrapper)}</string><string>--automatic</string></array>
 <key>StartInterval</key><integer>300</integer><key>RunAtLoad</key><true/>
 <key>StandardOutPath</key><string>${xml(join(root, "updater.log"))}</string>
@@ -111,7 +111,7 @@ if (mac) {
   );
   await run(["plutil", "-lint", plist]);
   await run(
-    ["launchctl", "bootout", `gui/${userInfo().uid}/io.github.kristofferr.carrier.debug-update`],
+    ["launchctl", "bootout", `gui/${userInfo().uid}/io.github.kristofferr.chatpane.debug-update`],
     [0, 3, 113],
   );
   await run(["launchctl", "bootstrap", `gui/${userInfo().uid}`, plist]);
@@ -127,17 +127,20 @@ if (mac) {
   );
   const desktopQuote = (s: string) =>
     `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("`", "\\`").replaceAll("$", "\\$")}"`;
+  // Named after the app, which tells notification servers which entry it is.
+  await rm(join(applications, "carrier.desktop"), { force: true });
   await writeFile(
-    join(applications, "carrier.desktop"),
-    `[Desktop Entry]\nCategories=Network;InstantMessaging;\nComment=Distraction-free Messenger desktop client\nExec=${desktopQuote(binary)}\nStartupWMClass=carrier\nIcon=io.github.kristofferr.carrier\nName=Carrier\nTerminal=false\nType=Application\nActions=new-conversation;settings;\n\n[Desktop Action new-conversation]\nName=New Conversation\nExec=${desktopQuote(binary)} --new-conversation\n\n[Desktop Action settings]\nName=Settings\nExec=${desktopQuote(binary)} --settings\n`,
+    join(applications, "Chatpane.desktop"),
+    `[Desktop Entry]\nCategories=Network;InstantMessaging;\nComment=Distraction-free Messenger desktop client\nExec=${desktopQuote(binary)}\nStartupWMClass=carrier\nIcon=io.github.kristofferr.carrier\nName=Chatpane\nTerminal=false\nType=Application\nActions=new-conversation;settings;\n\n[Desktop Action new-conversation]\nName=New Conversation\nExec=${desktopQuote(binary)} --new-conversation\n\n[Desktop Action settings]\nName=Settings\nExec=${desktopQuote(binary)} --settings\n`,
   );
   const { settings } = await loadSettings();
   if ("autostart" in settings && settings.autostart === true) {
     const autostart = join(config, "autostart");
     await mkdir(autostart, { recursive: true });
+    await rm(join(autostart, "Carrier.desktop"), { force: true });
     await writeFile(
-      join(autostart, "Carrier.desktop"),
-      `[Desktop Entry]\nType=Application\nVersion=1.0\nName=Carrier\nComment=Carrier startup script\nExec=${desktopQuote(binary)}\nStartupNotify=false\nTerminal=false\n`,
+      join(autostart, "Chatpane.desktop"),
+      `[Desktop Entry]\nType=Application\nVersion=1.0\nName=Chatpane\nComment=Start Chatpane at login\nExec=${desktopQuote(binary)}\nStartupNotify=false\nTerminal=false\n`,
     );
   }
   const units = join(home, ".config/systemd/user");
@@ -145,15 +148,15 @@ if (mac) {
   const systemdQuote = (s: string) =>
     `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
   await writeFile(
-    join(units, "carrier-debug-update.service"),
-    `[Unit]\nDescription=Stage verified Carrier debug builds and install while quit\n[Service]\nType=oneshot\nExecStart=${systemdQuote(wrapper)} --automatic\nTimeoutStartSec=15min\n`,
+    join(units, "chatpane-debug-update.service"),
+    `[Unit]\nDescription=Stage verified Chatpane debug builds and install while quit\n[Service]\nType=oneshot\nExecStart=${systemdQuote(wrapper)} --automatic\nTimeoutStartSec=15min\n`,
   );
   await writeFile(
-    join(units, "carrier-debug-update.timer"),
-    "[Unit]\nDescription=Keep Carrier on debug builds from main\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=5min\n[Install]\nWantedBy=timers.target\n",
+    join(units, "chatpane-debug-update.timer"),
+    "[Unit]\nDescription=Keep Chatpane on debug builds from main\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=5min\n[Install]\nWantedBy=timers.target\n",
   );
   await run(["systemctl", "--user", "daemon-reload"]);
-  await run(["systemctl", "--user", "enable", "--now", "carrier-debug-update.timer"]);
+  await run(["systemctl", "--user", "enable", "--now", "chatpane-debug-update.timer"]);
 }
 console.log(
   "Enrolled: hourly checks for debug drafts; install every five minutes while quit. No automatic restart.",

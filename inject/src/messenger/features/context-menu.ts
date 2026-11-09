@@ -100,7 +100,7 @@ const nativeGetFileReaderResult = Object.getOwnPropertyDescriptor(
 const NativeUint8Array = Uint8Array;
 const nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
 const nativeShowContextMenu =
-  typeof carrierShowContextMenu === "function" ? carrierShowContextMenu : undefined;
+  typeof chatpaneShowContextMenu === "function" ? chatpaneShowContextMenu : undefined;
 
 const appendOwn = <T>(items: T[], item: T) => {
   nativeReflectApply(nativeObjectDefineProperty, undefined, [
@@ -142,7 +142,7 @@ const clientPointOf = (event: MouseEvent) => ({
 });
 
 // The macOS share sheet (NSSharingServicePicker) is native-only; other
-// platforms have no equivalent Carrier can reach, so the item stays hidden.
+// platforms have no equivalent Chatpane can reach, so the item stays hidden.
 const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
 const isLinux = !isMac && /linux/i.test(navigator.platform);
 
@@ -180,8 +180,8 @@ async function runNativeAction(event: Event) {
   const detail = (event as CustomEvent<unknown>).detail;
   if (!detail || typeof detail !== "object") return;
   const { action, signature } = detail as { action?: unknown; signature?: unknown };
-  if (typeof action !== "string" || !carrierVerifyResult) return;
-  if (!(await carrierVerifyResult("carrier:context-action", { action }, signature))) return;
+  if (typeof action !== "string" || !chatpaneVerifyResult) return;
+  if (!(await chatpaneVerifyResult("chatpane:context-action", { action }, signature))) return;
 
   const handlers = nativeActionHandlers;
   for (let index = 0; index < handlers.length; index += 1) {
@@ -234,9 +234,9 @@ function showNativeContextMenu(
 // Save the media through the trusted download flow (the sheet needs a real
 // file), then ask the native side to share it, anchored at the click point.
 async function shareSrc(src: string, fallbackName: string, fx: number, fy: number, action: string) {
-  await carrierClaimContextAction(action);
+  await chatpaneClaimContextAction(action);
   const { id } = await downloadSrc(src, fallbackName, action);
-  await carrierShareDownload(id, fx, fy, action);
+  await chatpaneShareDownload(id, fx, fy, action);
 }
 
 // True when the response advertises a Content-Length over the cap. Absent or
@@ -281,15 +281,15 @@ export async function downloadSrc(
   const a = document.createElement("a");
   a.href = href;
   a.download = name;
-  a.setAttribute("data-carrier-native-download", "");
+  a.setAttribute("data-chatpane-native-download", "");
   a.style.display = "none";
   document.body.appendChild(a);
   try {
-    if (action) await carrierPrepareDownload(action, href);
-    if (window.__CARRIER_SETTINGS__?.download_behavior === "ask") {
-      await carrierChooseDownload(href, name);
+    if (action) await chatpanePrepareDownload(action, href);
+    if (window.__CHATPANE_SETTINGS__?.download_behavior === "ask") {
+      await chatpaneChooseDownload(href, name);
     }
-    const completion = waitForNativeDownload(window, href, carrierVerifyResult);
+    const completion = waitForNativeDownload(window, href, chatpaneVerifyResult);
     a.click();
     return await completion;
   } finally {
@@ -299,7 +299,7 @@ export async function downloadSrc(
 }
 
 async function copyImageSrc(src: string, action?: string) {
-  if (action) await carrierClaimContextAction(action);
+  if (action) await chatpaneClaimContextAction(action);
   const res = await fetch(src);
   if (!res.ok) throw new Error(`fetch failed (${res.status})`);
   const maxSize = action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
@@ -334,7 +334,7 @@ async function copyImageSrc(src: string, action?: string) {
     ]);
     nativeReflectApply(nativeReadAsDataURL, reader, [blob]);
   });
-  await carrierCopyImage(dataUrl, action);
+  await chatpaneCopyImage(dataUrl, action);
 }
 
 let ctxMenu: HTMLDivElement | null = null;
@@ -375,7 +375,7 @@ export function initContextMenu() {
   )
     return;
   nativeReflectApply(nativeAddEventListener, window, [
-    "carrier:context-action",
+    "chatpane:context-action",
     runNativeAction,
     true,
   ]);
@@ -388,9 +388,9 @@ export function initContextMenu() {
     }
     menuRequest += 1;
   };
-  // Open Carrier's menu for a genuine right-click, or for the context-menu
+  // Open Chatpane's menu for a genuine right-click, or for the context-menu
   // key on a focused message. `prevent` cancels the triggering event once the
-  // menu is Carrier's.
+  // menu is Chatpane's.
   const openContextMenu = async (
     t: Element,
     contextPoint: { x: number; y: number },
@@ -576,7 +576,7 @@ export function initContextMenu() {
     }
 
     // Copying an image through the page clipboard must remain inside the
-    // trusted right-click activation. macOS uses Carrier's native pasteboard;
+    // trusted right-click activation. macOS uses Chatpane's native pasteboard;
     // other platforms keep image menus in-page until they have an equivalent.
     const nativeImageCopyIsSafe = isMac || !imgSrc;
     // A GTK menu popped up without a pointer event gets no keyboard focus on
@@ -593,7 +593,7 @@ export function initContextMenu() {
         // GTK on Wayland cannot place a menu at the pointer once the click
         // event is gone, so Linux always names the point. Native zoom
         // scales CSS pixels to window coordinates.
-        const zoom = (Number(window.__CARRIER_SETTINGS__?.zoom) || 100) / 100;
+        const zoom = (Number(window.__CHATPANE_SETTINGS__?.zoom) || 100) / 100;
         const point = keyboardPoint ?? (isLinux ? [contextPoint.x, contextPoint.y] : null);
         await showNativeContextMenu(
           items,
@@ -910,7 +910,7 @@ export function initContextMenu() {
   nativeReflectApply(nativeAddEventListener, document, [
     "contextmenu",
     (e: MouseEvent) => {
-      // Remote page code must not be able to create Carrier's native-action menu.
+      // Remote page code must not be able to create Chatpane's native-action menu.
       if (!e.isTrusted) return;
       const target = eventTargetOf(e) as Element;
       const duplicate = keyboardMenu?.target === target && Date.now() - keyboardMenu.at < 1000;

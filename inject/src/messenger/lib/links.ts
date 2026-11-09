@@ -80,7 +80,7 @@ function stripRawFacebookParams(href: string): { href: string; removed: boolean 
 
 /**
  * Remove Facebook's cross-site tracking from a URL copied or opened by
- * Carrier. Unwrap Facebook's link-shim redirect, then remove only known
+ * Chatpane. Unwrap Facebook's link-shim redirect, then remove only known
  * Facebook attribution parameters from the real destination.
  */
 export function stripFacebookTracking(href: string, base: string): string {
@@ -116,7 +116,7 @@ export function stripFacebookTracking(href: string, base: string): string {
 
 // facebook.com paths that belong to the Messenger app or its login/auth flows.
 // Any other facebook.com content (posts, profiles, groups, reels, …) opens in
-// the real browser — Carrier only wraps Messenger, and the stripped-chrome CSS
+// the real browser — Chatpane only wraps Messenger, and the stripped-chrome CSS
 // renders the rest of Facebook broken.
 const FACEBOOK_APP_PATH_RE =
   /^\/(messages|messenger_media|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;

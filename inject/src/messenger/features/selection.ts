@@ -8,7 +8,7 @@
 import { isMessengerContentPath } from "../lib/threads";
 
 /** On <html> while a chats page shows. Other page CSS keys on it too. */
-export const CHATS_ATTR = "data-carrier-chats";
+export const CHATS_ATTR = "data-chatpane-chats";
 
 export function initSelection() {
   const html = document.documentElement;
@@ -30,7 +30,7 @@ export function initSelection() {
 
   const pageSelectAll = (target: EventTarget | null) =>
     html.hasAttribute(CHATS_ATTR) &&
-    !html.hasAttribute("data-carrier-login") &&
+    !html.hasAttribute("data-chatpane-login") &&
     (target === document.body || target === html);
 
   // Select All outside an editable root, from the keyboard or the native Edit

@@ -4,7 +4,7 @@
 //! WebKit treats a covered or ordered-out window as hidden and drops its web
 //! process to background priority (`pri` 4), where opening a conversation for
 //! a 👍, Mute, or inline reply takes 10+ seconds and effectively waits for the
-//! user to open the window. For the duration of one action, Carrier makes
+//! user to open the window. For the duration of one action, Chatpane makes
 //! WebKit count the main window as visible:
 //!
 //! - a covered window only needs WKWebView's occlusion detection switched off;
@@ -24,7 +24,7 @@ use tauri::Manager;
 #[derive(Clone, Copy)]
 struct Engaged {
     occlusion_detection_was_enabled: bool,
-    /// Set while Carrier holds an ordered-out window in, transparent.
+    /// Set while Chatpane holds an ordered-out window in, transparent.
     ordered_in: Option<Transparency>,
 }
 

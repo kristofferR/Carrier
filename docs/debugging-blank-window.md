@@ -45,7 +45,7 @@ observer callback; the open message log contained 14 articles. This supports
 treating a brief visual reappearance as insufficient evidence of recovery, while
 still leaving the underlying cause unproven.
 
-## What Carrier records
+## What Chatpane records
 
 - Heartbeats sample one animation frame at most every heartbeat. There is no
   continuous animation loop. A 15-second wait across successive visible samples
@@ -93,7 +93,7 @@ is a recovery policy for the observed failure, not a confirmed root-cause fix.
 
 ## Preserve the next occurrence
 
-Before restarting or changing rendering settings, collect `Carrier.log`, process
+Before restarting or changing rendering settings, collect `Chatpane.log` (`Carrier.log` before the rename), process
 lifetimes, kernel crash/OOM/GPU messages and the native/frame diagnostics above.
 For debug launches with redirected output, also collect `debug-stdout.log` and
 `debug-stderr.log` from the app's log directory. The Settings log-folder action

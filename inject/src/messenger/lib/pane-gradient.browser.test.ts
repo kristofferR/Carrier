@@ -12,7 +12,7 @@ const chromium =
 test.skipIf(!chromium)(
   "late bubble classes and pane drag termination work in a real DOM",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-pane-gradient-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-pane-gradient-"));
     const bundle = await build({
       stdin: {
         contents: `
@@ -90,14 +90,14 @@ async function runFixtures(gradient: () => void, panes: () => void) {
     Object.assign(window, {
       __TAURI_INTERNALS__: {
         invoke: async (_command: string, args: { event: string }) => {
-          if (args.event === "carrier:pane-widths") saves++;
+          if (args.event === "chatpane:pane-widths") saves++;
         },
       },
     });
     gradient();
     panes();
     await settle();
-    const css = document.getElementById("carrier-chat-gradient")!;
+    const css = document.getElementById("chatpane-chat-gradient")!;
     assert("initial bubble class", css.textContent!.includes(".early"));
     sheet.sheet!.insertRule(
       ".late { background-color:var(--chat-outgoing-message-bubble-background-color) }",
@@ -105,7 +105,7 @@ async function runFixtures(gradient: () => void, panes: () => void) {
     await settle();
     assert("late bubble class", css.textContent!.includes(".late"));
 
-    const edge = host.querySelector<HTMLElement>('.carrier-pane-edge[data-pane="list"]')!;
+    const edge = host.querySelector<HTMLElement>('.chatpane-pane-edge[data-pane="list"]')!;
     edge.setPointerCapture = () => {
       throw new DOMException("capture unavailable", "NotFoundError");
     };
@@ -120,7 +120,7 @@ async function runFixtures(gradient: () => void, panes: () => void) {
       target.dispatchEvent(new PointerEvent(terminal, { pointerId, bubbles: true }));
       assert(
         "drag marker cleared",
-        !document.documentElement.hasAttribute("data-carrier-resizing"),
+        !document.documentElement.hasAttribute("data-chatpane-resizing"),
       );
       assert("edge marker cleared", !edge.classList.contains("dragging"));
       // Messenger's own inline width comes back once the drag's sizing goes.

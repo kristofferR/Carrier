@@ -5,10 +5,10 @@
 export function initForceTheme() {
   const html = document.documentElement;
   // Track the class we forced so switching back to "system" can undo it live
-  // (settings re-apply on the same page without a reload — see carrier:settings).
+  // (settings re-apply on the same page without a reload — see chatpane:settings).
   let forcedClass: string | null = null;
   const apply = () => {
-    const forced = window.__CARRIER_SETTINGS__?.theme;
+    const forced = window.__CHATPANE_SETTINGS__?.theme;
     if (forced !== "light" && forced !== "dark") {
       // "system": drop any class we previously forced, then leave FB alone.
       if (forcedClass) {
@@ -26,7 +26,7 @@ export function initForceTheme() {
     forcedClass = want;
   };
   apply();
-  window.addEventListener("carrier:settings", apply);
+  window.addEventListener("chatpane:settings", apply);
   // Re-assert if Facebook flips its own class back.
   new MutationObserver(apply).observe(html, { attributes: true, attributeFilter: ["class"] });
 }
@@ -34,10 +34,10 @@ export function initForceTheme() {
 /* --------------------------- Theme markers ----------------------------- */
 // Mark <html> while Messenger renders dark, so theme files (Settings → Theme)
 // can key their dark colors on it. Messenger follows the webview's color
-// scheme, which Carrier sets from the light/dark choice, so the media query is
+// scheme, which Chatpane sets from the light/dark choice, so the media query is
 // the source of truth. The second name keeps themes written for other
 // Messenger apps working unchanged.
-const DARK_MARKERS = ["data-carrier-dark", "data-fmess-dark"];
+const DARK_MARKERS = ["data-chatpane-dark", "data-fmess-dark"];
 
 export function initThemeMarkers() {
   const html = document.documentElement;

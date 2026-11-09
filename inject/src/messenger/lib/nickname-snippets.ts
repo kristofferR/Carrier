@@ -6,7 +6,7 @@ import {
   readConversationNotificationNames,
 } from "./notification-names";
 
-/** Undo only the sender prefix that Carrier rendered, before notification truncation. */
+/** Undo only the sender prefix that Chatpane rendered, before notification truncation. */
 export class NativeSnippetPrefixes {
   private readonly entries = new Map<string, { original: string; displayed: string }>();
   private readonly drafts = new Map<string, Map<object, string>>();
@@ -106,7 +106,7 @@ export function patchNicknameSnippets(
     react;
   const { to_string: threadKey } = i64;
   const { maybeUnvault } = vault;
-  const component = function CarrierNicknameSnippet(props: unknown) {
+  const component = function ChatpaneNicknameSnippet(props: unknown) {
     const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
     const [names, setNames] = useState<Names | null>(null);
     const owner = useRef({}).current;

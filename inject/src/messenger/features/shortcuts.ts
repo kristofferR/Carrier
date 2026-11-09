@@ -35,7 +35,7 @@ const shortcuts: Record<string, () => unknown> = {
   e: () => openEmojiPicker(),
   g: () => openGifPicker(),
   t: () => attachFiles(),
-  "/": () => window.__carrierToggleShortcuts?.(),
+  "/": () => window.__chatpaneToggleShortcuts?.(),
 };
 
 export function initShortcuts() {
@@ -67,16 +67,16 @@ export function initFunctionKeys() {
     (e) => {
       if (e.key === "F1") {
         e.preventDefault();
-        window.__carrierToggleShortcuts?.();
+        window.__chatpaneToggleShortcuts?.();
       } else if (e.key === "F5") {
         e.preventDefault();
         location.reload();
       } else if (e.key === "F3") {
         e.preventDefault();
-        window.__carrierToggleSettings?.();
+        window.__chatpaneToggleSettings?.();
       } else if (e.key === "F2") {
         e.preventDefault();
-        window.__carrierCheckUpdates?.();
+        window.__chatpaneCheckUpdates?.();
       } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
         // Cmd/Ctrl+1–9: jump to the Nth conversation in the list.
         const target = chatRows()[Number(e.key) - 1];
@@ -105,7 +105,7 @@ export function initShortcutRegistry() {
     newConversation,
   };
   // A native action is an explicit request that a pending restore must not undo.
-  window.__carrierShortcuts = Object.fromEntries(
+  window.__chatpaneShortcuts = Object.fromEntries(
     Object.entries(actions).map(([name, action]) => [
       name,
       () => {

@@ -27,13 +27,13 @@ test("only complete unpublished debug drafts can supply updates", () => {
   const draft = {
     draft: true,
     tag_name: "debug-v1.15.0-aaaaaaaaaaaa",
-    body: `Carrier debug ready\nCommit: ${"a".repeat(40)}`,
+    body: `Chatpane debug ready\nCommit: ${"a".repeat(40)}`,
   };
   expect(debugDraft(draft)?.revision).toBe("a".repeat(40));
   expect(debugDraft({ ...draft, draft: false })).toBeNull();
   expect(debugDraft({ ...draft, tag_name: "v1.15.0" })).toBeNull();
   expect(debugDraft({ ...draft, body: "Still uploading" })).toBeNull();
   expect(
-    debugDraft({ ...draft, body: `Carrier debug ready\nCommit: ${"b".repeat(40)}` }),
+    debugDraft({ ...draft, body: `Chatpane debug ready\nCommit: ${"b".repeat(40)}` }),
   ).toBeNull();
 });

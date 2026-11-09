@@ -296,7 +296,7 @@ export class NotifiedSignatureStore {
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
-    private readonly storageKey = "__carrier_notified_previews__",
+    private readonly storageKey = "__chatpane_notified_previews__",
   ) {
     try {
       const raw = this.storage?.getItem(this.storageKey);
@@ -736,7 +736,7 @@ interface PendingPageNotificationReceipt {
 
 /**
  * Content-opaque page signals that have not reached native delivery yet. They
- * survive Carrier's stale-view reload so the hydrated row can recover the
+ * survive Chatpane's stale-view reload so the hydrated row can recover the
  * arrival, route it, and still apply its live mute state.
  */
 export class PendingPageNotificationStore {
@@ -744,7 +744,7 @@ export class PendingPageNotificationStore {
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
-    private readonly storageKey = "__carrier_pending_page_notifications__",
+    private readonly storageKey = "__chatpane_pending_page_notifications__",
     private readonly ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS,
     now = Date.now(),
   ) {
@@ -908,7 +908,7 @@ export class PageNotificationReceiptStore {
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
-    private readonly storageKey = "__carrier_page_notification_receipts__",
+    private readonly storageKey = "__chatpane_page_notification_receipts__",
     private readonly ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS,
     now = Date.now(),
   ) {

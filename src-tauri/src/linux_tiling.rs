@@ -1,7 +1,7 @@
-//! Linux: whether the compositor handles a window's controls, so Carrier draws
+//! Linux: whether the compositor handles a window's controls, so Chatpane draws
 //! its own (crate::title_bar) only where nothing else does.
 //!
-//! Floating desktops leave every window to Carrier. Under a tiling window
+//! Floating desktops leave every window to Chatpane. Under a tiling window
 //! manager the compositor handles a window until it says the window floats:
 //! - Hyprland tells every window it is tiled, floating or not, so its event
 //!   socket says which ones float. A floating window can still get the
@@ -47,7 +47,7 @@ fn windows() -> &'static Mutex<HashMap<String, Chrome>> {
 static REPORTS_TILING: AtomicBool = AtomicBool::new(false);
 
 /// Whether the compositor handles the window's controls (it tiles the window,
-/// or draws a title bar on it): Carrier's controls and strip go.
+/// or draws a title bar on it): Chatpane's controls and strip go.
 pub(crate) fn compositor_handles(label: &str) -> bool {
     if !crate::linux::is_tiling_wm() {
         return false;
@@ -62,7 +62,7 @@ pub(crate) fn compositor_handles(label: &str) -> bool {
         .is_none_or(|chrome| chrome.handled)
 }
 
-/// Which of minimize and maximize Carrier's controls offer under a tiling
+/// Which of minimize and maximize Chatpane's controls offer under a tiling
 /// window manager. None of them minimize; Hyprland maximizes on request
 /// ([`toggle_maximized`]), the others ignore it.
 pub(crate) fn buttons() -> (bool, bool) {
@@ -286,7 +286,7 @@ struct HyprClient {
     tags: Vec<String>,
 }
 
-/// Ask Hyprland which of Carrier's windows float without a title bar of its
+/// Ask Hyprland which of Chatpane's windows float without a title bar of its
 /// own. Its windows are matched by process and title; same-titled windows that
 /// disagree keep their last state.
 fn refresh(app: &AppHandle, dir: &Path) {
@@ -442,7 +442,7 @@ mod tests {
         let client = |address: &str| HyprClient {
             address: address.into(),
             pid: 1,
-            title: "Carrier".into(),
+            title: "Chatpane".into(),
             floating: false,
             fullscreen: serde_json::Value::Null,
             tags: Vec::new(),
@@ -450,7 +450,7 @@ mod tests {
         let (one, two) = (client("0x1"), client("0x2"));
         let ours = [&one, &two];
         let found = |label, addresses: &HashMap<String, String>| {
-            candidates(&ours, "Carrier", label, addresses)
+            candidates(&ours, "Chatpane", label, addresses)
                 .iter()
                 .map(|client| client.address.as_str())
                 .collect::<Vec<_>>()
@@ -467,7 +467,7 @@ mod tests {
         let client = HyprClient {
             address: "0x1".into(),
             pid: 1,
-            title: "Carrier".into(),
+            title: "Chatpane".into(),
             floating: true,
             fullscreen: serde_json::Value::Null,
             tags: vec!["omarchy-floating-workspace".into(), "opened*".into()],

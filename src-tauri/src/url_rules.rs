@@ -58,7 +58,7 @@ pub(crate) fn route(url: &Url) -> Route {
 
 /// Where a page's `window.open` goes. Messenger starts a call by opening a
 /// blank window and loading the call page into it once it has one. A remote
-/// page may open a blank or web window in the app, never one of Carrier's own
+/// page may open a blank or web window in the app, never one of Chatpane's own
 /// pages.
 /// Messenger's call page, which its call windows navigate to after opening blank.
 pub(crate) fn is_call_url(url: &Url) -> bool {

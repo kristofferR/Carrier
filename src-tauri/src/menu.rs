@@ -32,7 +32,7 @@ use crate::window::show_settings_window;
 
 fn about_metadata(version: &str) -> AboutMetadata<'static> {
     AboutMetadata {
-        name: Some("Carrier".into()),
+        name: Some("Chatpane".into()),
         version: Some(version.into()),
         authors: Some(vec!["kristofferR".into()]),
         comments: Some("A tiny, distraction-free desktop client for Facebook Messenger.".into()),
@@ -382,7 +382,7 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .separator()
         .item(&clear_cache)
         .separator()
-        .about_with_text("About Carrier", Some(about))
+        .about_with_text("About Chatpane", Some(about))
         .build()?;
 
     Menu::with_items(app, &[&file, &edit, &view, &help])
@@ -438,7 +438,7 @@ pub(crate) fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
 }
 
 /// The window a native dialog attaches to, if it is on screen. Tray actions
-/// run while Carrier is hidden, and a hidden window has no Wayland surface:
+/// run while Chatpane is hidden, and a hidden window has no Wayland surface:
 /// tao aborts building its handle. Without a parent the dialog opens on its own.
 pub(crate) fn dialog_parent(app: &tauri::AppHandle) -> Option<WebviewWindow> {
     target_window(app).filter(|window| window.is_visible().unwrap_or(false))
@@ -554,7 +554,7 @@ fn confirm_clear_cache(app: &tauri::AppHandle) {
     let app_handle = app.clone();
     let mut dialog = app
         .dialog()
-        .message("This clears Carrier's Messenger browsing data, signs you out, and restarts the app. Continue?")
+        .message("This clears Chatpane's Messenger browsing data, signs you out, and restarts the app. Continue?")
         .title("Clear Cache and Restart")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
@@ -591,7 +591,7 @@ fn request_new_window(app: &tauri::AppHandle) {
         let mut dialog = app
             .dialog()
             .message(
-                "To keep every window in sync, Carrier reloads Messenger in your open window. \
+                "To keep every window in sync, Chatpane reloads Messenger in your open window. \
                  A call or an unsent message there will be interrupted.",
             )
             .title("Open a New Window?")
@@ -628,7 +628,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
                 }
             };
             if let Some(window) = app.get_webview_window(label) {
-                let _ = window.eval(format!("window.__carrierToast?.('{toast}')"));
+                let _ = window.eval(format!("window.__chatpaneToast?.('{toast}')"));
             }
             return;
         }
@@ -650,7 +650,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
             let detail = serde_json::json!({ "action": action, "signature": signature });
             if let Ok(detail) = serde_json::to_string(&detail) {
                 let _ = window.eval(format!(
-                    "window.dispatchEvent(new CustomEvent('carrier:context-action', {{ detail: {detail} }}));"
+                    "window.dispatchEvent(new CustomEvent('chatpane:context-action', {{ detail: {detail} }}));"
                 ));
             }
         }
@@ -677,9 +677,9 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
             tauri::async_runtime::spawn(async move { show_settings_window(&app) });
         }
         "reload" => eval("location.reload()"),
-        "zoom_in" => eval("window.__carrierZoomIn && window.__carrierZoomIn()"),
-        "zoom_out" => eval("window.__carrierZoomOut && window.__carrierZoomOut()"),
-        "zoom_reset" => eval("window.__carrierZoomReset && window.__carrierZoomReset()"),
+        "zoom_in" => eval("window.__chatpaneZoomIn && window.__chatpaneZoomIn()"),
+        "zoom_out" => eval("window.__chatpaneZoomOut && window.__chatpaneZoomOut()"),
+        "zoom_reset" => eval("window.__chatpaneZoomReset && window.__chatpaneZoomReset()"),
         #[cfg(not(target_os = "linux"))]
         "paste_match_style" => paste_plain_text(app),
         "theme_system" => mutate_settings(app, |s| s.theme = "system".into()),
@@ -691,9 +691,9 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         "dock:new_conversation" => {
             run_app_action(app, AppAction::NewConversation);
         }
-        "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
+        "toggle_info" => eval("window.__chatpaneToggleInfo && window.__chatpaneToggleInfo()"),
         "keyboard_shortcuts" => {
-            eval("window.__carrierToggleShortcuts && window.__carrierToggleShortcuts()")
+            eval("window.__chatpaneToggleShortcuts && window.__chatpaneToggleShortcuts()")
         }
         "report_issue" => {
             if let Err(error) = app.opener().open_url(
@@ -800,7 +800,7 @@ const CHAT_ROW_CONTEXT_MENU_LABELS: &[&str] = &[
     "Report",
     "Leave group",
 ];
-/// Carrier's own conversation rows, after Messenger's: export the chat. The
+/// Chatpane's own conversation rows, after Messenger's: export the chat. The
 /// native menu shows them as an "Export chat" submenu of formats.
 const CHAT_EXPORT_CONTEXT_MENU_LABELS: &[&str] = &["Export chat as HTML…", "Export chat as JSON…"];
 const CHAT_EXPORT_SUBMENU_LABEL: &str = "Export chat";
@@ -949,11 +949,11 @@ pub(crate) fn show_native_context_menu(
     on_presented: impl FnOnce(),
 ) -> bool {
     if !valid_context_menu_items(&items) {
-        log::warn!("carrier:context-menu payload was invalid");
+        log::warn!("chatpane:context-menu payload was invalid");
         return false;
     }
     let Some(window) = app.get_webview_window(label) else {
-        log::warn!("carrier:context-menu target window {label:?} is gone");
+        log::warn!("chatpane:context-menu target window {label:?} is gone");
         return false;
     };
     let menu = match Menu::new(app) {
@@ -1045,7 +1045,7 @@ fn append_context_menu_items(
     label: &str,
     items: &[NativeContextMenuItem],
 ) -> tauri::Result<()> {
-    let id = |item: &NativeContextMenuItem| format!("carrier-context:{label}:{}", item.action);
+    let id = |item: &NativeContextMenuItem| format!("chatpane-context:{label}:{}", item.action);
     // Media rows, the React submenu, message actions, conversation actions,
     // and conversation export each form a group.
     let group = |item: &NativeContextMenuItem| {
@@ -1097,7 +1097,7 @@ fn append_context_menu_items(
 }
 
 fn context_menu_action(id: &str) -> Option<(&str, &str)> {
-    let (label, action) = id.strip_prefix("carrier-context:")?.rsplit_once(':')?;
+    let (label, action) = id.strip_prefix("chatpane-context:")?.rsplit_once(':')?;
     if label.is_empty()
         || action.len() != 32
         || !action.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1112,7 +1112,7 @@ fn context_menu_action(id: &str) -> Option<(&str, &str)> {
 // ---------------------------------------------------------------------------
 
 /// One entry of the recent-conversations list the page reads from Messenger's
-/// database (or the chat list) and pushes over `carrier:recent-threads`.
+/// database (or the chat list) and pushes over `chatpane:recent-threads`.
 /// Held in memory only; conversation names/ids are never written to disk.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct RecentThread {
@@ -1120,7 +1120,7 @@ pub(crate) struct RecentThread {
     pub(crate) href: String,
 }
 
-/// The `carrier:recent-threads` payload crosses from the remote Facebook page,
+/// The `chatpane:recent-threads` payload crosses from the remote Facebook page,
 /// so validate it hard: names are trimmed and truncated, hrefs must be a bare
 /// `/t/<digits>/` thread path (they're re-embedded into an eval'd navigation),
 /// duplicates are dropped, and the list is capped.
@@ -1203,7 +1203,7 @@ pub(crate) fn open_recent_thread(app: &tauri::AppHandle, href: &str) {
         // eval always receives a well-formed JS string literal.
         if let Ok(arg) = serde_json::to_string(&href) {
             let _ = w.eval(format!(
-                "window.__carrierOpenThread && window.__carrierOpenThread({arg});"
+                "window.__chatpaneOpenThread && window.__chatpaneOpenThread({arg});"
             ));
         }
     }
@@ -1314,7 +1314,7 @@ mod tests {
     fn about_dialog_has_visible_product_metadata() {
         let metadata = about_metadata("1.12.0");
 
-        assert_eq!(metadata.name.as_deref(), Some("Carrier"));
+        assert_eq!(metadata.name.as_deref(), Some("Chatpane"));
         assert_eq!(metadata.version.as_deref(), Some("1.12.0"));
         assert_eq!(metadata.authors, Some(vec!["kristofferR".into()]));
         assert_eq!(metadata.license.as_deref(), Some("MIT"));
@@ -1674,10 +1674,10 @@ mod tests {
     fn native_context_action_ids_bind_the_window_and_opaque_action() {
         let token = "0123456789abcdef0123456789abcdef";
         assert_eq!(
-            context_menu_action(&format!("carrier-context:win-2:{token}")),
+            context_menu_action(&format!("chatpane-context:win-2:{token}")),
             Some(("win-2", token))
         );
-        assert_eq!(context_menu_action("carrier-context:win-2:share"), None);
+        assert_eq!(context_menu_action("chatpane-context:win-2:share"), None);
         assert_eq!(context_menu_action(&format!("other:win-2:{token}")), None);
     }
 }

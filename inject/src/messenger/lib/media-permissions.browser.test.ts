@@ -13,7 +13,7 @@ const chromium =
 test.skipIf(!chromium)(
   "capture recovery lifecycle in a real DOM",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-permissions-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-permissions-test-"));
     try {
       const entry = fileURLToPath(new URL("../features/media-permissions.ts", import.meta.url));
       const bundle = await build({
@@ -72,17 +72,17 @@ async function runFixtures(init: () => void) {
     roots.set(this, root);
     return root;
   };
-  const banner = () => document.getElementById("carrier-media-permission-banner");
+  const banner = () => document.getElementById("chatpane-media-permission-banner");
   const root = () => roots.get(banner()!)!;
   let nativeCalls = 0;
   Object.assign(window, {
-    carrierOpenMediaPrivacy: async () => {
+    chatpaneOpenMediaPrivacy: async () => {
       nativeCalls++;
     },
   });
   try {
     for (const platform of ["macos", "windows", "linux"]) {
-      Object.assign(window, { carrierMediaPlatform: platform });
+      Object.assign(window, { chatpaneMediaPlatform: platform });
       let error: DOMException | undefined;
       const track = new EventTarget();
       Object.assign(track, { readyState: "live", stop() {} });
@@ -148,11 +148,11 @@ async function runFixtures(init: () => void) {
       }
       error = undefined;
       await capture({ audio: true });
-      assert("partial success preserves recovery", !!banner() && window.__carrierInCall === true);
+      assert("partial success preserves recovery", !!banner() && window.__chatpaneInCall === true);
       await capture({ video: true });
       assert("all requested devices recovered", !banner());
       track.dispatchEvent(new Event("ended"));
-      assert("track ending restores refresh", window.__carrierInCall === false);
+      assert("track ending restores refresh", window.__chatpaneInCall === false);
       pending = true;
       const concurrentFailure = capture({ video: true });
       pending = false;
@@ -196,8 +196,8 @@ async function runFixtures(init: () => void) {
     let reads = 0;
     let requests = 0;
     Object.assign(window, {
-      carrierMediaPlatform: "macos",
-      carrierMediaPermissionStatus: async (device?: "camera" | "microphone") => {
+      chatpaneMediaPlatform: "macos",
+      chatpaneMediaPermissionStatus: async (device?: "camera" | "microphone") => {
         reads++;
         if (device) requests++;
         return states;
@@ -274,7 +274,7 @@ async function runFixtures(init: () => void) {
     assert("dismiss releases focus listener", reads === readsAfterDismiss && !banner());
     let resolveStatus: ((value: typeof states) => void) | undefined;
     Object.assign(window, {
-      carrierMediaPermissionStatus: () =>
+      chatpaneMediaPermissionStatus: () =>
         new Promise((resolve) => {
           resolveStatus = resolve;
         }),

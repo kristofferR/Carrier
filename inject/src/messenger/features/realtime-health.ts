@@ -124,7 +124,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   const nativeClearTimeout = clearTimeout.bind(globalThis);
   const watchdog = new RealtimeHealthWatchdog<WebSocket>();
   const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
-  const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
+  const accountKey = () => accountScopedStorageKey("chatpane-worker-connected", document.cookie);
   const rememberedConnection = (key: string | null) => {
     try {
       return !!key && localStorage.getItem(key) === "1";

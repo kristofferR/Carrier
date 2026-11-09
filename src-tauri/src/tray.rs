@@ -176,7 +176,7 @@ impl LinuxTray {
 #[cfg(target_os = "linux")]
 impl ksni::Tray for LinuxTray {
     fn id(&self) -> String {
-        "carrier".into()
+        "chatpane".into()
     }
 
     fn category(&self) -> ksni::Category {
@@ -273,7 +273,7 @@ impl ksni::Tray for LinuxTray {
         menu.push(ksni::MenuItem::Separator);
         menu.push(
             StandardItem {
-                label: "Quit Carrier".into(),
+                label: "Quit Chatpane".into(),
                 activate: Box::new(|tray: &mut Self| tray.app.exit(0)),
                 ..Default::default()
             }
@@ -464,7 +464,7 @@ pub(crate) fn toggle_main(app: &tauri::AppHandle) {
     toggle_main_with_token(app, None);
 }
 
-/// Toggle Carrier from an XDG portal activation. This must run on GTK's main
+/// Toggle Chatpane from an XDG portal activation. This must run on GTK's main
 /// thread; the portal worker dispatches it there before calling this function.
 #[cfg(target_os = "linux")]
 pub(crate) fn toggle_main_with_activation_token(app: &tauri::AppHandle, token: Option<&str>) {
@@ -544,7 +544,7 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     menu.append(&MenuItem::with_id(
         app,
         "quit",
-        "Quit Carrier",
+        "Quit Chatpane",
         true,
         None::<&str>,
     )?)?;
@@ -592,7 +592,7 @@ pub(crate) fn build_tray_with_menu(
     // taskbar-tinted symbolic mark, per the Tray icon style setting.
     #[cfg(not(target_os = "macos"))]
     let icon = windows_tray_image(app, icon_style, tray_icon_size(), taskbar_prefers_dark());
-    let builder = TrayIconBuilder::with_id("carrier-tray")
+    let builder = TrayIconBuilder::with_id("chatpane-tray")
         .tooltip(APP_TITLE)
         .icon(icon)
         .show_menu_on_left_click(false)

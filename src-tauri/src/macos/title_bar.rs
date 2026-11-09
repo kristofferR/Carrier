@@ -1,4 +1,4 @@
-//! macOS side of Carrier's title bar (see crate::title_bar): the window
+//! macOS side of Chatpane's title bar (see crate::title_bar): the window
 //! buttons float over the top of the chat list. A transparent native view over
 //! the strip drags the window and answers a double-click as the system's title
 //! bar does, so the page needs no window permissions. While Messenger's photo
@@ -32,7 +32,7 @@ fn drag_view_class() -> &'static AnyClass {
     static CLASS: OnceLock<&'static AnyClass> = OnceLock::new();
     CLASS.get_or_init(|| {
         let superclass = AnyClass::get(c"NSView").expect("AppKit has NSView");
-        let mut builder = ClassBuilder::new(c"CarrierTitleBarDragView", superclass)
+        let mut builder = ClassBuilder::new(c"ChatpaneTitleBarDragView", superclass)
             .expect("the drag view class is registered once");
         // SAFETY: each method matches its selector's Objective-C signature.
         unsafe {

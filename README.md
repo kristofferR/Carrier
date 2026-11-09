@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="app-icon.png" width="128" height="128" alt="Carrier app icon">
+  <img src="app-icon.png" width="128" height="128" alt="Chatpane app icon">
 </p>
 
-<h1 align="center">Carrier for Messenger</h1>
+<h1 align="center">Chatpane for Messenger</h1>
+
+<p align="center"><em>Formerly Carrier.</em></p>
 
 <p align="center">
   <strong>Facebook Messenger without the Facebook clutter.</strong><br>
@@ -16,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="https://kristofferr.github.io/Carrier/">
-    <img src="docs/carrier-screenshot.png" alt="Carrier showing Messenger in a focused desktop window" width="860">
+  <a href="https://chatpane.app/">
+    <img src="docs/chatpane-screenshot.png" alt="Chatpane showing Messenger in a focused desktop window" width="860">
   </a>
 </p>
 
@@ -57,26 +59,26 @@
 </p>
 
 <p align="center">
-  <code>brew install --cask kristofferR/tap/carrier</code>
+  <code>brew install --cask kristofferR/tap/chatpane</code>
 </p>
 
 ---
 
 Meta discontinued its Messenger desktop apps, then retired the standalone
-`messenger.com` experience. Carrier brings the focused desktop experience back:
+`messenger.com` experience. Chatpane brings the focused desktop experience back:
 it opens `facebook.com/messages` in a dedicated window and removes Facebook's
 Feed, Reels, Marketplace, global search, and other surrounding chrome.
 
-Carrier uses the operating system's WebView through
+Chatpane uses the operating system's WebView through
 [Tauri](https://tauri.app), rather than shipping another copy of Chromium. The
 macOS and Windows installers are about **3–4.5 MB**, while still providing
 native notifications you can reply from, unread badges, tray integration,
 global shortcuts, and cryptographically verified updates.
 
-## Why Carrier?
+## Why Chatpane?
 
 - **Only Messenger**: Facebook's Feed, Reels, Marketplace and other pages are hidden.
-- **Reply from notifications**: reply, react, mark as read or mute without opening Carrier.
+- **Reply from notifications**: reply, react, mark as read or mute without opening Chatpane.
 - **Right-click menus**: react to, reply to, forward or pin a message; mute,
   archive or mark a conversation as read.
 - **Hide that you're typing**: the people you chat with don't see "typing…".
@@ -84,7 +86,7 @@ global shortcuts, and cryptographically verified updates.
   four app icons.
 - **Export conversations**: save a conversation as an HTML or JSON file.
 - **[Schedule messages](docs/scheduled-sending.md)**: send texts at a chosen
-  date and time. Carrier must be running and connected.
+  date and time. Chatpane must be running and connected.
 - **Small**: one system WebView instead of a bundled browser engine.
 
 ## Features
@@ -100,7 +102,7 @@ global shortcuts, and cryptographically verified updates.
 - Group-chat messages can count on the unread badge without notifying
 - Muted conversations can be left out, shown on the badge only, or counted like any other chat
 - No notifications for messages that are old or already read on another device, for example after sleep
-- One sound per message: Messenger's in-page sounds don't double up with Carrier's,
+- One sound per message: Messenger's in-page sounds don't double up with Chatpane's,
   and stay silent during Do Not Disturb, Pause and Mute (calls still ring)
 - Hidden message previews, notification sound controls, and a test notification
   in Settings that explains when the system is blocking banners
@@ -113,7 +115,7 @@ global shortcuts, and cryptographically verified updates.
 - Optional system-wide <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> hotkey
 - Menu-bar-only mode on macOS
 - On macOS the window buttons sit over the chat list; on Windows and floating
-  Linux desktops Carrier draws its own window buttons instead of a title bar
+  Linux desktops Chatpane draws its own window buttons instead of a title bar
 - Always on top and experimental multi-window support
 - Window size, position and pane widths restored between launches
 
@@ -146,7 +148,7 @@ global shortcuts, and cryptographically verified updates.
 - Drag the edge of the chat list or details pane to resize it; double-click to reset
 - Recent encrypted chats open faster: their newest messages are preloaded on this computer
 - Jump directly to conversations and cycle through them from the keyboard
-- Return to the message box automatically when you switch back to Carrier or open a conversation
+- Return to the message box automatically when you switch back to Chatpane or open a conversation
 - Search conversations or the active thread without reaching for the mouse
 - Double-click photos and videos to zoom and pan, or pinch on macOS
 - Copy, download, and open message media from the right-click menu
@@ -157,7 +159,7 @@ global shortcuts, and cryptographically verified updates.
 
 - Messenger's Active Status, message sounds and Do Not Disturb in **Settings → Account**
 - **Log Out…** in the app and tray menus logs out of Facebook and deletes what
-  Carrier stored for the account on this computer; your settings are kept
+  Chatpane stored for the account on this computer; your settings are kept
 
 ### Maintenance
 
@@ -183,7 +185,7 @@ global shortcuts, and cryptographically verified updates.
 | <kbd>Cmd/Ctrl</kbd>+<kbd>E</kbd> / <kbd>G</kbd> / <kbd>T</kbd> | Emoji / GIF / attach files |
 | <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> | Toggle conversation information |
 | <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> | Hide names and avatars |
-| <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> | Show or hide Carrier globally, when enabled |
+| <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> | Show or hide Chatpane globally, when enabled |
 | <kbd>Cmd/Ctrl</kbd>+<kbd>-</kbd> / <kbd>=</kbd> / <kbd>0</kbd> | Zoom out / in / reset |
 | <kbd>Cmd/Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | <kbd>Cmd/Ctrl</kbd>+<kbd>R</kbd> | Reload |
@@ -196,7 +198,7 @@ global shortcuts, and cryptographically verified updates.
 
 ## Privacy and trust
 
-Carrier does not add app analytics. Messenger content is processed locally when
+Chatpane does not add app analytics. Messenger content is processed locally when
 needed for features such as native notifications, unread badges, and privacy
 blur. Messenger itself still communicates with Meta, and update checks use
 GitHub Releases.
@@ -215,7 +217,7 @@ GitHub Releases.
   repository’s Releases page while Windows signing is being arranged.
 - The complete source is available here under the MIT license.
 
-Carrier is a privacy-respecting client for Facebook Messenger, not a private
+Chatpane is a privacy-respecting client for Facebook Messenger, not a private
 replacement for the Messenger service. Meta's own data handling still applies.
 
 ## Install options
@@ -234,7 +236,7 @@ The macOS and Windows installers are about 3–4.5 MB. Linux `.deb` and `.rpm`
 packages are about 5 MB; the self-contained AppImage is around 90 MB because it
 bundles WebKitGTK instead of using the system package.
 
-Carrier loads `facebook.com/messages`, so you need an account that Meta permits
+Chatpane loads `facebook.com/messages`, so you need an account that Meta permits
 to sign in there. The macOS build supports macOS 10.15 and later.
 
 ### Homebrew
@@ -242,34 +244,34 @@ to sign in there. The macOS build supports macOS 10.15 and later.
 The same cask token works on macOS and Linux:
 
 ```bash
-brew install --cask kristofferR/tap/carrier
+brew install --cask kristofferR/tap/chatpane
 ```
 
-On macOS, if `Carrier.app` is already present in `/Applications`, adopt it with:
+On macOS, if `Carrier.app` or `Chatpane.app` is already present in `/Applications`, adopt it with:
 
 ```bash
-brew install --cask --adopt kristofferR/tap/carrier
+brew install --cask --adopt kristofferR/tap/chatpane
 ```
 
 ### Arch Linux (AUR)
 
-The [carrier](https://aur.archlinux.org/packages/carrier) package repackages
+The [chatpane](https://aur.archlinux.org/packages/chatpane) package repackages
 the `.deb`, so it uses the system WebKitGTK instead of bundling it:
 
 ```bash
-yay -S carrier
+yay -S chatpane
 ```
 
 ### Linux startup and rendering
 
-On a pure Wayland session, Carrier selects GTK's Wayland backend when
+On a pure Wayland session, Chatpane selects GTK's Wayland backend when
 `DISPLAY` and `GDK_BACKEND` are unset or empty. An explicit `GDK_BACKEND` is
 always preserved.
 
-On Wayland, Carrier disables WebKit's DMABUF renderer only with NVIDIA's
+On Wayland, Chatpane disables WebKit's DMABUF renderer only with NVIDIA's
 proprietary driver older than 555, which lacks explicit sync. Elsewhere the
 renderer stays on: without it WebKit paints on the CPU, which costs far more
-CPU and makes hovering lag. On Niri Wayland sessions, Carrier disables the
+CPU and makes hovering lag. On Niri Wayland sessions, Chatpane disables the
 DMABUF renderer and compositing to work around blank or unstable rendering.
 Niri is detected through `NIRI_SOCKET` or a `niri` desktop identifier in
 `XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP`, or `DESKTOP_SESSION`.
@@ -277,27 +279,27 @@ Niri is detected through `NIRI_SOCKET` or a `niri` desktop identifier in
 If the window is blank or rendering is unstable, try launching with:
 
 ```bash
-CARRIER_LINUX_WEBKIT_SAFE_MODE=1 carrier
+CHATPANE_LINUX_WEBKIT_SAFE_MODE=1 carrier
 ```
 
 `1` requests both rendering fallbacks on any Linux desktop. `0` disables the
 automatic Niri fallbacks; the NVIDIA driver check still applies. Unset, empty, `auto`, and unrecognized values use desktop detection.
 Explicit `WEBKIT_DISABLE_DMABUF_RENDERER` and
 `WEBKIT_DISABLE_COMPOSITING_MODE` values always take precedence, including when
-safe mode is forced on. Restart Carrier for changes to take effect. Disabling
+safe mode is forced on. Restart Chatpane for changes to take effect. Disabling
 compositing may reduce rendering performance; other desktops keep their normal
 compositing unless safe mode is requested.
 
 ## Non-goals
 
-Carrier stays deliberately narrow. It does not add its own do-not-disturb
+Chatpane stays deliberately narrow. It does not add its own do-not-disturb
 schedule (use the operating system’s Focus controls), emoji-style pickers, Vim
 keybindings, multiple simultaneous accounts, or automated replies.
 
 ## How it works
 
 The Rust shell opens the official Messenger web experience in the operating
-system's WebView. At document start, Carrier injects a focused stylesheet and
+system's WebView. At document start, Chatpane injects a focused stylesheet and
 typed feature modules that remove Facebook chrome and add desktop behavior.
 
 Because Facebook is a remote origin, page features communicate with the native
@@ -305,7 +307,7 @@ shell through narrowly scoped Tauri plugins and events. Off-site navigation is
 routed to the default browser, downloads are restricted to media and common file attachments, and
 the window hides to the tray when configured.
 
-Messenger is a remote service and its markup changes occasionally. Carrier logs
+Messenger is a remote service and its markup changes occasionally. Chatpane logs
 integration failures locally and ships fixes through its signed updater.
 
 ## Build from source
@@ -315,7 +317,7 @@ Requires [Rust](https://rustup.rs), [Bun](https://bun.sh), and the
 
 ```bash
 git clone https://github.com/kristofferR/Carrier.git
-cd Carrier
+cd Chatpane
 bun install
 bun run dev
 bun run build
@@ -328,17 +330,17 @@ and bundled into single document-start scripts with `bun run build:inject`.
 
 If Facebook changed something, a feature stopped working, or you have an idea,
 [open an issue](https://github.com/kristofferR/Carrier/issues). Include your
-operating system and Carrier version when reporting a problem.
+operating system and Chatpane version when reporting a problem.
 
-If Carrier is useful to you, consider
+If Chatpane is useful to you, consider
 [starring the repository](https://github.com/kristofferR/Carrier). It helps other
 people looking for a Messenger desktop client find the project.
 
 ## Disclaimer
 
-Carrier is an unofficial, independent project. It is not affiliated with,
+Chatpane is an unofficial, independent project. It is not affiliated with,
 endorsed by, or sponsored by Meta Platforms, Inc. “Facebook” and “Messenger” are
-trademarks of their respective owners. Carrier does not modify Facebook's
+trademarks of their respective owners. Chatpane does not modify Facebook's
 servers or data; it changes the presentation locally in your own window.
 
 ## License
