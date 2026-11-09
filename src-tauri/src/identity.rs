@@ -4,9 +4,10 @@
 //! settings, themes and logs, and the webview's Facebook login and
 //! encrypted-chat keys. Carrier used `io.github.kristofferr.carrier`. The first
 //! launch as Chatpane stops a Carrier that is still running, then moves those
-//! folders to Chatpane's names before anything reads or creates them. When a
-//! folder can't be moved, that launch runs on Carrier's folders instead and the
-//! next one tries again.
+//! folders to Chatpane's names before anything reads or creates them, along
+//! with Carrier's log files and, on macOS, its preferences. When a folder
+//! can't be moved, that launch runs on Carrier's folders instead and the next
+//! one tries again.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -40,12 +41,61 @@ pub(crate) fn migrate() {
         Ok(moved) => {
             MOVED.store(!moved.is_empty(), Ordering::Relaxed);
             report.extend(moved.into_iter().map(Ok));
+            for (_, new) in &folders {
+                rename_logs(new);
+            }
+            #[cfg(target_os = "macos")]
+            move_preferences();
         }
         Err(failure) => {
             ON_PREVIOUS.store(true, Ordering::Relaxed);
             report.push(Err(format!("{failure}; using Carrier's folders this time")));
         }
     }
+}
+
+/// Carrier's log files are named after it, so log rotation, which only
+/// touches Chatpane's, would keep them forever: they continue as Chatpane's.
+fn rename_logs(folder: &Path) {
+    // The log folder is the identifier's folder on macOS and its `logs`
+    // folder elsewhere.
+    for dir in [folder.to_path_buf(), folder.join("logs")] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(rest) = name.to_str().and_then(|name| name.strip_prefix("Carrier")) else {
+                continue;
+            };
+            let to = dir.join(format!("Chatpane{rest}"));
+            if rest.ends_with(".log") && to.symlink_metadata().is_err() {
+                let _ = std::fs::rename(entry.path(), to);
+            }
+        }
+    }
+}
+
+/// Move Carrier's preferences, such as the folder a file dialog last showed,
+/// into Chatpane's. Values Chatpane already has win.
+#[cfg(target_os = "macos")]
+fn move_preferences() {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{NSMutableDictionary, NSString, NSUserDefaults};
+
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let previous = NSString::from_str(PREVIOUS);
+    let Some(carrier) = defaults.persistentDomainForName(&previous) else {
+        return;
+    };
+    let current = NSString::from_str(IDENTIFIER);
+    let merged = NSMutableDictionary::<NSString, AnyObject>::dictionaryWithDictionary(&carrier);
+    if let Some(own) = defaults.persistentDomainForName(&current) {
+        merged.addEntriesFromDictionary(&own);
+    }
+    // SAFETY: both dictionaries come from the defaults system, keyed by strings.
+    unsafe { defaults.setPersistentDomain_forName(&merged, &current) };
+    defaults.removePersistentDomainForName(&previous);
 }
 
 /// Move every folder, or none: after a failure, what already moved goes
@@ -311,6 +361,34 @@ mod tests {
         assert!(move_all(&[config.clone(), data.clone()]).is_err());
         assert!(config.0.exists() && !config.1.exists());
         assert!(data.0.exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn carrier_logs_continue_as_chatpanes() {
+        let root = std::env::temp_dir().join(format!("chatpane-logs-{}", std::process::id()));
+        let logs = root.join("logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(logs.join("Carrier.log"), "current").unwrap();
+        std::fs::write(logs.join("Carrier_2026-11-01_10-00-00.log"), "rotated").unwrap();
+        std::fs::write(logs.join("Carrier.txt"), "").unwrap();
+        // macOS keeps the log directly in the identifier's folder.
+        std::fs::write(root.join("Carrier.log"), "mac").unwrap();
+        std::fs::write(root.join("Chatpane.log"), "own").unwrap();
+
+        rename_logs(&root);
+
+        let read = |path: PathBuf| std::fs::read_to_string(path).unwrap();
+        assert_eq!(read(logs.join("Chatpane.log")), "current");
+        assert_eq!(
+            read(logs.join("Chatpane_2026-11-01_10-00-00.log")),
+            "rotated"
+        );
+        assert!(logs.join("Carrier.txt").exists());
+        // An existing Chatpane log is never replaced.
+        assert_eq!(read(root.join("Chatpane.log")), "own");
+        assert!(root.join("Carrier.log").exists());
 
         std::fs::remove_dir_all(&root).unwrap();
     }

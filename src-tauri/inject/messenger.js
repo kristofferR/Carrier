@@ -14441,14 +14441,13 @@ ${text2}`)) {
   var clampZoom = (p) => Math.min(200, Math.max(30, Math.round(p) || 100));
 
   // inject/src/messenger/features/zoom.ts
-  var ZOOM_KEY = "carrier:zoom";
+  var LEGACY_ZOOM_KEY = "carrier:zoom";
   var zoomLevel = 100;
   function setZoomLevel(percent, fromSettings) {
     const clamped = clampZoom(percent);
     const changed = clamped !== zoomLevel;
     zoomLevel = clamped;
     try {
-      localStorage.setItem(ZOOM_KEY, String(clamped));
       const settings = window.__CHATPANE_SETTINGS__ && typeof window.__CHATPANE_SETTINGS__ === "object" && !Array.isArray(window.__CHATPANE_SETTINGS__) ? window.__CHATPANE_SETTINGS__ : null;
       if (settings) settings.zoom = clamped;
       const cached = JSON.parse(
@@ -14477,7 +14476,8 @@ ${text2}`)) {
   function initZoomLevel() {
     const s = window.__CHATPANE_SETTINGS__ || {};
     let z = typeof s.zoom === "number" && Number.isFinite(s.zoom) ? clampZoom(s.zoom) : 100;
-    const stored = parseInt(localStorage.getItem(ZOOM_KEY) || "", 10);
+    const stored = parseInt(localStorage.getItem(LEGACY_ZOOM_KEY) || "", 10);
+    localStorage.removeItem(LEGACY_ZOOM_KEY);
     if (z === 100 && Number.isFinite(stored) && clampZoom(stored) !== 100) {
       z = clampZoom(stored);
       invoke("plugin:event|emit", { event: "chatpane:zoom", payload: z })?.catch?.(() => {

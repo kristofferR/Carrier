@@ -3,13 +3,14 @@
 // truth) and reaches the page via __CHATPANE_SETTINGS__ / chatpane:settings.
 // Rust applies it as native WebView zoom; CSS `zoom` grew the layout past the
 // window (#318). Keyboard/menu zoom reports its changes back with a
-// chatpane:zoom event, which Rust applies and persists. The old localStorage
-// key is only kept as a migration source for pre-settings installs (see
-// initZoomLevel below).
+// chatpane:zoom event, which Rust applies and persists. Before settings held
+// it, keyboard zoom persisted to a localStorage key; initZoomLevel moves that
+// level into settings once.
 import { invoke } from "../bridge";
 import { clampZoom } from "../lib/zoom";
 
-const ZOOM_KEY = "carrier:zoom";
+// Named after the app's old name, Carrier.
+const LEGACY_ZOOM_KEY = "carrier:zoom";
 
 let zoomLevel = 100; // the level Rust last applied (or was asked to)
 
@@ -21,7 +22,6 @@ function setZoomLevel(percent: number, fromSettings?: boolean) {
   // so a Facebook-triggered reload (which re-runs the init script off that
   // cache) keeps stepping from the same level without waiting for a push.
   try {
-    localStorage.setItem(ZOOM_KEY, String(clamped));
     const settings =
       window.__CHATPANE_SETTINGS__ &&
       typeof window.__CHATPANE_SETTINGS__ === "object" &&
@@ -69,7 +69,8 @@ function initZoomLevel() {
   // Migrate pre-settings installs: keyboard zoom used to persist only to
   // localStorage. If settings still hold the default but the old key has a
   // level, adopt it and report it once so it lands in settings.json.
-  const stored = parseInt(localStorage.getItem(ZOOM_KEY) || "", 10);
+  const stored = parseInt(localStorage.getItem(LEGACY_ZOOM_KEY) || "", 10);
+  localStorage.removeItem(LEGACY_ZOOM_KEY);
   if (z === 100 && Number.isFinite(stored) && clampZoom(stored) !== 100) {
     z = clampZoom(stored);
     invoke("plugin:event|emit", { event: "chatpane:zoom", payload: z })?.catch?.(() => {});
