@@ -8,6 +8,7 @@
 // message has. Toolbar buttons are matched by English accessible labels,
 // reactions by their emoji, which is locale-independent.
 
+import { t } from "../../i18n";
 import { diag, toast } from "../bridge";
 import {
   type DrivenAction,
@@ -104,12 +105,12 @@ export async function readMessageOffer(message: HTMLElement): Promise<MessageOff
 /** Press the toolbar control behind a chosen menu row. */
 async function drive(message: HTMLElement, run: () => Promise<boolean>, what: string) {
   if (!message.isConnected) {
-    toast("That message is no longer on screen");
+    toast(t("page.context.message_gone"));
     return;
   }
   if (await run()) return;
   diag("message-menu.action", `${what} was not offered when chosen`);
-  toast("Messenger no longer offers that action");
+  toast(t("page.context.action_unavailable"));
 }
 
 export const reactTo = (message: HTMLElement, emoji: string) =>

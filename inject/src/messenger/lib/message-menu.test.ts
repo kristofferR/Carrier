@@ -12,28 +12,49 @@ import {
 
 describe("message actions", () => {
   test("reads Messenger's More rows and toolbar buttons", () => {
-    expect(menuRowAction(" Remove ")).toBe("Remove");
-    expect(menuRowAction("Unsend")).toBe("Unsend");
-    expect(menuRowAction("Reply")).toBe("Reply");
+    expect(menuRowAction(" Remove ")).toBe("shared.context.remove");
+    expect(menuRowAction("Unsend")).toBe("shared.context.unsend");
+    expect(menuRowAction("Reply")).toBe("shared.context.reply");
     expect(menuRowAction("Report")).toBeNull();
     expect(menuRowAction("Copy text")).toBeNull();
-    expect(toolbarAction("Reply to this message")).toBe("Reply");
-    expect(toolbarAction("Forward")).toBe("Forward");
+    expect(menuRowAction("shared.context.reply")).toBeNull();
+    expect(toolbarAction("Reply to this message")).toBe("shared.context.reply");
+    expect(toolbarAction("Forward")).toBe("shared.context.forward");
     expect(toolbarAction("React with an emoji")).toBeNull();
     expect(toolbarAction("More actions")).toBeNull();
   });
 
   test("lists only what the message offers, in menu order", () => {
     expect(
-      messageActions({ reactions: [], text: "hi", actions: ["Remove", "Pin", "Forward", "Reply"] }),
-    ).toEqual(["Reply", "Copy text", "Forward", "Pin", "Remove"]);
-    // A photo: no text to copy, Reply from More, Forward from the toolbar.
-    expect(messageActions({ reactions: [], text: "", actions: ["Forward", "Reply"] })).toEqual([
-      "Reply",
-      "Forward",
+      messageActions({
+        reactions: [],
+        text: "hi",
+        actions: [
+          "shared.context.remove",
+          "shared.context.pin",
+          "shared.context.forward",
+          "shared.context.reply",
+        ],
+      }),
+    ).toEqual([
+      "shared.context.reply",
+      "shared.context.copy_text",
+      "shared.context.forward",
+      "shared.context.pin",
+      "shared.context.remove",
     ]);
+    // A photo: no text to copy, Reply from More, Forward from the toolbar.
+    expect(
+      messageActions({
+        reactions: [],
+        text: "",
+        actions: ["shared.context.forward", "shared.context.reply"],
+      }),
+    ).toEqual(["shared.context.reply", "shared.context.forward"]);
     // A call entry offers only Remove.
-    expect(messageActions({ reactions: [], text: "", actions: ["Remove"] })).toEqual(["Remove"]);
+    expect(messageActions({ reactions: [], text: "", actions: ["shared.context.remove"] })).toEqual(
+      ["shared.context.remove"],
+    );
   });
 });
 

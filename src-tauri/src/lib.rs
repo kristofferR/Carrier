@@ -35,6 +35,7 @@ mod growth;
 mod hotkey;
 #[cfg(target_os = "linux")]
 mod hotkey_portal;
+mod i18n;
 mod install_environment;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -123,8 +124,11 @@ pub(crate) fn refresh_unread_indicators(
     let dot = settings.badge_mode == "dot";
     let tooltip = match (unread > 0, dot) {
         (false, _) => APP_TITLE.to_string(),
-        (true, true) => format!("{APP_TITLE} — unread messages"),
-        (true, false) => format!("{APP_TITLE} — {unread} unread"),
+        (true, true) => i18n::tf("window.tooltip.unread", &[("title", &APP_TITLE)]),
+        (true, false) => i18n::tf(
+            "window.tooltip.unread_count",
+            &[("title", &APP_TITLE), ("count", &unread)],
+        ),
     };
     // Linux: the KSNI handle never touches the tao main thread (and owns the
     // service, so it must not be cloned); working under the guard is safe.
@@ -1044,6 +1048,8 @@ pub fn run() {
     macos::scrollbars::prefer_overlay_scrollbars();
 
     let initial = load_settings_early();
+    // Before any menu, dialog or webview text is built.
+    i18n::init(&initial.language);
     let cold_cli_action = cli::parse_launch_action(std::env::args_os());
 
     let mut builder = tauri::Builder::default();
@@ -1204,6 +1210,7 @@ pub fn run() {
             commands::connect_messenger,
             commands::open_messenger_anyway,
             commands::open_log_folder,
+            commands::restart_app,
             commands::open_custom_css,
             commands::send_test_notification,
             commands::copy_share_message,
@@ -1488,7 +1495,7 @@ pub fn run() {
                     .dialog()
                     .file()
                     .set_parent(&window)
-                    .set_title("Save Messenger download")
+                    .set_title(i18n::t("download.dialog.title"))
                     .set_file_name(&name);
                 if let Some(directory) = downloads_dir() {
                     dialog = dialog.set_directory(directory);

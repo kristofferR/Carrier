@@ -11,6 +11,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{Listener, Manager};
 
+use crate::i18n::t;
+
 const EVENT: &str = "chatpane:scheduled-send";
 const GRACE_MS: u64 = 120_000;
 const MAX_ITEMS: usize = 100;
@@ -217,9 +219,7 @@ impl Store {
         if let Err(error) = self.persist(&items) {
             self.unavailable = true;
             log::error!("scheduled-send persistence failed: {error}");
-            return Err(
-                "Could not save scheduled messages. Restart Chatpane before retrying.".into(),
-            );
+            return Err(t("schedule.error.save_failed").into());
         }
         self.items = items;
         Ok(())
@@ -232,10 +232,10 @@ impl Store {
         now: u64,
     ) -> Result<Option<String>, String> {
         if self.unavailable {
-            return Err("Scheduled messages are unavailable. Restart Chatpane to retry.".into());
+            return Err(t("schedule.error.unavailable").into());
         }
         if !valid_account(&request.account) {
-            return Err("Sign in to schedule a message.".into());
+            return Err(t("schedule.error.sign_in").into());
         }
         if !delivery_window(label)
             && matches!(
@@ -243,7 +243,7 @@ impl Store {
                 "claim" | "sent" | "missed" | "uncertain" | "defer"
             )
         {
-            return Err("Only a Messenger window can submit scheduled messages.".into());
+            return Err(t("schedule.error.wrong_window").into());
         }
         if request.op == "list" {
             return Ok(None);
@@ -252,18 +252,21 @@ impl Store {
         let mut claimed = None;
         match request.op.as_str() {
             "save" => {
-                let text = request.text.as_deref().ok_or("Message is missing")?;
+                let text = request
+                    .text
+                    .as_deref()
+                    .ok_or(t("schedule.error.text_missing"))?;
                 let thread = request
                     .thread
                     .as_deref()
                     .and_then(crate::actions::validated_thread_path)
-                    .ok_or("Invalid conversation")?;
-                let due = request.due.ok_or("Choose a send time")?;
+                    .ok_or(t("schedule.error.invalid_conversation"))?;
+                let due = request.due.ok_or(t("schedule.error.choose_time"))?;
                 if text.trim().is_empty() || text.chars().count() > 2_000 {
-                    return Err("Use 1–2,000 characters for a scheduled message.".into());
+                    return Err(t("schedule.error.length").into());
                 }
                 if due <= now || due > now.saturating_add(366 * 24 * 60 * 60 * 1000) {
-                    return Err("Choose a future time within one year.".into());
+                    return Err(t("schedule.error.time_range").into());
                 }
                 let id = request
                     .id
@@ -274,9 +277,9 @@ impl Store {
                     let item = items
                         .iter_mut()
                         .find(|m| m.id == id && m.account == request.account)
-                        .ok_or("Message no longer exists")?;
+                        .ok_or(t("schedule.error.message_gone"))?;
                     if item.status == Status::Sending {
-                        return Err("This message is already being submitted.".into());
+                        return Err(t("schedule.error.already_sending").into());
                     }
                     let status = if matches!(item.status, Status::Draft | Status::MissedDraft) {
                         Status::Draft
@@ -300,7 +303,7 @@ impl Store {
                         .count()
                         >= MAX_ITEMS
                     {
-                        return Err("Remove an old scheduled message before adding another.".into());
+                        return Err(t("schedule.error.full").into());
                     }
                     items.push(Message {
                         id,
@@ -318,9 +321,9 @@ impl Store {
                 let item = items
                     .iter_mut()
                     .find(|m| Some(&m.id) == request.id.as_ref() && m.account == request.account)
-                    .ok_or("Message no longer exists")?;
+                    .ok_or(t("schedule.error.message_gone"))?;
                 if item.status != Status::Draft || now >= item.due {
-                    return Err("Choose a new send time for this message.".into());
+                    return Err(t("schedule.error.choose_new_time").into());
                 }
                 item.status = Status::Scheduled;
             }
@@ -334,7 +337,7 @@ impl Store {
                 let item = items
                     .iter_mut()
                     .find(|m| Some(&m.id) == request.id.as_ref() && m.account == request.account)
-                    .ok_or("Message no longer exists")?;
+                    .ok_or(t("schedule.error.message_gone"))?;
                 if !item.eligible(now) {
                     return Ok(None);
                 }
@@ -347,9 +350,9 @@ impl Store {
                     .position(|m| {
                         Some(&m.id) == request.id.as_ref() && m.account == request.account
                     })
-                    .ok_or("Message no longer exists")?;
+                    .ok_or(t("schedule.error.message_gone"))?;
                 if items[index].status != Status::Sending || request.due != Some(items[index].due) {
-                    return Err("Message is no longer being submitted.".into());
+                    return Err(t("schedule.error.not_sending").into());
                 }
                 match request.op.as_str() {
                     "sent" => {
@@ -368,7 +371,7 @@ impl Store {
                     .position(|m| {
                         Some(&m.id) == request.id.as_ref() && m.account == request.account
                     })
-                    .ok_or("Message no longer exists")?;
+                    .ok_or(t("schedule.error.message_gone"))?;
                 if request.op == "seen" {
                     if matches!(
                         items[index].status,
@@ -378,7 +381,7 @@ impl Store {
                     }
                 } else {
                     if items[index].status == Status::Sending {
-                        return Err("This message is already being submitted.".into());
+                        return Err(t("schedule.error.already_sending").into());
                     }
                     items.remove(index);
                 }

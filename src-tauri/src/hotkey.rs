@@ -1,6 +1,7 @@
 //! The global summon hotkey: registration/unregistration to match the Global
 //! Hotkey setting, and the startup reconcile.
 
+use crate::i18n::tf;
 use crate::settings::{Settings, save_settings};
 use crate::tray::toggle_main;
 #[cfg(target_os = "linux")]
@@ -35,11 +36,19 @@ fn plugin_sync(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
                     toggle_main(app);
                 }
             })
-            .map_err(|e| format!("Couldn't enable Global Hotkey ({SUMMON_SHORTCUT}): {e}"))?;
+            .map_err(|e| {
+                tf(
+                    "hotkey.error.enable",
+                    &[("shortcut", &SUMMON_SHORTCUT), ("error", &e)],
+                )
+            })?;
     } else if !want && registered {
-        shortcuts
-            .unregister(SUMMON_SHORTCUT)
-            .map_err(|e| format!("Couldn't disable Global Hotkey ({SUMMON_SHORTCUT}): {e}"))?;
+        shortcuts.unregister(SUMMON_SHORTCUT).map_err(|e| {
+            tf(
+                "hotkey.error.disable",
+                &[("shortcut", &SUMMON_SHORTCUT), ("error", &e)],
+            )
+        })?;
     }
     Ok(())
 }
@@ -52,7 +61,10 @@ fn hotkey_is_active(app: &tauri::AppHandle) -> bool {
 
 #[cfg(any(test, target_os = "linux"))]
 fn combined_enable_error(portal: &str, plugin: &str) -> String {
-    format!("{portal}\nFallback failed: {plugin}")
+    format!(
+        "{portal}\n{}",
+        tf("hotkey.error.fallback", &[("error", &plugin)])
+    )
 }
 
 /// Register or unregister the global summon hotkey to match the setting.

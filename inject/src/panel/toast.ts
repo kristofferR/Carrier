@@ -1,3 +1,5 @@
+import { language } from "../i18n";
+
 /** Only a browser-generated activation of Chatpane's own button may reveal. */
 export const canActivateToastAction = (eventIsTrusted: boolean, userActivationIsActive: boolean) =>
   eventIsTrusted && userActivationIsActive;
@@ -7,6 +9,8 @@ export function installToast() {
   toastEl.setAttribute("role", "status");
   toastEl.setAttribute("aria-live", "polite");
   toastEl.setAttribute("aria-atomic", "true");
+  // Chatpane's language, whatever direction Facebook lays its page out in.
+  Object.assign(toastEl, language());
   Object.assign(toastEl.style, {
     position: "fixed",
     bottom: "24px",

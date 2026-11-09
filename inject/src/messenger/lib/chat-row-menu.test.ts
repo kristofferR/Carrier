@@ -14,13 +14,13 @@ describe("chat row menu", () => {
         "Report",
       ]),
     ).toEqual([
-      "Mark as unread",
-      "Mute notifications",
-      "View profile",
-      "Block",
-      "Archive chat",
-      "Delete chat",
-      "Report",
+      "shared.context.mark_as_unread",
+      "shared.context.mute_notifications",
+      "shared.context.view_profile",
+      "shared.context.block",
+      "shared.context.archive_chat",
+      "shared.context.delete_chat",
+      "shared.context.report",
     ]);
   });
 
@@ -39,26 +39,27 @@ describe("chat row menu", () => {
         "Something new",
       ]),
     ).toEqual([
-      "Mark as read",
-      "Mute notifications",
-      "Start end-to-end encrypted chat",
-      "Archive chat",
-      "Delete chat",
-      "Report",
-      "Leave group",
+      "shared.context.mark_as_read",
+      "shared.context.mute_notifications",
+      "shared.context.start_encrypted_chat",
+      "shared.context.archive_chat",
+      "shared.context.delete_chat",
+      "shared.context.report",
+      "shared.context.leave_group",
     ]);
   });
 
   test("orders and dedupes rows the way the native menu expects", () => {
     expect(chatRowActions(["Report", "Mark as unread", "Report"])).toEqual([
-      "Mark as unread",
-      "Report",
+      "shared.context.mark_as_unread",
+      "shared.context.report",
     ]);
   });
 
   test("matches whole labels only", () => {
-    expect(chatRowAction("  Archive \n chat ")).toBe("Archive chat");
+    expect(chatRowAction("  Archive \n chat ")).toBe("shared.context.archive_chat");
     expect(chatRowAction("Archive")).toBeNull();
     expect(chatRowAction("Block Kim")).toBeNull();
+    expect(chatRowAction("shared.context.block")).toBeNull();
   });
 });

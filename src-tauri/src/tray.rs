@@ -11,13 +11,14 @@ use tauri::{
 };
 
 use crate::APP_TITLE;
+use crate::i18n::t;
 #[cfg(target_os = "linux")]
 use crate::menu::open_recent_thread;
-#[cfg(not(target_os = "linux"))]
-use crate::menu::recent_menu_id;
 use crate::menu::recent_threads_for_menu;
 #[cfg(target_os = "macos")]
 use crate::menu::target_window;
+#[cfg(not(target_os = "linux"))]
+use crate::menu::{menu_label, recent_menu_id};
 use crate::settings::{AppState, Settings};
 #[cfg(target_os = "linux")]
 use crate::tray_badge::{UnreadBucket, draw_unread_badge};
@@ -264,7 +265,7 @@ impl ksni::Tray for LinuxTray {
         menu.push(ksni::MenuItem::Separator);
         menu.push(
             StandardItem {
-                label: LOG_OUT_LABEL.into(),
+                label: t("menu.log_out").into(),
                 activate: Box::new(|tray: &mut Self| crate::log_out::log_out(&tray.app)),
                 ..Default::default()
             }
@@ -273,7 +274,7 @@ impl ksni::Tray for LinuxTray {
         menu.push(ksni::MenuItem::Separator);
         menu.push(
             StandardItem {
-                label: "Quit Chatpane".into(),
+                label: t("menu.quit_app").into(),
                 activate: Box::new(|tray: &mut Self| tray.app.exit(0)),
                 ..Default::default()
             }
@@ -502,9 +503,6 @@ pub(crate) fn wants_tray(s: &Settings) -> bool {
             && (s.hide_on_minimize || s.hide_on_focus_loss || s.hide_taskbar_icon))
 }
 
-/// Log Out… (Ref #356), above Quit in the tray and the app menu.
-pub(crate) const LOG_OUT_LABEL: &str = "Log Out…";
-
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::new(app)?;
@@ -515,7 +513,7 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
         menu.append(&MenuItem::with_id(
             app,
             recent_menu_id(t),
-            &t.name,
+            menu_label(&t.name),
             true,
             None::<&str>,
         )?)?;
@@ -526,17 +524,24 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     let now = crate::pause::now_ms();
     let state = crate::pause::pause_state(&app.state::<AppState>().settings.lock().unwrap(), now);
     let (title, entries) = crate::pause::pause_menu(state, now);
-    let pause = Submenu::new(app, title, true)?;
+    let pause = Submenu::new(app, menu_label(&title), true)?;
     for (id, label, enabled) in entries {
-        pause.append(&MenuItem::with_id(app, id, label, enabled, None::<&str>)?)?;
+        pause.append(&MenuItem::with_id(
+            app,
+            id,
+            menu_label(&label),
+            enabled,
+            None::<&str>,
+        )?)?;
     }
     menu.append(&pause)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    // Handled by the app-wide menu handler, like the recent conversations.
+    // Log Out… (Ref #356), handled by the app-wide menu handler like the
+    // recent conversations.
     menu.append(&MenuItem::with_id(
         app,
         "log_out",
-        LOG_OUT_LABEL,
+        menu_label(t("menu.log_out")),
         true,
         None::<&str>,
     )?)?;
@@ -544,7 +549,7 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     menu.append(&MenuItem::with_id(
         app,
         "quit",
-        "Quit Chatpane",
+        menu_label(t("menu.quit_app")),
         true,
         None::<&str>,
     )?)?;

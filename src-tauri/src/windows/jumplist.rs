@@ -15,8 +15,9 @@ use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 use windows::Win32::UI::Shell::{
     DestinationList, EnumerableObjectCollection, ICustomDestinationList, IShellLinkW, ShellLink,
 };
-use windows::core::{GUID, Interface, Result, w};
+use windows::core::{GUID, Interface, Result};
 
+use crate::i18n::t;
 use crate::menu::RecentThread;
 
 /// `System.Title` — the label a jump-list task shows. `{F29F85E0-4FF9-1068-AB91-08002B27B3D9}`, pid 2.
@@ -107,7 +108,7 @@ unsafe fn build(threads: &[RecentThread]) -> Result<()> {
 
         if added > 0 {
             let array: IObjectArray = collection.cast()?;
-            list.AppendCategory(w!("Recent"), &array)?;
+            list.AppendCategory(&windows::core::HSTRING::from(t("jumplist.recent")), &array)?;
         }
         // Commit even with nothing added, so clearing the recents (e.g. Hide Names &
         // Avatars turned on) empties the jump list too.

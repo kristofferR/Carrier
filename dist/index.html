@@ -127,28 +127,37 @@
         </svg>
       </div>
       <div role="status" aria-live="polite" aria-atomic="true">
-        <h1 id="title">Checking Messenger</h1>
-        <p id="message">Chatpane is checking whether Facebook Messenger is reachable.</p>
+        <h1 id="title"></h1>
+        <p id="message"></p>
       </div>
       <div class="actions">
-        <button id="retry" type="button" disabled>Retry</button>
-        <button id="open-anyway" type="button" hidden>Open anyway</button>
+        <button id="retry" type="button" disabled></button>
+        <button id="open-anyway" type="button" hidden></button>
       </div>
       <pre id="detail" aria-live="polite"></pre>
     </main>
 
     <script>
+      // Chatpane's text in the UI language, set by the window's init script
+      // (src-tauri/src/i18n.rs).
+      const i18n = window.__CHATPANE_I18N__ || { lang: "en", dir: "ltr", strings: {} };
+      const t = (key) => i18n.strings[key] ?? key;
+      document.documentElement.lang = i18n.lang;
+      document.documentElement.dir = i18n.dir;
+
       const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args);
       const title = document.getElementById("title");
       const message = document.getElementById("message");
       const detail = document.getElementById("detail");
       const retry = document.getElementById("retry");
       const openAnyway = document.getElementById("open-anyway");
+      retry.textContent = t("page.offline.retry");
+      openAnyway.textContent = t("page.offline.open_anyway");
 
       function render(status) {
         document.body.dataset.state = status.state || "error";
-        title.textContent = status.title || "Cannot load Messenger";
-        message.textContent = status.message || "Chatpane could not reach Messenger.";
+        title.textContent = status.title || t("page.offline.fallback_title");
+        message.textContent = status.message || t("page.offline.fallback_message");
         if (status.detail) {
           detail.textContent = status.detail;
           detail.style.display = "block";
@@ -164,16 +173,16 @@
       async function connect(retryStartupTransients) {
         render({
           state: "checking",
-          title: "Checking Messenger",
-          message: "Chatpane is checking whether Facebook Messenger is reachable.",
+          title: t("page.offline.checking_title"),
+          message: t("page.offline.checking_message"),
         });
         try {
           render(await invoke("connect_messenger", { retryStartupTransients }));
         } catch (error) {
           render({
             state: "error",
-            title: "Cannot check Messenger",
-            message: "Chatpane could not run its reachability check.",
+            title: t("page.offline.check_failed_title"),
+            message: t("page.offline.check_failed_message"),
             detail: String(error && error.message ? error.message : error),
           });
         }
@@ -185,16 +194,16 @@
         openAnyway.disabled = true;
         render({
           state: "loading",
-          title: "Opening Messenger",
-          message: "Chatpane is asking the webview to connect without the system DNS check.",
+          title: t("page.offline.opening_title"),
+          message: t("page.offline.opening_message"),
         });
         try {
           render(await invoke("open_messenger_anyway"));
         } catch (error) {
           render({
             state: "error",
-            title: "Cannot open Messenger",
-            message: "Chatpane could not ask the webview to open Messenger.",
+            title: t("page.offline.cannot_open_title"),
+            message: t("page.offline.cannot_open_message"),
             detail: String(error && error.message ? error.message : error),
           });
         }
@@ -226,7 +235,7 @@
           });
           box = document.createElement("div");
           box.id = "window-controls";
-          for (const [action, label] of [["minimize", "Minimize"], ["toggle-maximize", "Maximize"], ["close", "Close"]]) {
+          for (const action of ["minimize", "toggle-maximize", "close"]) {
             const button = document.createElement("button");
             button.type = "button";
             button.dataset.action = action;
@@ -248,7 +257,12 @@
           for (const button of box.children) {
             const action = button.dataset.action;
             const name = action === "toggle-maximize" ? (state.maximized ? "restore" : "maximize") : action;
-            const label = { minimize: "Minimize", maximize: "Maximize", restore: "Restore", close: "Close" }[name];
+            const label = {
+              minimize: t("page.window.minimize"),
+              maximize: t("page.window.maximize"),
+              restore: t("page.window.restore"),
+              close: t("page.window.close"),
+            }[name];
             if (button.dataset.icon !== name) {
               button.dataset.icon = name;
               button.innerHTML = icon(name);

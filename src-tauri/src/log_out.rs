@@ -5,6 +5,7 @@
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+use crate::i18n::{t, tf};
 use crate::settings::AppState;
 
 /// File/app menu and tray: Log Out…, after confirmation.
@@ -12,16 +13,12 @@ pub(crate) fn log_out(app: &tauri::AppHandle) {
     let handle = app.clone();
     let mut dialog = app
         .dialog()
-        .message(
-            "Chatpane logs you out of Facebook, deletes what it stored for this account on \
-             this computer (cookies, Messenger's data and cache, notification history and \
-             recent conversations) and restarts. Your Chatpane settings are kept.",
-        )
-        .title("Log Out")
+        .message(t("dialog.log_out.message"))
+        .title(t("dialog.log_out.title"))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
-            "Log Out".into(),
-            "Cancel".into(),
+            t("dialog.log_out.confirm").into(),
+            t("dialog.cancel").into(),
         ));
     if let Some(window) = crate::menu::dialog_parent(app) {
         dialog = dialog.parent(&window);
@@ -39,8 +36,8 @@ async fn reset(app: tauri::AppHandle) {
         log::error!("failed to schedule the account reset: {error}");
         message(
             &app,
-            "Couldn't Log Out",
-            &format!("Chatpane couldn't prepare the log out: {error}"),
+            t("dialog.log_out.failed_title"),
+            &tf("dialog.log_out.failed_message", &[("error", &error)]),
         );
         return;
     }
@@ -55,15 +52,15 @@ async fn reset(app: tauri::AppHandle) {
             log::warn!("log out failed before the reset: {error}");
             let handle = app.clone();
             app.dialog()
-                .message(format!(
-                    "Facebook didn't end the session ({error}). Chatpane still deletes this \
-                     account's data from this computer and restarts. To end the session on \
-                     Facebook too, log out of this device in Facebook's \"Where you're logged \
-                     in\" settings."
+                .message(tf(
+                    "dialog.log_out.facebook_failed_message",
+                    &[("error", &error)],
                 ))
-                .title("Couldn't Log Out of Facebook")
+                .title(t("dialog.log_out.facebook_failed_title"))
                 .kind(MessageDialogKind::Warning)
-                .buttons(MessageDialogButtons::OkCustom("Restart".into()))
+                .buttons(MessageDialogButtons::OkCustom(
+                    t("dialog.log_out.restart").into(),
+                ))
                 .show(move |_| handle.restart());
         }
     }

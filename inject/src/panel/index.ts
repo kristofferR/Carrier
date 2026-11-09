@@ -5,6 +5,7 @@
  *
  * Source of the generated src-tauri/inject/panel.js (see inject/build.ts).
  */
+import { language, t } from "../i18n";
 import { shortcutGroups } from "./shortcut-data";
 import { installStarPrompt } from "./star-prompt";
 import { installToast } from "./toast";
@@ -26,7 +27,7 @@ function main() {
   // Updates can replace and restart the app, so the remote Facebook origin
   // only opens trusted Settings, where the user explicitly confirms install.
   window.__chatpaneCheckUpdates = () => {
-    window.__chatpaneToast?.("Opening Settings to check for updates…");
+    window.__chatpaneToast?.(t("page.update.opening_settings"));
     emit("chatpane:open-settings");
   };
 
@@ -61,6 +62,7 @@ function main() {
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-labelledby", "chatpane-shortcuts-title");
+    Object.assign(overlay, language());
     Object.assign(overlay.style, {
       position: "fixed",
       inset: "0",
@@ -96,11 +98,11 @@ function main() {
     });
     const title = document.createElement("h2");
     title.id = "chatpane-shortcuts-title";
-    title.textContent = "Keyboard Shortcuts";
+    title.textContent = t("page.shortcuts.title");
     Object.assign(title.style, { margin: "0", fontSize: "20px", lineHeight: "1.2" });
     const close = document.createElement("button");
     close.type = "button";
-    close.setAttribute("aria-label", "Close keyboard shortcuts");
+    close.setAttribute("aria-label", t("page.shortcuts.close"));
     close.textContent = "×";
     Object.assign(close.style, {
       width: "36px",
@@ -144,6 +146,8 @@ function main() {
         });
         const keys = document.createElement("dt");
         const key = document.createElement("kbd");
+        // Key chords read left to right in every language.
+        key.dir = "ltr";
         key.textContent = item.keys;
         Object.assign(key.style, {
           display: "inline-block",

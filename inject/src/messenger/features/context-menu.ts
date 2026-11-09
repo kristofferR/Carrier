@@ -5,6 +5,7 @@
 // its reactions and Messenger's own message actions, after any media actions.
 // Right-click a conversation in the chat list for its own menu, plus export,
 // in place of its link's. Selected text and other links keep their usual menus.
+import { language, t } from "../../i18n";
 import {
   cleanSharedUrl,
   openUrl,
@@ -12,16 +13,13 @@ import {
   toastDownloadFailure,
   toastDownloadSaved,
 } from "../bridge";
-import {
-  CHAT_EXPORT_CONTEXT_MENU_LABELS,
-  CHAT_ROW_CONTEXT_MENU_LABELS,
-} from "../lib/chat-row-menu";
+import { CHAT_EXPORT_CONTEXT_MENU_KEYS, CHAT_ROW_CONTEXT_MENU_KEYS } from "../lib/chat-row-menu";
 import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 import { cssPropertyName, type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
 import {
   keyboardMenuPoint,
-  MESSAGE_CONTEXT_MENU_LABELS,
+  MESSAGE_CONTEXT_MENU_KEYS,
   messageActions,
   type Reaction,
   reactionLabel,
@@ -44,17 +42,41 @@ const MAX_BLOB = 512 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE = 16 * 1024 * 1024;
 const MAX_NATIVE_CONTEXT_VALUE = 64 * 1024;
 
-// Keep these names and arrays in sync with src-tauri/src/menu.rs. A Rust test
-// reads these declarations so the native allowlist cannot drift silently.
-const IMAGE_CONTEXT_MENU_LABELS = [
-  "Copy image",
-  "Download image",
-  "Share…",
-  "Copy image address",
-  "Open image in browser",
+// Rows are named by the string keys of their labels, which the native side
+// shows in the user's language. Keep these names and arrays in sync with
+// src-tauri/src/menu.rs. A Rust test reads these declarations so the native
+// allowlist cannot drift silently.
+const IMAGE_CONTEXT_MENU_KEYS = [
+  "shared.context.copy_image",
+  "shared.context.download_image",
+  "shared.context.share",
+  "shared.context.copy_image_address",
+  "shared.context.open_image_in_browser",
 ] as const;
-const VIDEO_CONTEXT_MENU_LABELS = ["Download video", "Share…", "Copy video address"] as const;
-const LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"] as const;
+const VIDEO_CONTEXT_MENU_KEYS = [
+  "shared.context.download_video",
+  "shared.context.share",
+  "shared.context.copy_video_address",
+] as const;
+const LINK_CONTEXT_MENU_KEYS = [
+  "shared.context.copy_link_address",
+  "shared.context.open_link_in_browser",
+] as const;
+
+// The page-rendered menu's row labels and language, read at document start like the
+// natives below: Messenger shares this JS world and could later rewrite the
+// string table to mislabel a privileged row.
+const ROW_LABELS: Record<string, string> = Object.fromEntries(
+  [
+    ...IMAGE_CONTEXT_MENU_KEYS,
+    ...VIDEO_CONTEXT_MENU_KEYS,
+    ...LINK_CONTEXT_MENU_KEYS,
+    ...MESSAGE_CONTEXT_MENU_KEYS,
+    ...CHAT_ROW_CONTEXT_MENU_KEYS,
+    ...CHAT_EXPORT_CONTEXT_MENU_KEYS,
+  ].map((key) => [key, t(key)]),
+);
+const ROW_LANGUAGE = language();
 
 // Capture the native registrar at document start. Messenger code runs in the
 // same JS world and may replace the prototype before a menu is opened.
@@ -158,6 +180,7 @@ function contextActionToken() {
   return token;
 }
 
+/** A row: its label's string key, or a reaction's emoji. */
 type ContextMenuItem = [
   label: string,
   run: (action?: string) => unknown,
@@ -246,14 +269,14 @@ const oversizeByHeader = (res: Response) => Number(res.headers.get("content-leng
 const copyAddress = (text: string) =>
   navigator.clipboard
     ?.writeText(cleanSharedUrl(text))
-    .then(() => toast("Address copied"))
-    .catch(() => toast("Copy failed"));
+    .then(() => toast(t("shared.context.address_copied")))
+    .catch(() => toast(t("shared.context.copy_failed")));
 
 const copyText = (text: string) =>
   navigator.clipboard
     ?.writeText(text)
-    .then(() => toast("Text copied"))
-    .catch(() => toast("Copy failed"));
+    .then(() => toast(t("shared.context.text_copied")))
+    .catch(() => toast(t("shared.context.copy_failed")));
 
 // Download a media src by letting the WebView initiate the download, which the
 // Rust `on_download` handler then writes to Downloads. (Custom commands can't
@@ -392,19 +415,19 @@ export function initContextMenu() {
   // key on a focused message. `prevent` cancels the triggering event once the
   // menu is Chatpane's.
   const openContextMenu = async (
-    t: Element,
+    target: Element,
     contextPoint: { x: number; y: number },
     keyboard: boolean,
     prevent: () => void,
     selectedByClick = false,
   ) => {
-    const anchor = t.closest?.("a[href]") as HTMLAnchorElement | null;
+    const anchor = target.closest?.("a[href]") as HTMLAnchorElement | null;
     // A chat-list conversation's menu covers its avatar and preview images.
     const chatRow = anchor && chatRowFor(anchor);
     const video = chatRow
       ? null
-      : t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
-    const img = chatRow ? null : (t.closest?.("img[alt]") as HTMLImageElement | null);
+      : target.closest?.("video") || (target.closest?.("div")?.querySelector?.("video") ?? null);
+    const img = chatRow ? null : (target.closest?.("img[alt]") as HTMLImageElement | null);
     const imgSrc = img && (img.currentSrc || img.src);
     const vidSrc = video && (video.currentSrc || video.src);
     const linkHref = chatRow ? undefined : anchor?.href;
@@ -421,14 +444,14 @@ export function initContextMenu() {
     };
     if (imgSrc) {
       addItem([
-        IMAGE_CONTEXT_MENU_LABELS[0],
+        IMAGE_CONTEXT_MENU_KEYS[0],
         (action) =>
           copyImageSrc(imgSrc, action)
-            .then(() => toast("Image copied"))
-            .catch(() => toast("Copy failed")),
+            .then(() => toast(t("page.context.image_copied")))
+            .catch(() => toast(t("shared.context.copy_failed"))),
       ]);
       addItem([
-        IMAGE_CONTEXT_MENU_LABELS[1],
+        IMAGE_CONTEXT_MENU_KEYS[1],
         () =>
           downloadSrc(imgSrc, "image")
             .then(({ url }) => toastDownloadSaved(url))
@@ -436,20 +459,20 @@ export function initContextMenu() {
       ]);
       if (isMac) {
         addItem([
-          IMAGE_CONTEXT_MENU_LABELS[2],
+          IMAGE_CONTEXT_MENU_KEYS[2],
           (action) =>
             action
               ? shareSrc(imgSrc, "image", fx, fy, action).catch((error) =>
-                  toastDownloadFailure(error, "Share failed"),
+                  toastDownloadFailure(error, t("page.context.share_failed")),
                 )
               : undefined,
         ]);
       }
-      addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
-      addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
+      addItem([IMAGE_CONTEXT_MENU_KEYS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
+      addItem([IMAGE_CONTEXT_MENU_KEYS[4], () => openUrl(imgSrc)]);
     } else if (vidSrc) {
       addItem([
-        VIDEO_CONTEXT_MENU_LABELS[0],
+        VIDEO_CONTEXT_MENU_KEYS[0],
         () =>
           downloadSrc(vidSrc, "video")
             .then(({ url }) => toastDownloadSaved(url))
@@ -457,19 +480,19 @@ export function initContextMenu() {
       ]);
       if (isMac) {
         addItem([
-          VIDEO_CONTEXT_MENU_LABELS[1],
+          VIDEO_CONTEXT_MENU_KEYS[1],
           (action) =>
             action
               ? shareSrc(vidSrc, "video", fx, fy, action).catch((error) =>
-                  toastDownloadFailure(error, "Share failed"),
+                  toastDownloadFailure(error, t("page.context.share_failed")),
                 )
               : undefined,
         ]);
       }
-      addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
+      addItem([VIDEO_CONTEXT_MENU_KEYS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
     } else if (linkHref && !linkHref.startsWith("javascript:")) {
-      addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref), cleanSharedUrl(linkHref)]);
-      addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
+      addItem([LINK_CONTEXT_MENU_KEYS[0], () => copyAddress(linkHref), cleanSharedUrl(linkHref)]);
+      addItem([LINK_CONTEXT_MENU_KEYS[1], () => openUrl(linkHref)]);
     }
     // A link keeps its own menu, and selected text the webview's (so Copy
     // still copies the selection).
@@ -480,10 +503,10 @@ export function initContextMenu() {
       !selectedByClick &&
       selection !== null &&
       !selection.isCollapsed &&
-      selection.containsNode(t, true);
+      selection.containsNode(target, true);
     const message =
       (imgSrc || vidSrc || !items.length) && !(selected && !items.length)
-        ? (messageFor(t) ?? null)
+        ? (messageFor(target) ?? null)
         : null;
     const conversation = selected ? null : chatRow;
     if (!items.length && !message && !conversation) return; // fall through to the native menu (text etc.)
@@ -495,8 +518,8 @@ export function initContextMenu() {
       message || keyboard
         ? keyboardMenuPoint(
             contextPoint,
-            rectOf(t),
-            rectOf(message ? (messageTextBlock(message) ?? message) : t),
+            rectOf(target),
+            rectOf(message ? (messageTextBlock(message) ?? message) : target),
           )
         : null;
     // Reading a message's actions takes a moment. A newer menu, a click, or
@@ -524,16 +547,16 @@ export function initContextMenu() {
       const threadId = threadIdFromHref(href);
       if (threadId) {
         addItem([
-          CHAT_EXPORT_CONTEXT_MENU_LABELS[0],
+          CHAT_EXPORT_CONTEXT_MENU_KEYS[0],
           () => startConversationExport("html", threadId),
         ]);
         addItem([
-          CHAT_EXPORT_CONTEXT_MENU_LABELS[1],
+          CHAT_EXPORT_CONTEXT_MENU_KEYS[1],
           () => startConversationExport("json", threadId),
         ]);
       }
       if (!items.length) {
-        toast("Messenger offers no actions for this conversation");
+        toast(t("page.context.no_conversation_actions"));
         return;
       }
     }
@@ -553,12 +576,12 @@ export function initContextMenu() {
       const actions = messageActions(offer);
       for (let index = 0; index < actions.length; index += 1) {
         const action = actions[index];
-        if (action === MESSAGE_CONTEXT_MENU_LABELS[1])
+        if (action === MESSAGE_CONTEXT_MENU_KEYS[1])
           addItem([action, () => copyText(offer.text), offer.text]);
         else if (action) addItem([action, () => runMessageAction(message, action)]);
       }
       if (!items.length) {
-        toast("Messenger offers no actions for this message");
+        toast(t("page.context.no_message_actions"));
         return;
       }
     }
@@ -624,7 +647,8 @@ export function initContextMenu() {
           ? previouslyFocused
           : null;
     closeMenu();
-    ctxMenuReturnFocus = (t.closest?.(focusableSelector) as HTMLElement | null) ?? priorReturnFocus;
+    ctxMenuReturnFocus =
+      (target.closest?.(focusableSelector) as HTMLElement | null) ?? priorReturnFocus;
     // The rows carry privileged actions, so they live in a *closed* shadow
     // root: Messenger shares this JS world and would otherwise be able to
     // find a row by its label and slide it under the pointer, turning the
@@ -645,9 +669,17 @@ export function initContextMenu() {
     ]) as ShadowRoot;
     const menu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
     nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
+    nativeReflectApply(nativeSetAttribute, menu, ["lang", ROW_LANGUAGE.lang]);
+    nativeReflectApply(nativeSetAttribute, menu, ["dir", ROW_LANGUAGE.dir]);
     nativeReflectApply(nativeSetAttribute, menu, [
       "aria-label",
-      message ? "Message actions" : conversation ? "Conversation actions" : "Media actions",
+      t(
+        message
+          ? "page.context.message_actions"
+          : conversation
+            ? "page.context.conversation_actions"
+            : "page.context.media_actions",
+      ),
     ]);
     const menuStyle = nativeReflectApply(nativeGetStyle, menu, []) as CSSStyleDeclaration;
     applyStyles(menuStyle, {
@@ -682,10 +714,7 @@ export function initContextMenu() {
       const item = items[index];
       if (!item) continue;
       const label = item[0];
-      if (
-        isMac &&
-        (label === IMAGE_CONTEXT_MENU_LABELS[2] || label === VIDEO_CONTEXT_MENU_LABELS[1])
-      ) {
+      if (isMac && (label === IMAGE_CONTEXT_MENU_KEYS[2] || label === VIDEO_CONTEXT_MENU_KEYS[1])) {
         // The native-only share action has no authorization token in the
         // page-rendered fallback menu.
         continue;
@@ -695,11 +724,11 @@ export function initContextMenu() {
       const reaction = item[3];
       const group = reaction
         ? 1
-        : (MESSAGE_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
+        : (MESSAGE_CONTEXT_MENU_KEYS as readonly string[]).includes(label)
           ? 2
-          : conversation && (CHAT_ROW_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
+          : conversation && (CHAT_ROW_CONTEXT_MENU_KEYS as readonly string[]).includes(label)
             ? 3
-            : conversation && (CHAT_EXPORT_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
+            : conversation && (CHAT_EXPORT_CONTEXT_MENU_KEYS as readonly string[]).includes(label)
               ? 4
               : 0;
       if (previousGroup !== null && previousGroup !== group) {
@@ -716,13 +745,18 @@ export function initContextMenu() {
       }
       previousGroup = group;
       const el = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
-      nativeReflectApply(nativeSetTextContent, el, [label]);
+      nativeReflectApply(nativeSetTextContent, el, [
+        reaction ? label : (ROW_LABELS[label] ?? label),
+      ]);
       nativeReflectApply(nativeSetAttribute, el, [
         "role",
         reaction ? "menuitemcheckbox" : "menuitem",
       ]);
       if (reaction) {
-        nativeReflectApply(nativeSetAttribute, el, ["aria-label", `React ${label}`]);
+        nativeReflectApply(nativeSetAttribute, el, [
+          "aria-label",
+          t("page.context.react_with", { emoji: label }),
+        ]);
         nativeReflectApply(nativeSetAttribute, el, ["aria-checked", `${reaction.checked}`]);
       }
       nativeReflectApply(nativeSetTabIndex, el, [-1]);
@@ -770,7 +804,7 @@ export function initContextMenu() {
           // than run a privileged action we cannot vouch for.
           if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
             closeMenu();
-            toast("Menu action cancelled");
+            toast(t("page.context.action_cancelled"));
             return;
           }
           activate(fn);
@@ -796,7 +830,10 @@ export function initContextMenu() {
             "div",
           ]) as HTMLDivElement;
           nativeReflectApply(nativeSetAttribute, reactionRow, ["role", "group"]);
-          nativeReflectApply(nativeSetAttribute, reactionRow, ["aria-label", "React"]);
+          nativeReflectApply(nativeSetAttribute, reactionRow, [
+            "aria-label",
+            t("shared.context.react"),
+          ]);
           applyStyles(nativeReflectApply(nativeGetStyle, reactionRow, []) as CSSStyleDeclaration, {
             display: "flex",
             gap: "2px",

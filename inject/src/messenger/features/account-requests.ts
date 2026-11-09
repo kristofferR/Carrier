@@ -2,6 +2,7 @@
 // Native asks through `window.__chatpaneAccount(request, action, value)` and
 // reads the answer on `chatpane:account-result`: Messenger's own account
 // settings for Settings → Account (Ref #358), and Log Out (Ref #356).
+import { t } from "../../i18n";
 import { diag, invoke } from "../bridge";
 import { pageRequire } from "../lib/facebook-loader";
 import { logOutOfFacebook } from "../lib/log-out";
@@ -15,7 +16,7 @@ export function initAccountRequests() {
   if (!window.__TAURI_INTERNALS__) return;
   const signedIn = () => {
     const account = accountId(document.cookie);
-    if (!account) throw new Error("Log in to Messenger first.");
+    if (!account) throw new Error(t("page.account.log_in_first"));
     return account;
   };
   const actions: Record<string, Action> = {

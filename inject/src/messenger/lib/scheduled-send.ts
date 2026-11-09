@@ -1,3 +1,5 @@
+import { formatLocale, t } from "../../i18n";
+
 export const SEND_GRACE_MS = 120_000;
 export const MAX_SCHEDULED_CHARS = 2_000;
 
@@ -59,10 +61,12 @@ export function schedulePresets(now: number) {
   tomorrow.setDate(tomorrow.getDate() + 1);
   tomorrow.setHours(9, 0, 0, 0);
   return [
-    { label: "In 15 minutes", due: now + 15 * 60_000 },
-    { label: "In 1 hour", due: now + 60 * 60_000 },
-    ...(evening.getTime() > now ? [{ label: "This evening", due: evening.getTime() }] : []),
-    { label: "Tomorrow morning", due: tomorrow.getTime() },
+    { label: t("page.schedule.preset.in_15_minutes"), due: now + 15 * 60_000 },
+    { label: t("page.schedule.preset.in_1_hour"), due: now + 60 * 60_000 },
+    ...(evening.getTime() > now
+      ? [{ label: t("page.schedule.preset.this_evening"), due: evening.getTime() }]
+      : []),
+    { label: t("page.schedule.preset.tomorrow_morning"), due: tomorrow.getTime() },
   ];
 }
 
@@ -90,7 +94,7 @@ export function localDateValue(time: number): string {
 }
 
 export const formatScheduleTime = (time: number, includeDate = false): string =>
-  new Intl.DateTimeFormat(undefined, {
+  new Intl.DateTimeFormat(formatLocale(), {
     ...(includeDate ? ({ month: "short", day: "numeric" } as const) : {}),
     hour: "2-digit",
     minute: "2-digit",

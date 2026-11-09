@@ -2,6 +2,7 @@
 // WebKitGTK builds ship without WebRTC, so Messenger can't place calls on Linux
 // and greys out its call buttons with a terse "not supported on this browser"
 // tooltip. Hovering either button explains why instead and links to #345.
+import { language, t } from "../../i18n";
 import { openUrl } from "../bridge";
 import { engineSupportsCalls } from "../lib/calls";
 
@@ -26,6 +27,7 @@ export function initLinuxCallNotice() {
 
   const host = document.createElement("div");
   host.id = "chatpane-linux-call-notice";
+  Object.assign(host, language());
   const root = host.attachShadow({ mode: "closed" });
   root.innerHTML = `<style>
     :host { all: initial; color-scheme: light dark;
@@ -44,13 +46,12 @@ export function initLinuxCallNotice() {
     button { all: unset; color: var(--link); font-weight: 600; cursor: pointer; }
     button:hover { text-decoration: underline; }
     button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 3px; }
-  </style><section role="note">
-    <strong>Calls don't work on Linux yet</strong>
-    <p>The browser engine Chatpane uses on Linux is missing the calling support Messenger
-      needs, so voice and video calls can't start here.</p>
-    <button type="button">Read more about it</button>
-  </section>`;
-  root.querySelector("button")!.addEventListener("click", () => openUrl(ISSUE_URL));
+  </style><section role="note"><strong></strong><p></p><button type="button"></button></section>`;
+  root.querySelector("strong")!.textContent = t("page.linux_calls.title");
+  root.querySelector("p")!.textContent = t("page.linux_calls.body");
+  const more = root.querySelector("button")!;
+  more.textContent = t("page.linux_calls.read_more");
+  more.addEventListener("click", () => openUrl(ISSUE_URL));
 
   // Messenger's own tooltip on the same button would overlap the notice.
   const hideFacebookTooltips = document.createElement("style");

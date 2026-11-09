@@ -1,4 +1,6 @@
 /* ------------------------- Tauri bridge + toast ----------------------- */
+
+import { t } from "../i18n";
 import {
   downloadAccessDeniedToast,
   downloadRevealLabel,
@@ -62,8 +64,8 @@ export const openUrl = (url: string) =>
 export const toastDownloadSaved = (url: string) =>
   toast(
     window.__CHATPANE_SETTINGS__?.download_behavior === "ask"
-      ? "Download saved"
-      : "Saved to Downloads",
+      ? t("page.download.saved")
+      : t("page.download.saved_to_downloads"),
     {
       label: downloadRevealLabel(navigator.userAgent),
       kind: "reveal-download",
@@ -73,9 +75,9 @@ export const toastDownloadSaved = (url: string) =>
 
 // A folder-access refusal has its own toast (`toastDownloadAccessDenied`),
 // shown for every download, so the generic failure must not replace it.
-export const toastDownloadFailure = (error: unknown, message = "Download failed") => {
+export const toastDownloadFailure = (error: unknown, message?: string) => {
   if (isDownloadCancellation(error) || isDownloadAccessDenied(error)) return;
-  toast(message);
+  toast(message ?? t("page.download.failed"));
 };
 
 export const toastDownloadAccessDenied = () => {

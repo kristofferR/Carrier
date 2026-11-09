@@ -15,6 +15,7 @@ use futures_util::future::{Either, select};
 use futures_util::{StreamExt, pin_mut};
 use tauri::Manager;
 
+use crate::i18n::{t, tf};
 use crate::settings::{AppState, save_settings};
 use crate::tray::toggle_main_with_activation_token;
 
@@ -248,8 +249,13 @@ async fn remember_portal_owner(portal: &GlobalShortcuts) -> Result<(), BindFailu
 async fn close_session(session: &Session<GlobalShortcuts>) -> Result<(), String> {
     tokio::time::timeout(CLOSE_TIMEOUT, session.close())
         .await
-        .map_err(|_| "Couldn't disable portal Global Hotkey: close timed out".to_string())?
-        .map_err(|error| format!("Couldn't disable portal Global Hotkey: {error}"))
+        .map_err(|_| {
+            tf(
+                "hotkey.error.portal_disable",
+                &[("error", &"close timed out")],
+            )
+        })?
+        .map_err(|error| tf("hotkey.error.portal_disable", &[("error", &error)]))
 }
 
 async fn close_after_portal_failure(
@@ -368,8 +374,8 @@ async fn run_portal_session(
             return Err(close_after_portal_failure(&session, failure).await);
         }
     };
-    let shortcut =
-        NewShortcut::new(SHORTCUT_ID, "Show or hide Chatpane").preferred_trigger(PREFERRED_TRIGGER);
+    let shortcut = NewShortcut::new(SHORTCUT_ID, t("hotkey.portal.description"))
+        .preferred_trigger(PREFERRED_TRIGGER);
     let shortcuts = [shortcut];
     let bind = tokio::time::timeout(
         BIND_TIMEOUT,
@@ -544,7 +550,7 @@ pub(crate) fn enable(app: &tauri::AppHandle) -> Result<(), EnableError> {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => {
             clear_keeper(generation);
-            let message = format!("Couldn't enable portal Global Hotkey: {}", error.message);
+            let message = tf("hotkey.error.portal_enable", &[("error", &error.message)]);
             if error.denied {
                 Err(EnableError::Denied(message))
             } else {
@@ -553,8 +559,9 @@ pub(crate) fn enable(app: &tauri::AppHandle) -> Result<(), EnableError> {
         }
         Err(error) => {
             clear_keeper(generation);
-            Err(EnableError::Unavailable(format!(
-                "Couldn't start portal Global Hotkey: {error}"
+            Err(EnableError::Unavailable(tf(
+                "hotkey.error.portal_start",
+                &[("error", &error)],
             )))
         }
     }
@@ -566,13 +573,15 @@ pub(crate) fn disable() -> Result<(), String> {
         return Ok(());
     };
     let (closed_tx, closed_rx) = mpsc::sync_channel(1);
-    keeper
-        .stop
-        .send(closed_tx)
-        .map_err(|_| "Couldn't disable portal Global Hotkey: keeper stopped".to_string())?;
+    keeper.stop.send(closed_tx).map_err(|_| {
+        tf(
+            "hotkey.error.portal_disable",
+            &[("error", &"keeper stopped")],
+        )
+    })?;
     closed_rx
         .recv_timeout(CLOSE_WAIT_TIMEOUT)
-        .map_err(|error| format!("Couldn't disable portal Global Hotkey: {error}"))?
+        .map_err(|error| tf("hotkey.error.portal_disable", &[("error", &error)]))?
 }
 
 #[cfg(test)]

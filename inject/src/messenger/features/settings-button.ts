@@ -2,6 +2,7 @@
 // Messenger's chat-list header already has an overflow control and a compose
 // button. Add a Chatpane-owned gear immediately before the overflow control so
 // Settings stays reachable even when the native menu bar is hidden.
+import { t } from "../../i18n";
 import { isMessengerHeaderOverflowControl } from "../lib/settings-button";
 
 const SLOT_ATTR = "data-chatpane-settings-slot";
@@ -74,8 +75,8 @@ function createSettingsSlot(): HTMLDivElement {
   const button = document.createElement("button");
   button.type = "button";
   button.setAttribute(BUTTON_ATTR, "");
-  button.setAttribute("aria-label", "Chatpane Settings");
-  button.title = "Chatpane Settings";
+  button.setAttribute("aria-label", t("page.settings_button"));
+  button.title = t("page.settings_button");
   button.appendChild(createGearIcon());
   button.addEventListener("click", (event) => {
     event.preventDefault();

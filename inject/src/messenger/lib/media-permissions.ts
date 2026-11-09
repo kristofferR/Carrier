@@ -1,3 +1,5 @@
+import { t } from "../../i18n";
+
 export type MediaDevice = "camera" | "microphone";
 export type MediaPlatform = "macos" | "windows" | "linux";
 
@@ -8,8 +10,15 @@ export function requestedMediaDevices(constraints?: MediaStreamConstraints): Med
   return devices;
 }
 
-export function mediaDeviceLabel(devices: readonly MediaDevice[]): string {
-  return devices.join(" and ") || "media device";
+/** The text for this set of devices. Each form is a whole sentence, so a
+ * translation never splices a device name into one. */
+export function forDevices(
+  devices: readonly MediaDevice[],
+  text: { camera: string; microphone: string; both: string },
+): string {
+  const camera = devices.includes("camera");
+  if (camera && devices.includes("microphone")) return text.both;
+  return camera ? text.camera : text.microphone;
 }
 
 export function captureFailure(error: unknown) {
@@ -34,11 +43,11 @@ export function captureFailure(error: unknown) {
 export function mediaPrivacyGuidance(platform: MediaPlatform): string {
   switch (platform) {
     case "macos":
-      return "Check System Settings → Privacy & Security and allow Chatpane access. Then try the call again.";
+      return t("page.media.guidance.macos");
     case "windows":
-      return "Check Settings → Privacy & security and allow desktop apps access. Then try the call again.";
+      return t("page.media.guidance.windows");
     case "linux":
-      return "Check your desktop’s privacy and sound input settings, hardware privacy switches, and any sandbox permissions for Chatpane. Then try the call again.";
+      return t("page.media.guidance.linux");
   }
 }
 
@@ -46,18 +55,37 @@ export function captureFailureMessage(
   failure: ReturnType<typeof captureFailure>,
   devices: readonly MediaDevice[],
 ) {
-  const label = mediaDeviceLabel(devices);
   switch (failure) {
     case "denied":
-      return `Access was denied for the requested ${label}.`;
+      return forDevices(devices, {
+        camera: t("page.media.denied.camera"),
+        microphone: t("page.media.denied.microphone"),
+        both: t("page.media.denied.both"),
+      });
     case "missing":
-      return `No matching device was found for the requested ${label}. Check that the devices are connected and enabled, then try again.`;
+      return forDevices(devices, {
+        camera: t("page.media.missing.camera"),
+        microphone: t("page.media.missing.microphone"),
+        both: t("page.media.missing.both"),
+      });
     case "unavailable":
-      return `The requested ${label} could not start. Close other apps using these devices, check the connection, and try again.`;
+      return forDevices(devices, {
+        camera: t("page.media.unavailable.camera"),
+        microphone: t("page.media.unavailable.microphone"),
+        both: t("page.media.unavailable.both"),
+      });
     case "constraints":
-      return `The requested ${label} settings are not supported. Choose another device or call setting in Messenger and try again.`;
+      return forDevices(devices, {
+        camera: t("page.media.constraints.camera"),
+        microphone: t("page.media.constraints.microphone"),
+        both: t("page.media.constraints.both"),
+      });
     case "other":
-      return `Capture failed for the requested ${label}. Check Messenger’s call settings and try again.`;
+      return forDevices(devices, {
+        camera: t("page.media.other.camera"),
+        microphone: t("page.media.other.microphone"),
+        both: t("page.media.other.both"),
+      });
   }
 }
 

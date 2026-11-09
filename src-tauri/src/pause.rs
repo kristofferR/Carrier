@@ -4,9 +4,10 @@
 //! and a pause that ended while Chatpane was closed is already over at launch.
 //! "Until I turn them back on" is the existing `mute_notifications` setting.
 
-use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveTime, TimeZone, Weekday};
 use tauri::Manager;
 
+use crate::i18n::{t, tf};
 use crate::settings::{AppState, Settings};
 
 /// "Until tomorrow morning" ends at this local hour.
@@ -72,16 +73,28 @@ pub(crate) fn pause_state(s: &Settings, now_ms: i64) -> PauseState {
     }
 }
 
-/// "14:30" today, "Tue 08:00" on another day.
-fn end_label<Tz: TimeZone>(until: &DateTime<Tz>, now: &DateTime<Tz>) -> String
+/// "Paused until 14:30" today, "Paused until Tue 08:00" on another day.
+fn paused_until_label<Tz: TimeZone>(until: &DateTime<Tz>, now: &DateTime<Tz>) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
+    let time = until.format("%H:%M").to_string();
     if until.date_naive() == now.date_naive() {
-        until.format("%H:%M").to_string()
-    } else {
-        until.format("%a %H:%M").to_string()
+        return tf("pause.paused_until", &[("time", &time)]);
     }
+    let weekday = match until.weekday() {
+        Weekday::Mon => t("pause.weekday.monday"),
+        Weekday::Tue => t("pause.weekday.tuesday"),
+        Weekday::Wed => t("pause.weekday.wednesday"),
+        Weekday::Thu => t("pause.weekday.thursday"),
+        Weekday::Fri => t("pause.weekday.friday"),
+        Weekday::Sat => t("pause.weekday.saturday"),
+        Weekday::Sun => t("pause.weekday.sunday"),
+    };
+    tf(
+        "pause.paused_until_day",
+        &[("weekday", &weekday), ("time", &time)],
+    )
 }
 
 /// One entry of the Pause Notifications submenu: (id, label, enabled).
@@ -89,14 +102,14 @@ pub(crate) type PauseEntry = (&'static str, String, bool);
 
 /// The submenu title and its entries for the current state.
 pub(crate) fn pause_menu(state: PauseState, now_ms: i64) -> (String, Vec<PauseEntry>) {
-    let resume = (PAUSE_RESUME_ID, "Resume Notifications".to_string(), true);
+    let resume = (PAUSE_RESUME_ID, t("pause.resume").to_string(), true);
     match state {
         PauseState::Active => (
-            "Pause Notifications".into(),
+            t("pause.title").into(),
             vec![
-                (PAUSE_HOUR_ID, "For 1 Hour".into(), true),
-                (PAUSE_MORNING_ID, "Until Tomorrow Morning".into(), true),
-                (PAUSE_OFF_ID, "Until I Turn Them Back On".into(), true),
+                (PAUSE_HOUR_ID, t("pause.one_hour").into(), true),
+                (PAUSE_MORNING_ID, t("pause.until_morning").into(), true),
+                (PAUSE_OFF_ID, t("pause.until_turned_on").into(), true),
             ],
         ),
         PauseState::PausedUntil(until) => {
@@ -104,22 +117,18 @@ pub(crate) fn pause_menu(state: PauseState, now_ms: i64) -> (String, Vec<PauseEn
                 Local.timestamp_millis_opt(until).single(),
                 Local.timestamp_millis_opt(now_ms).single(),
             ) {
-                (Some(until), Some(now)) => format!("Paused until {}", end_label(&until, &now)),
-                _ => "Paused".into(),
+                (Some(until), Some(now)) => paused_until_label(&until, &now),
+                _ => t("pause.paused").into(),
             };
             (
-                "Notifications Paused".into(),
+                t("pause.title_paused").into(),
                 vec![("pause:status", label, false), resume],
             )
         }
         PauseState::Off => (
-            "Notifications Off".into(),
+            t("pause.title_off").into(),
             vec![
-                (
-                    "pause:status",
-                    "Off until you turn them back on".into(),
-                    false,
-                ),
+                ("pause:status", t("pause.off_until_turned_on").into(), false),
                 resume,
             ],
         ),

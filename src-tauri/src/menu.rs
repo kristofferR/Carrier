@@ -18,6 +18,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::APP_TITLE;
 use crate::actions::{AppAction, NEW_CONVERSATION_JS, run_app_action, validated_thread_path};
 use crate::export::Format as ExportFormat;
+use crate::i18n::t;
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
 #[cfg(target_os = "macos")]
@@ -31,11 +32,11 @@ use crate::tray::show_main;
 use crate::window::show_settings_window;
 
 /// Help menu items that copy the share message and open the GitHub repository,
-/// labelled with `growth::NAME`.
+/// labelled with the app name.
 fn share_and_star_items(
     app: &tauri::AppHandle,
 ) -> tauri::Result<(MenuItem<tauri::Wry>, MenuItem<tauri::Wry>)> {
-    let name = crate::growth::NAME;
+    let name = crate::i18n::APP_NAME;
     Ok((
         menu_item(
             app,
@@ -57,7 +58,7 @@ fn about_metadata(version: &str) -> AboutMetadata<'static> {
         name: Some("Chatpane".into()),
         version: Some(version.into()),
         authors: Some(vec!["kristofferR".into()]),
-        comments: Some("A tiny, distraction-free desktop client for Facebook Messenger.".into()),
+        comments: Some(t("menu.about_comments").into()),
         license: Some("MIT".into()),
         website: Some(crate::growth::REPO_URL.into()),
         website_label: Some("GitHub".into()),
@@ -65,13 +66,20 @@ fn about_metadata(version: &str) -> AboutMetadata<'static> {
     }
 }
 
+/// Translated text as a menu label: muda reads `&` as a mnemonic marker, so a
+/// literal one is doubled.
+pub(crate) fn menu_label(text: &str) -> String {
+    text.replace('&', "&&")
+}
+
+/// A menu item labelled with translated `label`.
 fn menu_item(
     app: &tauri::AppHandle,
     id: &str,
     label: &str,
     accelerator: Option<&str>,
 ) -> tauri::Result<MenuItem<tauri::Wry>> {
-    let mut builder = MenuItemBuilder::new(label).id(id);
+    let mut builder = MenuItemBuilder::new(menu_label(label)).id(id);
     if let Some(accelerator) = accelerator {
         builder = builder.accelerator(accelerator);
     }
@@ -80,80 +88,96 @@ fn menu_item(
 
 /// Log Out… (Ref #356); the tray has it too.
 fn log_out_item(app: &tauri::AppHandle) -> tauri::Result<MenuItem<tauri::Wry>> {
-    menu_item(app, "log_out", crate::tray::LOG_OUT_LABEL, None)
+    menu_item(app, "log_out", t("menu.log_out"), None)
 }
 
 #[cfg(target_os = "macos")]
 pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let prefs = menu_item(app, "preferences", "Settings…", Some("CmdOrCtrl+,"))?;
+    let prefs = menu_item(
+        app,
+        "preferences",
+        t("menu.mac.settings"),
+        Some("CmdOrCtrl+,"),
+    )?;
     let log_out = log_out_item(app)?;
     let about = about_metadata(&app.package_info().version.to_string());
     let app_menu = SubmenuBuilder::new(app, APP_TITLE)
-        .about(Some(about))
+        .about_with_text(menu_label(t("menu.mac.about")), Some(about))
         .separator()
         .item(&prefs)
         .separator()
         .item(&log_out)
         .separator()
-        .services()
+        .services_with_text(menu_label(t("menu.mac.services")))
         .separator()
-        .hide()
-        .hide_others()
-        .show_all()
+        .hide_with_text(menu_label(t("menu.mac.hide")))
+        .hide_others_with_text(menu_label(t("menu.mac.hide_others")))
+        .show_all_with_text(menu_label(t("menu.mac.show_all")))
         .separator()
-        .quit()
+        .quit_with_text(menu_label(t("menu.mac.quit")))
         .build()?;
 
     let new_conversation = menu_item(
         app,
         "new_conversation",
-        "New Conversation",
+        t("menu.file.new_conversation"),
         Some("CmdOrCtrl+Shift+N"),
     )?;
-    let new_window = menu_item(app, "new_window", "New Window", Some("CmdOrCtrl+N"))?;
-    let export_html = menu_item(app, "export_html", "Export Conversation as HTML…", None)?;
-    let export_json = menu_item(app, "export_json", "Export Conversation as JSON…", None)?;
-    let file = SubmenuBuilder::new(app, "File")
+    let new_window = menu_item(
+        app,
+        "new_window",
+        t("menu.file.new_window"),
+        Some("CmdOrCtrl+N"),
+    )?;
+    let export_html = menu_item(app, "export_html", t("menu.file.export_html"), None)?;
+    let export_json = menu_item(app, "export_json", t("menu.file.export_json"), None)?;
+    let close_window = menu_label(t("menu.mac.close_window"));
+    let file = SubmenuBuilder::new(app, menu_label(t("menu.mac.file")))
         .item(&new_conversation)
         .item(&new_window)
         .separator()
         .item(&export_html)
         .item(&export_json)
         .separator()
-        .close_window()
+        .close_window_with_text(&close_window)
         .build()?;
 
     let paste_match = menu_item(
         app,
         "paste_match_style",
-        "Paste and Match Style",
+        t("menu.mac.paste_match_style"),
         Some("CmdOrCtrl+Shift+Alt+V"),
     )?;
-    let edit = SubmenuBuilder::new(app, "Edit")
-        .undo()
-        .redo()
+    let edit = SubmenuBuilder::new(app, menu_label(t("menu.mac.edit")))
+        .undo_with_text(menu_label(t("menu.mac.undo")))
+        .redo_with_text(menu_label(t("menu.mac.redo")))
         .separator()
-        .cut()
-        .copy()
-        .paste()
+        .cut_with_text(menu_label(t("menu.mac.cut")))
+        .copy_with_text(menu_label(t("menu.mac.copy")))
+        .paste_with_text(menu_label(t("menu.mac.paste")))
         .item(&paste_match)
-        .select_all()
+        .select_all_with_text(menu_label(t("menu.mac.select_all")))
         .build()?;
 
-    let reload = menu_item(app, "reload", "Reload", Some("CmdOrCtrl+R"))?;
+    let reload = menu_item(app, "reload", t("menu.view.reload"), Some("CmdOrCtrl+R"))?;
     let clear_cache = menu_item(
         app,
         "clear_cache",
-        "Clear Cache && Restart",
+        t("menu.view.clear_cache"),
         Some("CmdOrCtrl+Shift+Backspace"),
     )?;
-    let zreset = menu_item(app, "zoom_reset", "Actual Size", Some("CmdOrCtrl+0"))?;
-    let zin = menu_item(app, "zoom_in", "Zoom In", Some("CmdOrCtrl+="))?;
-    let zout = menu_item(app, "zoom_out", "Zoom Out", Some("CmdOrCtrl+-"))?;
-    let theme_sys = menu_item(app, "theme_system", "System", None)?;
-    let theme_light = menu_item(app, "theme_light", "Light", None)?;
-    let theme_dark = menu_item(app, "theme_dark", "Dark", None)?;
-    let theme_menu = SubmenuBuilder::new(app, "Theme")
+    let zreset = menu_item(
+        app,
+        "zoom_reset",
+        t("menu.mac.actual_size"),
+        Some("CmdOrCtrl+0"),
+    )?;
+    let zin = menu_item(app, "zoom_in", t("menu.mac.zoom_in"), Some("CmdOrCtrl+="))?;
+    let zout = menu_item(app, "zoom_out", t("menu.mac.zoom_out"), Some("CmdOrCtrl+-"))?;
+    let theme_sys = menu_item(app, "theme_system", t("menu.view.theme.system"), None)?;
+    let theme_light = menu_item(app, "theme_light", t("menu.view.theme.light"), None)?;
+    let theme_dark = menu_item(app, "theme_dark", t("menu.view.theme.dark"), None)?;
+    let theme_menu = SubmenuBuilder::new(app, menu_label(t("menu.view.theme.title")))
         .item(&theme_sys)
         .item(&theme_light)
         .item(&theme_dark)
@@ -161,25 +185,30 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     let toggle_info = menu_item(
         app,
         "toggle_info",
-        "Toggle Conversation Information",
+        t("menu.view.toggle_info"),
         Some("CmdOrCtrl+Shift+I"),
     )?;
     // Shift+N belongs to New Conversation, so "hide" gets Shift+H.
     let hide_names = menu_item(
         app,
         "hide_names",
-        "Hide Names && Avatars",
+        t("menu.view.hide_names"),
         Some("CmdOrCtrl+Shift+H"),
     )?;
-    let aot = menu_item(app, "always_on_top", "Toggle Always on Top", None)?;
+    let aot = menu_item(
+        app,
+        "always_on_top",
+        t("menu.view.toggle_always_on_top"),
+        None,
+    )?;
     let devtools = menu_item(
         app,
         "devtools",
-        "Toggle Developer Tools",
+        t("menu.view.devtools"),
         Some("CmdOrCtrl+Alt+I"),
     )?;
     let view = {
-        let b = SubmenuBuilder::new(app, "View")
+        let b = SubmenuBuilder::new(app, menu_label(t("menu.mac.view")))
             .item(&reload)
             .item(&clear_cache)
             .separator()
@@ -197,33 +226,43 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         b.build()?
     };
 
-    let maximize = menu_item(app, "maximize", "Zoom", None)?;
+    let maximize = menu_item(app, "maximize", t("menu.mac.zoom"), None)?;
     // Tauri registers this ID with AppKit after installing the application menu,
     // letting macOS add its supported window controls and live window list.
-    let window = SubmenuBuilder::with_id(app, tauri::menu::WINDOW_SUBMENU_ID, "Window")
-        .minimize()
-        .item(&maximize)
-        .separator()
-        .close_window()
-        .separator()
-        .bring_all_to_front()
-        .build()?;
+    let window = SubmenuBuilder::with_id(
+        app,
+        tauri::menu::WINDOW_SUBMENU_ID,
+        menu_label(t("menu.mac.window")),
+    )
+    .minimize_with_text(menu_label(t("menu.mac.minimize")))
+    .item(&maximize)
+    .separator()
+    .close_window_with_text(&close_window)
+    .separator()
+    .bring_all_to_front_with_text(menu_label(t("menu.mac.bring_all_to_front")))
+    .build()?;
 
     let shortcuts = menu_item(
         app,
         "keyboard_shortcuts",
-        "Keyboard Shortcuts",
+        t("menu.help.keyboard_shortcuts"),
         Some("CmdOrCtrl+/"),
     )?;
-    let report_issue = menu_item(app, "report_issue", "Report an Issue…", None)?;
+    let report_issue = menu_item(app, "report_issue", t("menu.help.report_issue"), None)?;
     let (share, star) = share_and_star_items(app)?;
-    let help = SubmenuBuilder::new(app, "Help")
-        .item(&shortcuts)
-        .separator()
-        .item(&report_issue)
-        .item(&share)
-        .item(&star)
-        .build()?;
+    // Registered as the app's Help menu, so AppKit still adds its search field
+    // when the title is translated.
+    let help = SubmenuBuilder::with_id(
+        app,
+        tauri::menu::HELP_SUBMENU_ID,
+        menu_label(t("menu.mac.help")),
+    )
+    .item(&shortcuts)
+    .separator()
+    .item(&report_issue)
+    .item(&share)
+    .item(&star)
+    .build()?;
 
     Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window, &help])
 }
@@ -236,29 +275,39 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
                       checked: bool,
                       accelerator: Option<&str>|
      -> tauri::Result<CheckMenuItem<tauri::Wry>> {
-        CheckMenuItem::with_id(app, id, label, true, checked, accelerator)
+        CheckMenuItem::with_id(app, id, menu_label(label), true, checked, accelerator)
     };
 
     let new_conversation = menu_item(
         app,
         "new_conversation",
-        "New Conversation",
+        t("menu.file.new_conversation"),
         Some("CmdOrCtrl+Shift+N"),
     )?;
-    let new_window = menu_item(app, "new_window", "New Window", Some("CmdOrCtrl+N"))?;
-    let export_html = menu_item(app, "export_html", "Export Conversation as HTML…", None)?;
-    let export_json = menu_item(app, "export_json", "Export Conversation as JSON…", None)?;
-    let close_window = menu_item(app, "close_window", "Close Window", Some("CmdOrCtrl+W"))?;
+    let new_window = menu_item(
+        app,
+        "new_window",
+        t("menu.file.new_window"),
+        Some("CmdOrCtrl+N"),
+    )?;
+    let export_html = menu_item(app, "export_html", t("menu.file.export_html"), None)?;
+    let export_json = menu_item(app, "export_json", t("menu.file.export_json"), None)?;
+    let close_window = menu_item(
+        app,
+        "close_window",
+        t("menu.file.close_window"),
+        Some("CmdOrCtrl+W"),
+    )?;
     let preferences_label = if cfg!(target_os = "windows") {
-        "Settings…"
+        t("menu.settings")
     } else {
-        "Preferences…"
+        t("menu.preferences")
     };
     let preferences = menu_item(app, "preferences", preferences_label, Some("CmdOrCtrl+,"))?;
     let quit_label = if cfg!(target_os = "windows") {
-        "Exit"
+        t("menu.exit")
     } else {
-        "Quit"
+        t("menu.quit")
     };
     let quit_accelerator = if cfg!(target_os = "linux") {
         Some("Ctrl+Q")
@@ -267,7 +316,7 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     };
     let quit = menu_item(app, "quit", quit_label, quit_accelerator)?;
     let log_out = log_out_item(app)?;
-    let file_builder = SubmenuBuilder::new(app, "File")
+    let file_builder = SubmenuBuilder::new(app, menu_label(t("menu.file.title")))
         .id("file")
         .item(&new_conversation)
         .item(&new_window)
@@ -291,31 +340,36 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     let paste_match = menu_item(
         app,
         "paste_match_style",
-        "Paste and Match Style",
+        t("menu.edit.paste_match_style"),
         Some("CmdOrCtrl+Shift+Alt+V"),
     )?;
     #[cfg(target_os = "windows")]
-    let edit = SubmenuBuilder::new(app, "Edit")
+    let edit = SubmenuBuilder::new(app, menu_label(t("menu.edit.title")))
         .id("edit")
-        .undo()
-        .redo()
+        .undo_with_text(menu_label(t("menu.edit.undo")))
+        .redo_with_text(menu_label(t("menu.edit.redo")))
         .separator()
-        .cut()
-        .copy()
-        .paste()
+        .cut_with_text(menu_label(t("menu.edit.cut")))
+        .copy_with_text(menu_label(t("menu.edit.copy")))
+        .paste_with_text(menu_label(t("menu.edit.paste")))
         .item(&paste_match)
         .separator()
-        .select_all()
+        .select_all_with_text(menu_label(t("menu.edit.select_all")))
         .build()?;
     #[cfg(target_os = "linux")]
     let edit = {
-        let undo = menu_item(app, "edit_undo", "Undo", Some("Ctrl+Z"))?;
-        let redo = menu_item(app, "edit_redo", "Redo", Some("Ctrl+Shift+Z"))?;
-        let cut = menu_item(app, "edit_cut", "Cut", Some("Ctrl+X"))?;
-        let copy = menu_item(app, "edit_copy", "Copy", Some("Ctrl+C"))?;
-        let paste = menu_item(app, "edit_paste", "Paste", Some("Ctrl+V"))?;
-        let select_all = menu_item(app, "edit_select_all", "Select All", Some("Ctrl+A"))?;
-        SubmenuBuilder::new(app, "Edit")
+        let undo = menu_item(app, "edit_undo", t("menu.edit.undo"), Some("Ctrl+Z"))?;
+        let redo = menu_item(app, "edit_redo", t("menu.edit.redo"), Some("Ctrl+Shift+Z"))?;
+        let cut = menu_item(app, "edit_cut", t("menu.edit.cut"), Some("Ctrl+X"))?;
+        let copy = menu_item(app, "edit_copy", t("menu.edit.copy"), Some("Ctrl+C"))?;
+        let paste = menu_item(app, "edit_paste", t("menu.edit.paste"), Some("Ctrl+V"))?;
+        let select_all = menu_item(
+            app,
+            "edit_select_all",
+            t("menu.edit.select_all"),
+            Some("Ctrl+A"),
+        )?;
+        SubmenuBuilder::new(app, menu_label(t("menu.edit.title")))
             .id("edit")
             .item(&undo)
             .item(&redo)
@@ -331,32 +385,57 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
             .build()?
     };
 
-    let reload = menu_item(app, "reload", "Reload", Some("CmdOrCtrl+R"))?;
+    let reload = menu_item(app, "reload", t("menu.view.reload"), Some("CmdOrCtrl+R"))?;
     let conversation_info = menu_item(
         app,
         "toggle_info",
-        "Conversation Information",
+        t("menu.view.conversation_info"),
         Some("CmdOrCtrl+Shift+I"),
     )?;
     let hide_names = check_item(
         "hide_names",
-        "Hide Names and Avatars",
+        t("menu.view.hide_names_check"),
         settings.hides_names() || settings.hides_avatars(),
         Some("CmdOrCtrl+Shift+H"),
     )?;
     let always_on_top = check_item(
         "always_on_top",
-        "Always on Top",
+        t("menu.view.always_on_top"),
         settings.always_on_top,
         None,
     )?;
-    let zoom_in = menu_item(app, "zoom_in", "Zoom In", Some("CmdOrCtrl+="))?;
-    let zoom_out = menu_item(app, "zoom_out", "Zoom Out", Some("CmdOrCtrl+-"))?;
-    let actual_size = menu_item(app, "zoom_reset", "Actual Size", Some("CmdOrCtrl+0"))?;
-    let theme_system = check_item("theme_system", "System", settings.theme == "system", None)?;
-    let theme_light = check_item("theme_light", "Light", settings.theme == "light", None)?;
-    let theme_dark = check_item("theme_dark", "Dark", settings.theme == "dark", None)?;
-    let theme = SubmenuBuilder::new(app, "Theme")
+    let zoom_in = menu_item(app, "zoom_in", t("menu.view.zoom_in"), Some("CmdOrCtrl+="))?;
+    let zoom_out = menu_item(
+        app,
+        "zoom_out",
+        t("menu.view.zoom_out"),
+        Some("CmdOrCtrl+-"),
+    )?;
+    let actual_size = menu_item(
+        app,
+        "zoom_reset",
+        t("menu.view.actual_size"),
+        Some("CmdOrCtrl+0"),
+    )?;
+    let theme_system = check_item(
+        "theme_system",
+        t("menu.view.theme.system"),
+        settings.theme == "system",
+        None,
+    )?;
+    let theme_light = check_item(
+        "theme_light",
+        t("menu.view.theme.light"),
+        settings.theme == "light",
+        None,
+    )?;
+    let theme_dark = check_item(
+        "theme_dark",
+        t("menu.view.theme.dark"),
+        settings.theme == "dark",
+        None,
+    )?;
+    let theme = SubmenuBuilder::new(app, menu_label(t("menu.view.theme.title")))
         .id("theme")
         .item(&theme_system)
         .item(&theme_light)
@@ -365,10 +444,10 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     let devtools = menu_item(
         app,
         "devtools",
-        "Toggle Developer Tools",
+        t("menu.view.devtools"),
         Some("CmdOrCtrl+Alt+I"),
     )?;
-    let view_builder = SubmenuBuilder::new(app, "View")
+    let view_builder = SubmenuBuilder::new(app, menu_label(t("menu.view.title")))
         .id("view")
         .item(&reload)
         .separator()
@@ -389,19 +468,19 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     let shortcuts = menu_item(
         app,
         "keyboard_shortcuts",
-        "Keyboard Shortcuts",
+        t("menu.help.keyboard_shortcuts"),
         Some("CmdOrCtrl+/"),
     )?;
-    let report_issue = menu_item(app, "report_issue", "Report an Issue…", None)?;
+    let report_issue = menu_item(app, "report_issue", t("menu.help.report_issue"), None)?;
     let clear_cache = menu_item(
         app,
         "clear_cache",
-        "Clear Cache and Restart…",
+        t("menu.help.clear_cache"),
         Some("CmdOrCtrl+Shift+Backspace"),
     )?;
     let (share, star) = share_and_star_items(app)?;
     let about = about_metadata(&app.package_info().version.to_string());
-    let help = SubmenuBuilder::new(app, "Help")
+    let help = SubmenuBuilder::new(app, menu_label(t("menu.help.title")))
         .id("help")
         .item(&shortcuts)
         .item(&report_issue)
@@ -410,7 +489,7 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .separator()
         .item(&clear_cache)
         .separator()
-        .about_with_text("About Chatpane", Some(about))
+        .about_with_text(menu_label(t("menu.about")), Some(about))
         .build()?;
 
     Menu::with_items(app, &[&file, &edit, &view, &help])
@@ -582,12 +661,12 @@ fn confirm_clear_cache(app: &tauri::AppHandle) {
     let app_handle = app.clone();
     let mut dialog = app
         .dialog()
-        .message("This clears Chatpane's Messenger browsing data, signs you out, and restarts the app. Continue?")
-        .title("Clear Cache and Restart")
+        .message(t("menu.dialog.clear_cache.message"))
+        .title(t("menu.dialog.clear_cache.title"))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
-            "Clear and Restart".into(),
-            "Cancel".into(),
+            t("menu.dialog.clear_cache.confirm").into(),
+            t("dialog.cancel").into(),
         ));
     if let Some(window) = dialog_parent(app) {
         dialog = dialog.parent(&window);
@@ -618,15 +697,12 @@ fn request_new_window(app: &tauri::AppHandle) {
         let app_handle = app.clone();
         let mut dialog = app
             .dialog()
-            .message(
-                "To keep every window in sync, Chatpane reloads Messenger in your open window. \
-                 A call or an unsent message there will be interrupted.",
-            )
-            .title("Open a New Window?")
+            .message(t("menu.dialog.new_window.message"))
+            .title(t("menu.dialog.new_window.title"))
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
-                "Open Window".into(),
-                "Cancel".into(),
+                t("menu.dialog.new_window.confirm").into(),
+                t("dialog.cancel").into(),
             ));
         if let Some(window) = dialog_parent(app) {
             dialog = dialog.parent(&window);
@@ -652,11 +728,13 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
                 Ok(()) => copied,
                 Err(error) => {
                     log::warn!("failed to write context-menu text to the clipboard: {error}");
-                    "Copy failed"
+                    t("shared.context.copy_failed")
                 }
             };
-            if let Some(window) = app.get_webview_window(label) {
-                let _ = window.eval(format!("window.__chatpaneToast?.('{toast}')"));
+            if let Some(window) = app.get_webview_window(label)
+                && let Ok(toast) = serde_json::to_string(toast)
+            {
+                let _ = window.eval(format!("window.__chatpaneToast?.({toast})"));
             }
             return;
         }
@@ -780,74 +858,89 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
     }
 }
 
-/// The two rows that register a macOS activation when selected. Named so the
-/// activation check below cannot drift from the label arrays: a video menu's
-/// Share row must stay the same string as an image menu's.
-const COPY_IMAGE_CONTEXT_MENU_LABEL: &str = "Copy image";
-const SHARE_CONTEXT_MENU_LABEL: &str = "Share…";
+// The page names each row by its string key and Rust shows `t(key)`, so the
+// page can never put its own text in a native menu; only reactions carry
+// their emoji, checked by `valid_reaction_label`. The TypeScript arrays with
+// the same names are kept in sync by a test.
 
-const IMAGE_CONTEXT_MENU_LABELS: &[&str] = &[
-    COPY_IMAGE_CONTEXT_MENU_LABEL,
-    "Download image",
-    SHARE_CONTEXT_MENU_LABEL,
-    "Copy image address",
-    "Open image in browser",
+/// The two rows that register a macOS activation when selected. Named so the
+/// activation check below cannot drift from the key arrays: a video menu's
+/// Share row must stay the same key as an image menu's.
+const COPY_IMAGE_CONTEXT_MENU_KEY: &str = "shared.context.copy_image";
+const SHARE_CONTEXT_MENU_KEY: &str = "shared.context.share";
+
+const IMAGE_CONTEXT_MENU_KEYS: &[&str] = &[
+    COPY_IMAGE_CONTEXT_MENU_KEY,
+    "shared.context.download_image",
+    SHARE_CONTEXT_MENU_KEY,
+    "shared.context.copy_image_address",
+    "shared.context.open_image_in_browser",
 ];
-const VIDEO_CONTEXT_MENU_LABELS: &[&str] = &[
-    "Download video",
-    SHARE_CONTEXT_MENU_LABEL,
-    "Copy video address",
+const VIDEO_CONTEXT_MENU_KEYS: &[&str] = &[
+    "shared.context.download_video",
+    SHARE_CONTEXT_MENU_KEY,
+    "shared.context.copy_video_address",
 ];
-const LINK_CONTEXT_MENU_LABELS: &[&str] = &["Copy link address", "Open link in browser"];
-const IMAGE_CONTEXT_MENU_LABELS_NO_SHARE: &[&str] = &[
-    COPY_IMAGE_CONTEXT_MENU_LABEL,
-    "Download image",
-    "Copy image address",
-    "Open image in browser",
+const LINK_CONTEXT_MENU_KEYS: &[&str] = &[
+    "shared.context.copy_link_address",
+    "shared.context.open_link_in_browser",
 ];
-const VIDEO_CONTEXT_MENU_LABELS_NO_SHARE: &[&str] = &["Download video", "Copy video address"];
+const IMAGE_CONTEXT_MENU_KEYS_NO_SHARE: &[&str] = &[
+    COPY_IMAGE_CONTEXT_MENU_KEY,
+    "shared.context.download_image",
+    "shared.context.copy_image_address",
+    "shared.context.open_image_in_browser",
+];
+const VIDEO_CONTEXT_MENU_KEYS_NO_SHARE: &[&str] = &[
+    "shared.context.download_video",
+    "shared.context.copy_video_address",
+];
 
 /// A message's own actions, in menu order. Each is driven through Messenger's
 /// hover toolbar; the page sends only the ones Messenger offers.
-const MESSAGE_CONTEXT_MENU_LABELS: &[&str] = &[
-    "Reply",
-    COPY_TEXT_CONTEXT_MENU_LABEL,
-    "Edit",
-    "Forward",
-    "Pin",
-    "Unpin",
-    "Unsend",
-    "Remove",
+const MESSAGE_CONTEXT_MENU_KEYS: &[&str] = &[
+    "shared.context.reply",
+    COPY_TEXT_CONTEXT_MENU_KEY,
+    "shared.context.edit",
+    "shared.context.forward",
+    "shared.context.pin",
+    "shared.context.unpin",
+    "shared.context.unsend",
+    "shared.context.remove",
 ];
-const COPY_TEXT_CONTEXT_MENU_LABEL: &str = "Copy text";
+const COPY_TEXT_CONTEXT_MENU_KEY: &str = "shared.context.copy_text";
 /// A chat-list conversation's own menu rows, in menu order. Each is driven
 /// through the row's "More options" menu; the page sends only the ones
 /// Messenger offers.
-const CHAT_ROW_CONTEXT_MENU_LABELS: &[&str] = &[
-    "Mark as read",
-    "Mark as unread",
-    "Mute notifications",
-    "Unmute notifications",
-    "View profile",
-    "Start end-to-end encrypted chat",
-    "Block",
-    "Unblock",
-    "Archive chat",
-    "Unarchive chat",
-    "Delete chat",
-    "Report",
-    "Leave group",
+const CHAT_ROW_CONTEXT_MENU_KEYS: &[&str] = &[
+    "shared.context.mark_as_read",
+    "shared.context.mark_as_unread",
+    "shared.context.mute_notifications",
+    "shared.context.unmute_notifications",
+    "shared.context.view_profile",
+    "shared.context.start_encrypted_chat",
+    "shared.context.block",
+    "shared.context.unblock",
+    "shared.context.archive_chat",
+    "shared.context.unarchive_chat",
+    "shared.context.delete_chat",
+    "shared.context.report",
+    "shared.context.leave_group",
 ];
 /// Chatpane's own conversation rows, after Messenger's: export the chat. The
-/// native menu shows them as an "Export chat" submenu of formats.
-const CHAT_EXPORT_CONTEXT_MENU_LABELS: &[&str] = &["Export chat as HTML…", "Export chat as JSON…"];
-const CHAT_EXPORT_SUBMENU_LABEL: &str = "Export chat";
-const REACT_CONTEXT_MENU_LABEL: &str = "React";
+/// native menu shows them as an "Export chat" submenu of the formats in
+/// `CHAT_EXPORT_FORMATS`, index-aligned.
+const CHAT_EXPORT_CONTEXT_MENU_KEYS: &[&str] = &[
+    "shared.context.export_chat_html",
+    "shared.context.export_chat_json",
+];
+const CHAT_EXPORT_FORMATS: [&str; 2] = ["HTML…", "JSON…"];
 const MAX_CONTEXT_MENU_REACTIONS: usize = 12;
 const MAX_CONTEXT_MENU_VALUE: usize = 64 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct NativeContextMenuItem {
+    /// The row's string key from the arrays above, or a reaction's emoji.
     pub(crate) label: String,
     pub(crate) action: String,
     pub(crate) value: Option<String>,
@@ -859,11 +952,27 @@ pub(crate) struct NativeContextMenuItem {
     pub(crate) checked: bool,
 }
 
-/// Whether `items` are exactly `labels`, with a value only at `value_index`.
-fn matches_shape(items: &[NativeContextMenuItem], labels: &[&str], value_index: usize) -> bool {
-    items.len() == labels.len()
+/// The allowlisted key a page-sent row names.
+fn context_menu_key(label: &str) -> Option<&'static str> {
+    [
+        IMAGE_CONTEXT_MENU_KEYS,
+        VIDEO_CONTEXT_MENU_KEYS,
+        LINK_CONTEXT_MENU_KEYS,
+        MESSAGE_CONTEXT_MENU_KEYS,
+        CHAT_ROW_CONTEXT_MENU_KEYS,
+        CHAT_EXPORT_CONTEXT_MENU_KEYS,
+    ]
+    .into_iter()
+    .flatten()
+    .copied()
+    .find(|key| *key == label)
+}
+
+/// Whether `items` are exactly `keys`, with a value only at `value_index`.
+fn matches_shape(items: &[NativeContextMenuItem], keys: &[&str], value_index: usize) -> bool {
+    items.len() == keys.len()
         && items.iter().enumerate().all(|(index, item)| {
-            item.label == labels[index]
+            item.label == keys[index]
                 && !item.reaction
                 && !item.checked
                 && item.value.is_some() == (index == value_index)
@@ -873,13 +982,13 @@ fn matches_shape(items: &[NativeContextMenuItem], labels: &[&str], value_index: 
 /// The media and link menus, each with the index of its copied value.
 fn media_context_menu_shapes() -> Vec<(&'static [&'static str], usize)> {
     let mut shapes = vec![
-        (IMAGE_CONTEXT_MENU_LABELS, 3),
-        (VIDEO_CONTEXT_MENU_LABELS, 2),
-        (LINK_CONTEXT_MENU_LABELS, 0),
+        (IMAGE_CONTEXT_MENU_KEYS, 3),
+        (VIDEO_CONTEXT_MENU_KEYS, 2),
+        (LINK_CONTEXT_MENU_KEYS, 0),
     ];
     if cfg!(not(target_os = "macos")) {
-        shapes.push((IMAGE_CONTEXT_MENU_LABELS_NO_SHARE, 2));
-        shapes.push((VIDEO_CONTEXT_MENU_LABELS_NO_SHARE, 1));
+        shapes.push((IMAGE_CONTEXT_MENU_KEYS_NO_SHARE, 2));
+        shapes.push((VIDEO_CONTEXT_MENU_KEYS_NO_SHARE, 1));
     }
     shapes
 }
@@ -906,42 +1015,39 @@ fn valid_reaction_label(label: &str) -> bool {
 /// Copy text carries a value.
 fn valid_message_items(items: &[NativeContextMenuItem]) -> bool {
     let reactions = items.iter().take_while(|item| item.reaction).count();
-    let mut next_label = 0;
+    let mut next_key = 0;
     reactions <= MAX_CONTEXT_MENU_REACTIONS
         && items[..reactions]
             .iter()
             .all(|item| item.value.is_none() && valid_reaction_label(&item.label))
         && items[reactions..].iter().all(|item| {
-            let Some(index) = MESSAGE_CONTEXT_MENU_LABELS[next_label..]
+            let Some(index) = MESSAGE_CONTEXT_MENU_KEYS[next_key..]
                 .iter()
-                .position(|label| *label == item.label)
+                .position(|key| *key == item.label)
             else {
                 return false;
             };
-            next_label += index + 1;
+            next_key += index + 1;
             !item.reaction
                 && !item.checked
-                && item.value.is_some() == (item.label == COPY_TEXT_CONTEXT_MENU_LABEL)
+                && item.value.is_some() == (item.label == COPY_TEXT_CONTEXT_MENU_KEY)
         })
 }
 
 /// A conversation's own rows, then its export rows, in their fixed order.
 fn valid_chat_row_items(items: &[NativeContextMenuItem]) -> bool {
-    let labels: Vec<&str> = CHAT_ROW_CONTEXT_MENU_LABELS
+    let keys: Vec<&str> = CHAT_ROW_CONTEXT_MENU_KEYS
         .iter()
-        .chain(CHAT_EXPORT_CONTEXT_MENU_LABELS)
+        .chain(CHAT_EXPORT_CONTEXT_MENU_KEYS)
         .copied()
         .collect();
-    let mut next_label = 0;
+    let mut next_key = 0;
     !items.is_empty()
         && items.iter().all(|item| {
-            let Some(index) = labels[next_label..]
-                .iter()
-                .position(|label| *label == item.label)
-            else {
+            let Some(index) = keys[next_key..].iter().position(|key| *key == item.label) else {
                 return false;
             };
-            next_label += index + 1;
+            next_key += index + 1;
             !item.reaction && !item.checked && item.value.is_none()
         })
 }
@@ -952,9 +1058,9 @@ fn valid_chat_row_items(items: &[NativeContextMenuItem]) -> bool {
 fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
     let media_prefix = media_context_menu_shapes()
         .into_iter()
-        .find_map(|(labels, value_index)| {
-            let prefix = items.get(..labels.len())?;
-            matches_shape(prefix, labels, value_index).then_some(labels.len())
+        .find_map(|(keys, value_index)| {
+            let prefix = items.get(..keys.len())?;
+            matches_shape(prefix, keys, value_index).then_some(keys.len())
         });
     let shape_valid = match media_prefix {
         Some(len) => valid_message_items(&items[len..]),
@@ -1011,10 +1117,10 @@ pub(crate) fn show_native_context_menu(
         copies.retain(|(window, _), _| window != label);
         for item in &items {
             if let Some(value) = &item.value {
-                let copied = if item.label == COPY_TEXT_CONTEXT_MENU_LABEL {
-                    "Text copied"
+                let copied = if item.label == COPY_TEXT_CONTEXT_MENU_KEY {
+                    t("shared.context.text_copied")
                 } else {
-                    "Address copied"
+                    t("shared.context.address_copied")
                 };
                 copies.insert(
                     (label.to_string(), item.action.clone()),
@@ -1039,8 +1145,8 @@ pub(crate) fn show_native_context_menu(
         for item in &items {
             let key = (label.to_string(), item.action.clone());
             if item.value.is_none()
-                && (item.label == COPY_IMAGE_CONTEXT_MENU_LABEL
-                    || item.label == SHARE_CONTEXT_MENU_LABEL)
+                && (item.label == COPY_IMAGE_CONTEXT_MENU_KEY
+                    || item.label == SHARE_CONTEXT_MENU_KEY)
             {
                 activations.insert(key, ContextMenuActivation::Pending);
             }
@@ -1089,11 +1195,11 @@ fn append_context_menu_items(
     let group = |item: &NativeContextMenuItem| {
         if item.reaction {
             1
-        } else if MESSAGE_CONTEXT_MENU_LABELS.contains(&item.label.as_str()) {
+        } else if MESSAGE_CONTEXT_MENU_KEYS.contains(&item.label.as_str()) {
             2
-        } else if CHAT_ROW_CONTEXT_MENU_LABELS.contains(&item.label.as_str()) {
+        } else if CHAT_ROW_CONTEXT_MENU_KEYS.contains(&item.label.as_str()) {
             3
-        } else if CHAT_EXPORT_CONTEXT_MENU_LABELS.contains(&item.label.as_str()) {
+        } else if CHAT_EXPORT_CONTEXT_MENU_KEYS.contains(&item.label.as_str()) {
             4
         } else {
             0
@@ -1106,7 +1212,7 @@ fn append_context_menu_items(
         if let Some(submenu) = slot {
             return Ok(submenu.clone());
         }
-        let submenu = SubmenuBuilder::new(app, title).build()?;
+        let submenu = SubmenuBuilder::new(app, menu_label(title)).build()?;
         menu.append(&submenu)?;
         *slot = Some(submenu.clone());
         tauri::Result::Ok(submenu)
@@ -1117,18 +1223,26 @@ fn append_context_menu_items(
             menu.append(&tauri::menu::PredefinedMenuItem::separator(app)?)?;
         }
         previous = Some(group(item));
-        if let Some(format) = item.label.strip_prefix("Export chat as ") {
-            submenu(&mut exports, CHAT_EXPORT_SUBMENU_LABEL)?
-                .append(&MenuItemBuilder::new(format).id(id(item)).build(app)?)?;
-        } else if item.reaction {
-            submenu(&mut reactions, REACT_CONTEXT_MENU_LABEL)?.append(
+        if item.reaction {
+            submenu(&mut reactions, t("shared.context.react"))?.append(
                 &tauri::menu::CheckMenuItemBuilder::new(&item.label)
                     .id(id(item))
                     .checked(item.checked)
                     .build(app)?,
             )?;
-        } else {
-            menu.append(&MenuItemBuilder::new(&item.label).id(id(item)).build(app)?)?;
+        } else if let Some(format) = CHAT_EXPORT_CONTEXT_MENU_KEYS
+            .iter()
+            .position(|key| *key == item.label)
+            .and_then(|index| CHAT_EXPORT_FORMATS.get(index))
+        {
+            submenu(&mut exports, t("menu.context.export_chat"))?
+                .append(&MenuItemBuilder::new(*format).id(id(item)).build(app)?)?;
+        } else if let Some(key) = context_menu_key(&item.label) {
+            menu.append(
+                &MenuItemBuilder::new(menu_label(t(key)))
+                    .id(id(item))
+                    .build(app)?,
+            )?;
         }
     }
     Ok(())
@@ -1284,14 +1398,14 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
             let result = match entry {
                 DockEntry::Recent(thread) => menu.append(&muda::MenuItem::with_id(
                     recent_menu_id(&thread),
-                    &thread.name,
+                    menu_label(&thread.name),
                     true,
                     None,
                 )),
                 DockEntry::Separator => menu.append(&muda::PredefinedMenuItem::separator()),
                 DockEntry::NewConversation => menu.append(&muda::MenuItem::with_id(
                     "dock:new_conversation",
-                    "New Conversation",
+                    menu_label(t("menu.file.new_conversation")),
                     true,
                     None,
                 )),
@@ -1302,11 +1416,14 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
                         now,
                     );
                     let (title, entries) = crate::pause::pause_menu(state, now);
-                    let submenu = muda::Submenu::new(&title, true);
+                    let submenu = muda::Submenu::new(menu_label(&title), true);
                     for (id, label, enabled) in entries {
-                        if let Err(error) =
-                            submenu.append(&muda::MenuItem::with_id(id, &label, enabled, None))
-                        {
+                        if let Err(error) = submenu.append(&muda::MenuItem::with_id(
+                            id,
+                            menu_label(&label),
+                            enabled,
+                            None,
+                        )) {
                             log::warn!("failed to append macOS Dock pause item: {error}");
                         }
                     }
@@ -1314,7 +1431,7 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
                 }
                 DockEntry::Settings => menu.append(&muda::MenuItem::with_id(
                     "dock:settings",
-                    "Settings…",
+                    menu_label(t("menu.mac.settings")),
                     true,
                     None,
                 )),
@@ -1356,10 +1473,7 @@ mod tests {
         assert_eq!(metadata.version.as_deref(), Some("1.12.0"));
         assert_eq!(metadata.authors, Some(vec!["kristofferR".into()]));
         assert_eq!(metadata.license.as_deref(), Some("MIT"));
-        assert_eq!(
-            metadata.comments.as_deref(),
-            Some("A tiny, distraction-free desktop client for Facebook Messenger.")
-        );
+        assert_eq!(metadata.comments.as_deref(), Some(t("menu.about_comments")));
         assert_eq!(
             metadata.website.as_deref(),
             Some("https://github.com/kristofferR/Carrier")
@@ -1393,12 +1507,12 @@ mod tests {
         assert_eq!(linux_editing_command("unknown"), None);
     }
 
-    fn injected_context_menu_labels(name: &str) -> Vec<&'static str> {
+    fn injected_context_menu_keys(name: &str) -> Vec<&'static str> {
         let source = match name {
-            "MESSAGE_CONTEXT_MENU_LABELS" => {
+            "MESSAGE_CONTEXT_MENU_KEYS" => {
                 include_str!("../../inject/src/messenger/lib/message-menu.ts")
             }
-            "CHAT_ROW_CONTEXT_MENU_LABELS" | "CHAT_EXPORT_CONTEXT_MENU_LABELS" => {
+            "CHAT_ROW_CONTEXT_MENU_KEYS" | "CHAT_EXPORT_CONTEXT_MENU_KEYS" => {
                 include_str!("../../inject/src/messenger/lib/chat-row-menu.ts")
             }
             _ => include_str!("../../inject/src/messenger/features/context-menu.ts"),
@@ -1406,10 +1520,10 @@ mod tests {
         let declaration = format!("const {name} = [");
         let body = source
             .split_once(&declaration)
-            .unwrap_or_else(|| panic!("missing injected label declaration {name}"))
+            .unwrap_or_else(|| panic!("missing injected key declaration {name}"))
             .1
             .split_once("] as const;")
-            .unwrap_or_else(|| panic!("unterminated injected label declaration {name}"))
+            .unwrap_or_else(|| panic!("unterminated injected key declaration {name}"))
             .0;
         body.split('"').skip(1).step_by(2).collect()
     }
@@ -1523,11 +1637,11 @@ mod tests {
     #[test]
     fn native_context_menu_accepts_only_known_shapes_and_unique_tokens() {
         let mut image = vec![
-            context_item("Copy image", '1'),
-            context_item("Download image", '2'),
-            context_item("Share…", '3'),
-            context_item("Copy image address", '4'),
-            context_item("Open image in browser", '5'),
+            context_item("shared.context.copy_image", '1'),
+            context_item("shared.context.download_image", '2'),
+            context_item("shared.context.share", '3'),
+            context_item("shared.context.copy_image_address", '4'),
+            context_item("shared.context.open_image_in_browser", '5'),
         ];
         image[3].value = Some("https://example.com/image.png".into());
         assert!(valid_context_menu_items(&image));
@@ -1536,13 +1650,16 @@ mod tests {
         assert!(!valid_context_menu_items(&image));
         image[3].value = image[0].value.take();
 
+        // English text, other UI strings, and arbitrary text are refused.
         let mut spoofed = image;
-        spoofed[2].label = "Allow microphone".into();
-        assert!(!valid_context_menu_items(&spoofed));
+        for label in ["Share…", "menu.quit_app", "Allow microphone"] {
+            spoofed[2].label = label.into();
+            assert!(!valid_context_menu_items(&spoofed), "{label}");
+        }
 
         let mut duplicate = vec![
-            context_item("Copy link address", 'a'),
-            context_item("Open link in browser", 'a'),
+            context_item("shared.context.copy_link_address", 'a'),
+            context_item("shared.context.open_link_in_browser", 'a'),
         ];
         duplicate[0].value = Some("https://example.com".into());
         assert!(!valid_context_menu_items(&duplicate));
@@ -1553,10 +1670,10 @@ mod tests {
         let mut message = vec![
             reaction_item("❤️", '1'),
             reaction_item("👍", '2'),
-            context_item("Reply", '3'),
-            context_item("Copy text", '4'),
-            context_item("Forward", '5'),
-            context_item("Unsend", '6'),
+            context_item("shared.context.reply", '3'),
+            context_item("shared.context.copy_text", '4'),
+            context_item("shared.context.forward", '5'),
+            context_item("shared.context.unsend", '6'),
         ];
         message[1].checked = true;
         message[3].value = Some("hello".into());
@@ -1574,7 +1691,7 @@ mod tests {
         message.swap(4, 5);
         assert!(!valid_context_menu_items(&message));
         message.swap(4, 5);
-        message[5].label = "Forward".into();
+        message[5].label = "shared.context.forward".into();
         assert!(!valid_context_menu_items(&message));
         message[5].label = "Allow microphone".into();
         assert!(!valid_context_menu_items(&message));
@@ -1584,7 +1701,7 @@ mod tests {
         message.swap(1, 2);
         assert!(!valid_context_menu_items(&message));
         message.swap(1, 2);
-        let mut posing = reaction_item("Reply", '7');
+        let mut posing = reaction_item("shared.context.reply", '7');
         posing.action = "7".repeat(32);
         message.insert(0, posing);
         assert!(!valid_context_menu_items(&message));
@@ -1598,11 +1715,11 @@ mod tests {
     #[test]
     fn media_menus_may_carry_their_message_menu() {
         let mut items = vec![
-            context_item("Download video", '1'),
-            context_item("Copy video address", '2'),
+            context_item("shared.context.download_video", '1'),
+            context_item("shared.context.copy_video_address", '2'),
             reaction_item("😆", '3'),
-            context_item("Reply", '4'),
-            context_item("Forward", '5'),
+            context_item("shared.context.reply", '4'),
+            context_item("shared.context.forward", '5'),
         ];
         items[1].value = Some("https://example.com/video.mp4".into());
         let valid = valid_context_menu_items(&items);
@@ -1613,16 +1730,16 @@ mod tests {
     #[test]
     fn chat_row_menus_take_only_their_own_rows() {
         let mut items = vec![
-            context_item("Mark as unread", '1'),
-            context_item("Mute notifications", '2'),
-            context_item("Archive chat", '3'),
-            context_item("Leave group", '4'),
+            context_item("shared.context.mark_as_unread", '1'),
+            context_item("shared.context.mute_notifications", '2'),
+            context_item("shared.context.archive_chat", '3'),
+            context_item("shared.context.leave_group", '4'),
         ];
         assert!(valid_context_menu_items(&items));
 
         // Export rows follow Messenger's, never precede them.
-        items.push(context_item("Export chat as HTML…", '7'));
-        items.push(context_item("Export chat as JSON…", '8'));
+        items.push(context_item("shared.context.export_chat_html", '7'));
+        items.push(context_item("shared.context.export_chat_json", '8'));
         assert!(valid_context_menu_items(&items));
         assert!(valid_context_menu_items(&items[4..]));
         items.swap(0, 4);
@@ -1634,25 +1751,30 @@ mod tests {
         items.swap(0, 1);
         assert!(!valid_context_menu_items(&items));
         items.swap(0, 1);
-        items[1].label = "Mark as unread".into();
+        items[1].label = "shared.context.mark_as_unread".into();
         assert!(!valid_context_menu_items(&items));
-        items[1].label = "Mute notifications".into();
+        items[1].label = "shared.context.mute_notifications".into();
         items[2].value = Some("x".into());
         assert!(!valid_context_menu_items(&items));
         items[2].value = None;
 
-        // Unknown rows, message actions, and calls are refused.
-        for label in ["Audio call", "Reply", "Allow microphone"] {
+        // Unknown rows, message actions, calls, and English text are refused.
+        for label in [
+            "shared.context.audio_call",
+            "shared.context.reply",
+            "Allow microphone",
+            "Archive chat",
+        ] {
             items[2].label = label.into();
             assert!(!valid_context_menu_items(&items), "{label}");
         }
-        items[2].label = "Archive chat".into();
+        items[2].label = "shared.context.archive_chat".into();
 
         // The link's rows never join them.
-        let mut copy = context_item("Copy link address", '5');
+        let mut copy = context_item("shared.context.copy_link_address", '5');
         copy.value = Some("https://www.facebook.com/messages/t/1/".into());
         items.push(copy);
-        items.push(context_item("Open link in browser", '6'));
+        items.push(context_item("shared.context.open_link_in_browser", '6'));
         assert!(!valid_context_menu_items(&items));
     }
 
@@ -1675,37 +1797,63 @@ mod tests {
     }
 
     #[test]
-    fn native_context_menu_allowlist_matches_injected_labels() {
+    fn native_context_menu_allowlist_matches_injected_keys() {
         for (name, expected) in [
-            ("IMAGE_CONTEXT_MENU_LABELS", IMAGE_CONTEXT_MENU_LABELS),
-            ("VIDEO_CONTEXT_MENU_LABELS", VIDEO_CONTEXT_MENU_LABELS),
-            ("LINK_CONTEXT_MENU_LABELS", LINK_CONTEXT_MENU_LABELS),
-            ("MESSAGE_CONTEXT_MENU_LABELS", MESSAGE_CONTEXT_MENU_LABELS),
-            ("CHAT_ROW_CONTEXT_MENU_LABELS", CHAT_ROW_CONTEXT_MENU_LABELS),
+            ("IMAGE_CONTEXT_MENU_KEYS", IMAGE_CONTEXT_MENU_KEYS),
+            ("VIDEO_CONTEXT_MENU_KEYS", VIDEO_CONTEXT_MENU_KEYS),
+            ("LINK_CONTEXT_MENU_KEYS", LINK_CONTEXT_MENU_KEYS),
+            ("MESSAGE_CONTEXT_MENU_KEYS", MESSAGE_CONTEXT_MENU_KEYS),
+            ("CHAT_ROW_CONTEXT_MENU_KEYS", CHAT_ROW_CONTEXT_MENU_KEYS),
             (
-                "CHAT_EXPORT_CONTEXT_MENU_LABELS",
-                CHAT_EXPORT_CONTEXT_MENU_LABELS,
+                "CHAT_EXPORT_CONTEXT_MENU_KEYS",
+                CHAT_EXPORT_CONTEXT_MENU_KEYS,
             ),
         ] {
-            assert_eq!(injected_context_menu_labels(name), expected, "{name}");
+            assert_eq!(injected_context_menu_keys(name), expected, "{name}");
         }
     }
 
     #[test]
-    fn no_share_allowlists_track_the_primary_shapes() {
-        let image: Vec<&str> = IMAGE_CONTEXT_MENU_LABELS
-            .iter()
-            .copied()
-            .filter(|label| *label != SHARE_CONTEXT_MENU_LABEL)
-            .collect();
-        assert_eq!(image, IMAGE_CONTEXT_MENU_LABELS_NO_SHARE);
+    fn every_context_menu_key_has_text() {
+        for key in [
+            IMAGE_CONTEXT_MENU_KEYS,
+            VIDEO_CONTEXT_MENU_KEYS,
+            LINK_CONTEXT_MENU_KEYS,
+            MESSAGE_CONTEXT_MENU_KEYS,
+            CHAT_ROW_CONTEXT_MENU_KEYS,
+            CHAT_EXPORT_CONTEXT_MENU_KEYS,
+        ]
+        .concat()
+        {
+            assert_eq!(context_menu_key(key), Some(key));
+            assert_ne!(t(key), key, "{key} has no text");
+        }
+    }
 
-        let video: Vec<&str> = VIDEO_CONTEXT_MENU_LABELS
+    #[test]
+    fn menu_labels_keep_a_literal_ampersand() {
+        assert_eq!(
+            menu_label("Clear Cache & Restart"),
+            "Clear Cache && Restart"
+        );
+        assert_eq!(menu_label("Reload"), "Reload");
+    }
+
+    #[test]
+    fn no_share_allowlists_track_the_primary_shapes() {
+        let image: Vec<&str> = IMAGE_CONTEXT_MENU_KEYS
             .iter()
             .copied()
-            .filter(|label| *label != SHARE_CONTEXT_MENU_LABEL)
+            .filter(|key| *key != SHARE_CONTEXT_MENU_KEY)
             .collect();
-        assert_eq!(video, VIDEO_CONTEXT_MENU_LABELS_NO_SHARE);
+        assert_eq!(image, IMAGE_CONTEXT_MENU_KEYS_NO_SHARE);
+
+        let video: Vec<&str> = VIDEO_CONTEXT_MENU_KEYS
+            .iter()
+            .copied()
+            .filter(|key| *key != SHARE_CONTEXT_MENU_KEY)
+            .collect();
+        assert_eq!(video, VIDEO_CONTEXT_MENU_KEYS_NO_SHARE);
     }
 
     #[test]

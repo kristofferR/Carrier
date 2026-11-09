@@ -4,6 +4,34 @@
  */
 "use strict";
 (() => {
+  // inject/src/i18n.ts
+  var ENGLISH = { lang: "en", dir: "ltr", strings: {} };
+  function current() {
+    return globalThis.__CHATPANE_I18N__ ?? ENGLISH;
+  }
+  function language() {
+    const { lang, dir } = current();
+    return { lang, dir };
+  }
+  function formatLocale() {
+    const { lang } = current();
+    if (lang.includes("-")) return lang;
+    return globalThis.navigator?.languages?.find((tag) => tag.split("-")[0] === lang) ?? lang;
+  }
+  function fill(text2, vars) {
+    if (!vars) return text2;
+    const locale = formatLocale();
+    return text2.replace(/\{(\w+)\}/g, (match, name) => {
+      const value = vars[name];
+      if (value === void 0) return match;
+      return typeof value === "number" ? value.toLocaleString(locale) : value;
+    });
+  }
+  function text(key, vars) {
+    return fill(current().strings[key] ?? key, vars);
+  }
+  var t = text;
+
   // inject/src/panel/shortcut-data.ts
   function shortcutGroups(isMac) {
     const mod = isMac ? "⌘" : "Ctrl";
@@ -12,42 +40,48 @@
     const chord = (...keys) => keys.join(" + ");
     return [
       {
-        title: "Conversations",
+        title: t("page.shortcuts.group.conversations"),
         items: [
-          { keys: chord(mod, "1–9"), action: "Jump to a conversation" },
-          { keys: "Ctrl + Tab / Ctrl + Shift + Tab", action: "Next / previous conversation" },
-          { keys: `${chord(mod, "]")} / ${chord(mod, "[")}`, action: "Next / previous conversation" },
-          { keys: chord(mod, shift, "N"), action: "New conversation" },
-          { keys: chord(mod, "N"), action: "New window" },
-          { keys: chord(mod, "K"), action: "Search conversations" },
-          { keys: chord(mod, "F"), action: "Search in conversation" },
-          { keys: chord(mod, "L"), action: "Focus message input" }
+          { keys: chord(mod, "1–9"), action: t("page.shortcuts.jump_to_conversation") },
+          {
+            keys: "Ctrl + Tab / Ctrl + Shift + Tab",
+            action: t("page.shortcuts.next_previous_conversation")
+          },
+          {
+            keys: `${chord(mod, "]")} / ${chord(mod, "[")}`,
+            action: t("page.shortcuts.next_previous_conversation")
+          },
+          { keys: chord(mod, shift, "N"), action: t("page.shortcuts.new_conversation") },
+          { keys: chord(mod, "N"), action: t("page.shortcuts.new_window") },
+          { keys: chord(mod, "K"), action: t("page.shortcuts.search_conversations") },
+          { keys: chord(mod, "F"), action: t("page.shortcuts.search_in_conversation") },
+          { keys: chord(mod, "L"), action: t("page.shortcuts.focus_message_input") }
         ]
       },
       {
-        title: "Compose",
+        title: t("page.shortcuts.group.compose"),
         items: [
-          { keys: chord(mod, "E"), action: "Open emoji picker" },
-          { keys: chord(mod, "G"), action: "Open GIF picker" },
-          { keys: chord(mod, "T"), action: "Attach files" },
-          { keys: chord(mod, shift, alt, "V"), action: "Paste and match style" }
+          { keys: chord(mod, "E"), action: t("page.shortcuts.emoji_picker") },
+          { keys: chord(mod, "G"), action: t("page.shortcuts.gif_picker") },
+          { keys: chord(mod, "T"), action: t("page.shortcuts.attach_files") },
+          { keys: chord(mod, shift, alt, "V"), action: t("page.shortcuts.paste_and_match_style") }
         ]
       },
       {
-        title: "View & Chatpane",
+        title: t("page.shortcuts.group.view"),
         items: [
-          { keys: chord(mod, shift, "I"), action: "Toggle conversation information" },
-          { keys: chord(mod, shift, "H"), action: "Hide names and avatars" },
-          { keys: chord(mod, shift, "M"), action: "Show or hide Chatpane globally" },
+          { keys: chord(mod, shift, "I"), action: t("page.shortcuts.toggle_conversation_info") },
+          { keys: chord(mod, shift, "H"), action: t("page.shortcuts.hide_names") },
+          { keys: chord(mod, shift, "M"), action: t("page.shortcuts.show_hide_app") },
           {
             keys: `${chord(mod, "-")} / ${chord(mod, "=")} / ${chord(mod, "0")}`,
-            action: "Zoom out / in / reset"
+            action: t("page.shortcuts.zoom")
           },
-          { keys: chord(mod, ","), action: "Open Settings" },
-          { keys: chord(mod, "R"), action: "Reload" },
-          { keys: chord(mod, shift, "Backspace"), action: "Clear cache and restart" },
-          { keys: "F2 / F3 / F5", action: "Update settings / Settings / reload" },
-          { keys: `${chord(mod, "/")} / F1`, action: "Keyboard shortcuts" }
+          { keys: chord(mod, ","), action: t("page.shortcuts.open_settings") },
+          { keys: chord(mod, "R"), action: t("page.shortcuts.reload") },
+          { keys: chord(mod, shift, "Backspace"), action: t("page.shortcuts.clear_cache") },
+          { keys: "F2 / F3 / F5", action: t("page.shortcuts.function_keys") },
+          { keys: `${chord(mod, "/")} / F1`, action: t("page.shortcuts.keyboard_shortcuts") }
         ]
       }
     ];
@@ -76,7 +110,7 @@
       ].reduce((length, box) => length + (box.textContent?.trim().length ?? 0), 0)
     });
     Object.defineProperty(window, "__chatpaneStarPrompt", {
-      // `name` is the app name native code passes in (growth::NAME).
+      // `name` is the app name native code passes in (i18n::APP_NAME).
       value: (name) => {
         if (shown || typeof name !== "string" || !name) return;
         clearTimeout(pending);
@@ -104,6 +138,7 @@
     toastEl.setAttribute("role", "status");
     toastEl.setAttribute("aria-live", "polite");
     toastEl.setAttribute("aria-atomic", "true");
+    Object.assign(toastEl, language());
     Object.assign(toastEl.style, {
       position: "fixed",
       bottom: "24px",
@@ -239,7 +274,7 @@
     installToast();
     installStarPrompt();
     window.__chatpaneCheckUpdates = () => {
-      window.__chatpaneToast?.("Opening Settings to check for updates…");
+      window.__chatpaneToast?.(t("page.update.opening_settings"));
       emit("chatpane:open-settings");
     };
     window.__chatpaneToggleSettings = () => {
@@ -265,6 +300,7 @@
       overlay.setAttribute("role", "dialog");
       overlay.setAttribute("aria-modal", "true");
       overlay.setAttribute("aria-labelledby", "chatpane-shortcuts-title");
+      Object.assign(overlay, language());
       Object.assign(overlay.style, {
         position: "fixed",
         inset: "0",
@@ -298,11 +334,11 @@
       });
       const title = document.createElement("h2");
       title.id = "chatpane-shortcuts-title";
-      title.textContent = "Keyboard Shortcuts";
+      title.textContent = t("page.shortcuts.title");
       Object.assign(title.style, { margin: "0", fontSize: "20px", lineHeight: "1.2" });
       const close = document.createElement("button");
       close.type = "button";
-      close.setAttribute("aria-label", "Close keyboard shortcuts");
+      close.setAttribute("aria-label", t("page.shortcuts.close"));
       close.textContent = "×";
       Object.assign(close.style, {
         width: "36px",
@@ -345,6 +381,7 @@
           });
           const keys = document.createElement("dt");
           const key = document.createElement("kbd");
+          key.dir = "ltr";
           key.textContent = item.keys;
           Object.assign(key.style, {
             display: "inline-block",

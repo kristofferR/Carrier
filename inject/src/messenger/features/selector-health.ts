@@ -2,6 +2,7 @@
 // The selectors the core features stand on. If one goes dry while a
 // logged-in Messenger page is up, the matching feature is broken — report it
 // and tell the user once, instead of failing silently for weeks.
+import { t } from "../../i18n";
 import { diag, toast } from "../bridge";
 
 const WATCHED_SELECTORS = [
@@ -50,7 +51,7 @@ export function initSelectorHealth() {
       diag(`selector.${key}`, "core selector matched nothing on a logged-in Messenger page");
       if (!warnedUser) {
         warnedUser = true;
-        toast("A Messenger update may have broken part of Chatpane — check for updates (F2).");
+        toast(t("page.selector_health.broken"));
       }
     }
   };

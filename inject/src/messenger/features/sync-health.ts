@@ -11,6 +11,7 @@
 // Degraded state shows a persistent in-window banner and raises a native
 // notification (via chatpane:sync-alert); both clear on recovery.
 
+import { language, t, tn } from "../../i18n";
 import { diag, invoke } from "../bridge";
 import { RetryAfterWindow } from "../lib/rate-limit";
 import {
@@ -265,13 +266,13 @@ export function initSyncHealth() {
       }
       const message = limited
         ? rateLimitRemainingMs() > 0
-          ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 60_000))} min. Chats may be out of date.`
-          : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish."
+          ? tn("page.sync.rate_limited", Math.max(1, Math.ceil(rateLimitRemainingMs() / 60_000)))
+          : t("page.sync.cooldown_ended")
         : recoveryFailed
-          ? "Messenger could not reconnect. Chats may be out of date."
+          ? t("page.sync.reconnect_failed")
           : syncProcessingStalled
-            ? "Messenger is slow to update messages. Chats may be out of date."
-            : "⚠ Messenger sync is broken — chats may be out of date";
+            ? t("page.sync.slow")
+            : t("page.sync.broken");
       if (label.textContent !== message) label.textContent = message;
       const buttonStyle = {
         background: "#1c1e21",
@@ -288,7 +289,7 @@ export function initSyncHealth() {
       if ((limited || recoveryFailed) && !retry) {
         retry = document.createElement("button");
         retry.type = "button";
-        retry.textContent = "Try again";
+        retry.textContent = t("page.sync.try_again");
         Object.assign(retry.style, buttonStyle);
         retry.addEventListener("click", (event) => {
           if (!event.isTrusted || manualRetryPending) return;
@@ -309,16 +310,16 @@ export function initSyncHealth() {
           : protectedNow || !navigator.onLine;
         retry.textContent = limited
           ? retry.disabled
-            ? "Retry pending…"
-            : "Try again"
-          : "Reconnect";
+            ? t("page.sync.retry_pending")
+            : t("page.sync.try_again")
+          : t("page.sync.reconnect");
       }
       let reload = banner.querySelector<HTMLButtonElement>("[data-chatpane-reload]");
       if ((recoveryFailed || syncProcessingStalled) && !reload) {
         reload = document.createElement("button");
         reload.type = "button";
         reload.dataset.chatpaneReload = "";
-        reload.textContent = "Reload";
+        reload.textContent = t("page.sync.reload");
         Object.assign(reload.style, buttonStyle);
         reload.addEventListener("click", (event) => {
           if (event.isTrusted) window.dispatchEvent(new Event(SILENT_RECOVERY_RELOAD_EVENT));
@@ -330,6 +331,7 @@ export function initSyncHealth() {
         reload.disabled = protectedNow || !navigator.onLine;
       }
       if (existing) return;
+      Object.assign(banner, language());
       Object.assign(banner.style, {
         display: "flex",
         alignItems: "center",

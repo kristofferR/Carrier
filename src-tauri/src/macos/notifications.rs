@@ -47,10 +47,10 @@ pub(crate) fn register_notification_categories() {
     }
     let reply = UNTextInputNotificationAction::actionWithIdentifier_title_options_textInputButtonTitle_textInputPlaceholder(
         &NSString::from_str(REPLY_ACTION_ID),
-        &NSString::from_str("Reply"),
+        &NSString::from_str(crate::i18n::t("notification.action.reply")),
         UNNotificationActionOptionNone,
-        &NSString::from_str("Send"),
-        &NSString::from_str("Message…"),
+        &NSString::from_str(crate::i18n::t("notification.action.send")),
+        &NSString::from_str(crate::i18n::t("notification.message_placeholder")),
     );
     let reply: &UNNotificationAction = &reply;
     let intents = NSArray::<NSString>::from_slice(&[]);

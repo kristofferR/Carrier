@@ -11,6 +11,7 @@
 //   minimize, maximize and close at the top right, over a strip above the chat that drags the
 //   window: natively on Windows (WebView2 app-region), through the native side
 //   on Linux. The chat list starts at the top.
+import { t } from "../../i18n";
 import { diag } from "../bridge";
 
 type Controls = "windows" | "linux";
@@ -53,7 +54,7 @@ function buildControls(): HTMLElement {
   const box = document.createElement("div");
   box.id = CONTROLS_ID;
   box.setAttribute("role", "group");
-  box.setAttribute("aria-label", "Window");
+  box.setAttribute("aria-label", t("page.window.controls"));
   const button = (name: string, label: string, action: Parameters<typeof control>[0]) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -64,9 +65,9 @@ function buildControls(): HTMLElement {
     return b;
   };
   box.append(
-    button("minimize", "Minimize", "minimize"),
-    button("maximize", "Maximize", "toggle-maximize"),
-    button("close", "Close", "close"),
+    button("minimize", t("page.window.minimize"), "minimize"),
+    button("maximize", t("page.window.maximize"), "toggle-maximize"),
+    button("close", t("page.window.close"), "close"),
   );
   return box;
 }
@@ -137,7 +138,7 @@ function apply(next: TitleBarState) {
     if (maximize.dataset.icon !== name) {
       maximize.dataset.icon = name;
       maximize.innerHTML = icon(name);
-      const label = next.maximized ? "Restore" : "Maximize";
+      const label = next.maximized ? t("page.window.restore") : t("page.window.maximize");
       maximize.setAttribute("aria-label", label);
       maximize.title = label;
     }

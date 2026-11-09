@@ -174,7 +174,7 @@ div[role="banner"] div[role="navigation"] {
   flex: 0 0 auto !important;
   width: 36px !important;
   height: 36px !important;
-  margin-left: 12px !important;
+  margin-inline-start: 12px !important;
 }
 
 [data-chatpane-settings-button] {
@@ -842,7 +842,7 @@ html[data-chatpane-system-emoji] [data-chatpane-reaction-emoji] {
 .chatpane-schedule-panel :is(h2, h3) { color: var(--schedule-text); }
 .chatpane-schedule-close { display: grid; place-items: center; flex: 0 0 28px; border: 0; background: transparent; color: var(--schedule-muted); border-radius: 50%; width: 28px; height: 28px; padding: 0; }
 .chatpane-schedule-close svg { display: block; width: 18px; height: 18px; }
-.chatpane-schedule-preset { width: 100%; display: flex; justify-content: space-between; gap: 10px; border: 0; background: transparent; color: inherit; padding: 12px 8px; border-radius: 8px; text-align: left; }
+.chatpane-schedule-preset { width: 100%; display: flex; justify-content: space-between; gap: 10px; border: 0; background: transparent; color: inherit; padding: 12px 8px; border-radius: 8px; text-align: start; }
 .chatpane-schedule-preset:hover, .chatpane-schedule-close:hover { background: color-mix(in srgb, var(--schedule-text) 8%, transparent); }
 .chatpane-schedule-time { color: var(--schedule-muted); }
 .chatpane-schedule-custom { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 14%, transparent); margin-top: 5px; }

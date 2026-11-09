@@ -5,6 +5,7 @@
  * shell validates the result, renders the HTML or JSON file, and saves it
  * where the user chooses. Nothing leaves the machine.
  */
+import { t, tn } from "../../i18n";
 
 /** Newest messages kept when a conversation has more than this stored locally. */
 export const EXPORT_MESSAGE_LIMIT = 50_000;
@@ -389,7 +390,7 @@ function conversationTitle(
   const others = participants.filter((person) => person.id !== rows.viewerId && person.name);
   if (!rows.isGroup && others[0]) return others[0].name;
   if (others.length) return listedNames(others.map((person) => person.name));
-  return "Conversation";
+  return t("page.export.untitled");
 }
 
 /** Bytes a title may use; the native side refuses names over 1,024. */
@@ -403,9 +404,11 @@ export function listedNames(names: string[]): string {
   for (const [index, name] of names.entries()) {
     const next = title ? `${title}, ${name}` : name;
     const more = names.length - index - 1;
-    const suffix = more ? ` and ${more} more` : "";
-    if (bytes(next + suffix) > TITLE_BYTES) {
-      return title ? `${title} and ${names.length - index} more` : `${names.length} people`;
+    const shown = more ? tn("page.export.names_and_more", more, { names: next }) : next;
+    if (bytes(shown) > TITLE_BYTES) {
+      return title
+        ? tn("page.export.names_and_more", names.length - index, { names: title })
+        : tn("page.export.people", names.length);
     }
     title = next;
   }
