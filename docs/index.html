@@ -1117,6 +1117,8 @@
   .split { display: grid; grid-template-columns: 1.05fr 1fr; gap: clamp(2rem, 5vw, 4rem); align-items: center; }
   .split-text { text-align: start; }
   @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+  /* Let the demos shrink below their content's natural width on phones. */
+  .split > * { min-width: 0; }
   .notif-demo {
     position: relative;
     display: flex; flex-direction: column; gap: 10px; align-items: stretch;
@@ -1164,6 +1166,15 @@
   .sd-input { padding-inline-end: 76px; }
   .sd-draft { color: #080809; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sd-input .chatpane-schedule-button { position: absolute; inset-inline-end: 36px; top: 2px; margin: 0; }
+  /* Narrow screens: like Messenger in a narrow window, the composer keeps only
+     its first button, and the menu takes the chat's width. */
+  @media (max-width: 560px) {
+    .sched-demo { padding: 10px; border-radius: 22px; }
+    .sd-chat .composer > .c-btn:not(:first-child):not(.comp-like) { display: none; }
+    .sd-chat .chatpane-schedule-panel { inset-inline-end: 8px; width: calc(100% - 16px); }
+  }
+  /* Rows wrap here, so the menu needs a taller chat. */
+  @media (max-width: 400px) { .sd-body { height: 460px; } }
   /* Chatpane's scheduling UI, with the rules from src-tauri/inject/messenger.css */
   .chatpane-schedule-button {
     appearance: none; border: 0; background: transparent; color: #0070f6;
