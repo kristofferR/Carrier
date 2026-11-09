@@ -54,20 +54,34 @@ export function nextDueMessage(
     .sort((a, b) => a.due - b.due)[0];
 }
 
-export function schedulePresets(now: number) {
+export interface SchedulePreset {
+  id: "soon" | "hour" | "evening" | "morning";
+  label: string;
+  due: number;
+}
+
+export function schedulePresets(now: number): SchedulePreset[] {
   const evening = new Date(now);
   evening.setHours(18, 0, 0, 0);
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
   tomorrow.setHours(9, 0, 0, 0);
-  return [
-    { label: t("page.schedule.preset.in_15_minutes"), due: now + 15 * 60_000 },
-    { label: t("page.schedule.preset.in_1_hour"), due: now + 60 * 60_000 },
-    ...(evening.getTime() > now
-      ? [{ label: t("page.schedule.preset.this_evening"), due: evening.getTime() }]
-      : []),
-    { label: t("page.schedule.preset.tomorrow_morning"), due: tomorrow.getTime() },
+  const presets: SchedulePreset[] = [
+    { id: "soon", label: t("page.schedule.preset.in_15_minutes"), due: now + 15 * 60_000 },
+    { id: "hour", label: t("page.schedule.preset.in_1_hour"), due: now + 60 * 60_000 },
   ];
+  if (evening.getTime() > now)
+    presets.push({
+      id: "evening",
+      label: t("page.schedule.preset.this_evening"),
+      due: evening.getTime(),
+    });
+  presets.push({
+    id: "morning",
+    label: t("page.schedule.preset.tomorrow_morning"),
+    due: tomorrow.getTime(),
+  });
+  return presets;
 }
 
 /** Explicit HH:mm inputs avoid WebKit's locale-dependent AM/PM input chrome. */
@@ -93,13 +107,36 @@ export function localDateValue(time: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-export const formatScheduleTime = (time: number, includeDate = false): string =>
-  new Intl.DateTimeFormat(formatLocale(), {
-    ...(includeDate ? ({ month: "short", day: "numeric" } as const) : {}),
+/** Only as much date as `time` needs: "14:52" today, "Tue 09:00" within the
+ * coming week, "Nov 18, 09:00" otherwise (including past days). */
+export function formatScheduleTime(time: number, now = Date.now()): string {
+  const midnight = (value: number) => new Date(value).setHours(0, 0, 0, 0);
+  // Rounded, so a DST change inside the span still counts whole calendar days.
+  const days = Math.round((midnight(time) - midnight(now)) / 86_400_000);
+  return new Intl.DateTimeFormat(formatLocale(), {
+    ...(days === 0
+      ? {}
+      : days > 0 && days < 7
+        ? ({ weekday: "short" } as const)
+        : ({ month: "short", day: "numeric" } as const)),
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
   }).format(time);
+}
+
+/** The system time zone as people say it ("Eastern Time"), else its IANA ID. */
+export function timeZoneLabel(now = Date.now()): string {
+  try {
+    const name = new Intl.DateTimeFormat(formatLocale(), { timeZoneName: "longGeneric" })
+      .formatToParts(now)
+      .find((part) => part.type === "timeZoneName")?.value;
+    if (name) return name;
+  } catch {
+    // Engines without generic zone names fall through to the ID.
+  }
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
 
 /** Shared with notification replies so two automations cannot use one composer. */
 let composerBusy = false;

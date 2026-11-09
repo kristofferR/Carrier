@@ -1080,12 +1080,22 @@ ${button.innerHTML}`)
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(9, 0, 0, 0);
-    return [
-      { label: t("page.schedule.preset.in_15_minutes"), due: now + 15 * 6e4 },
-      { label: t("page.schedule.preset.in_1_hour"), due: now + 60 * 6e4 },
-      ...evening.getTime() > now ? [{ label: t("page.schedule.preset.this_evening"), due: evening.getTime() }] : [],
-      { label: t("page.schedule.preset.tomorrow_morning"), due: tomorrow.getTime() }
+    const presets = [
+      { id: "soon", label: t("page.schedule.preset.in_15_minutes"), due: now + 15 * 6e4 },
+      { id: "hour", label: t("page.schedule.preset.in_1_hour"), due: now + 60 * 6e4 }
     ];
+    if (evening.getTime() > now)
+      presets.push({
+        id: "evening",
+        label: t("page.schedule.preset.this_evening"),
+        due: evening.getTime()
+      });
+    presets.push({
+      id: "morning",
+      label: t("page.schedule.preset.tomorrow_morning"),
+      due: tomorrow.getTime()
+    });
+    return presets;
   }
   function localScheduleTime(date, time) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
@@ -1100,12 +1110,24 @@ ${button.innerHTML}`)
     const date = new Date(time);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }
-  var formatScheduleTime = (time, includeDate = false) => new Intl.DateTimeFormat(formatLocale(), {
-    ...includeDate ? { month: "short", day: "numeric" } : {},
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).format(time);
+  function formatScheduleTime(time, now = Date.now()) {
+    const midnight = (value) => new Date(value).setHours(0, 0, 0, 0);
+    const days = Math.round((midnight(time) - midnight(now)) / 864e5);
+    return new Intl.DateTimeFormat(formatLocale(), {
+      ...days === 0 ? {} : days > 0 && days < 7 ? { weekday: "short" } : { month: "short", day: "numeric" },
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).format(time);
+  }
+  function timeZoneLabel(now = Date.now()) {
+    try {
+      const name = new Intl.DateTimeFormat(formatLocale(), { timeZoneName: "longGeneric" }).formatToParts(now).find((part) => part.type === "timeZoneName")?.value;
+      if (name) return name;
+    } catch {
+    }
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  }
   var composerBusy = false;
   var composerWaiters = [];
   var isComposerDeliveryActive = () => composerBusy;
@@ -10759,7 +10781,7 @@ ${button.innerHTML}`)
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon2, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", messageId = "", row, sender) => {
+    const emitNotification = (id, title, body, icon3, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", messageId = "", row, sender) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -10775,7 +10797,7 @@ ${button.innerHTML}`)
           title,
           subtitle,
           body,
-          icon: icon2,
+          icon: icon3,
           image,
           dedupe_key: dedupeKey,
           thread_path: threadPath || "",
@@ -10980,7 +11002,7 @@ ${button.innerHTML}`)
           thumbnail,
           names,
           groupPicture2(names)
-        ]).then(([icon2, , image, group, picture]) => {
+        ]).then(([icon3, , image, group, picture]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
           const deliverySettings = window.__CHATPANE_SETTINGS__ || {};
@@ -11068,7 +11090,7 @@ ${button.innerHTML}`)
             id,
             hidePreview ? "Messenger" : text2.title,
             hidePreview ? t("page.notification.hidden_body") : text2.body,
-            hidePreview ? "" : icon2,
+            hidePreview ? "" : icon3,
             pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
             () => {
               this.onclick?.(new Event("click"));
@@ -11195,7 +11217,7 @@ ${button.innerHTML}`)
       settleAttempts = 0;
       lastHarvestAt = now;
       const pass = /* @__PURE__ */ new Map();
-      const note = (name, url, owner) => {
+      const note2 = (name, url, owner) => {
         const seen = pass.get(name.toLowerCase());
         if (seen === void 0) {
           pass.set(name.toLowerCase(), { name, url, owner, photo: avatarPhotoId(url) });
@@ -11209,13 +11231,13 @@ ${button.innerHTML}`)
           if (!source || EMOJI_SOURCE_RE.test(source)) continue;
           const name = normalizedText(image.getAttribute("alt"));
           if (!isPersonName(name)) continue;
-          note(name, source, name);
+          note2(name, source, name);
           const heading = normalizedText(
             image.closest('[role="article"]')?.querySelector("h3, h4")?.textContent
           );
           if (isPersonName(heading) && (heading === name || name.startsWith(`${heading} `))) {
             senderAvatars.rememberGroupThread(openThread);
-            if (heading !== name) note(heading, source, name);
+            if (heading !== name) note2(heading, source, name);
           }
         }
       }
@@ -11496,8 +11518,8 @@ ${button.innerHTML}`)
           conversation.isGroup,
           { sender, thread: thread2 }
         );
-        const { icon: icon2 } = presentation;
-        if (!hiddenBeforeImages && !icon2 && !image && conversation.isGroup) {
+        const { icon: icon3 } = presentation;
+        if (!hiddenBeforeImages && !icon3 && !image && conversation.isGroup) {
           diag("notify.avatar", "group notification has no photo for its displayed identity");
         }
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
@@ -11546,7 +11568,7 @@ ${button.innerHTML}`)
           ++notifySeq,
           hidePreview ? "Messenger" : text2.title,
           hidePreview ? t("page.notification.hidden_body") : text2.body,
-          hidePreview ? "" : icon2,
+          hidePreview ? "" : icon3,
           dedupeKey,
           () => {
             window.__chatpaneOpenThread?.(conversation.threadPath);
@@ -11570,7 +11592,7 @@ ${button.innerHTML}`)
               "group",
               visiblePresentation.subtitle || visiblePresentation.title,
               // In a group the icon is the sender's only when their photo won.
-              Boolean(sender) && icon2 === sender
+              Boolean(sender) && icon3 === sender
             ),
             picture
           )
@@ -13429,6 +13451,36 @@ ${text2}`)) {
     });
     return button;
   };
+  var ICONS = {
+    soon: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2.5 2M10 3h4M12 3v3"/>',
+    hour: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    evening: '<path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z"/>',
+    morning: '<path d="M3 18h18M7 18a5 5 0 0 1 10 0M12 6v3M5.6 11.6l1.8 1.8M18.4 11.6l-1.8 1.8"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    list: '<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>',
+    next: '<path d="m9 6 6 6-6 6"/>',
+    back: '<path d="m15 6-6 6 6 6"/>',
+    close: '<path d="M7 7l10 10M17 7 7 17"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+    zone: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+    warning: '<path d="M12 4 2.5 20h19Z"/><path d="M12 10v4M12 17h.01"/>'
+  };
+  var icon = (name, className = "") => {
+    const wrapper = element("span", `chatpane-schedule-icon ${className}`.trim());
+    wrapper.setAttribute("aria-hidden", "true");
+    wrapper.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[name]}</svg>`;
+    return wrapper;
+  };
+  var note = (name, text2) => {
+    const paragraph = element("p", "chatpane-schedule-note");
+    paragraph.append(icon(name), element("span", "", text2));
+    return paragraph;
+  };
+  var menuRow = (name, label2, run, ...trailing) => {
+    const row = action("", run, "chatpane-schedule-row");
+    row.append(icon(name), element("span", "chatpane-schedule-label", label2), ...trailing);
+    return row;
+  };
   function initScheduledSend() {
     let rows = [];
     let owner = null;
@@ -13436,6 +13488,7 @@ ${text2}`)) {
     let busy2 = false;
     let panel = null;
     let panelThread = null;
+    let page = "main";
     let editing = null;
     let sourceBox = null;
     let sourceText = "";
@@ -13489,9 +13542,9 @@ ${text2}`)) {
     };
     const syncColors = () => {
       if (!button || !emoji) return;
-      const icon2 = emoji.querySelector("svg path") || emoji.querySelector("svg");
-      const fill2 = icon2 ? getComputedStyle(icon2).fill : "";
-      const accent = fill2 && fill2 !== "none" ? fill2 : getComputedStyle(emoji).color;
+      const glyph = emoji.querySelector("svg path") || emoji.querySelector("svg");
+      const fill2 = glyph ? getComputedStyle(glyph).fill : "";
+      const accent = fill2 && CSS.supports("color", fill2) ? fill2 : getComputedStyle(emoji).color;
       button.style.color = accent;
       if (!panel) return;
       panel.style.setProperty("--schedule-accent", accent);
@@ -13594,14 +13647,98 @@ ${text2}`)) {
           }
         }
         close();
-        toast(t("page.schedule.scheduled", { time: formatScheduleTime(due, true) }));
+        toast(t("page.schedule.scheduled", { time: formatScheduleTime(due) }));
       } catch (error) {
         failed(error);
       } finally {
         busy2 = false;
       }
     };
-    const customPicker = (container, due = Date.now() + 10 * 6e4) => {
+    const hasDraft = () => sourceText.trim() !== "";
+    const show = (next, item = null, returnTo) => {
+      page = next;
+      editing = item;
+      render();
+      if (!panel) return;
+      const target = returnTo && panel.querySelector(`[data-chatpane-schedule-page="${returnTo}"]`) || panel.querySelector("[data-autofocus]") || panel.querySelector("button");
+      target?.focus();
+    };
+    const back = () => {
+      if (editing) show("list");
+      else if (page !== "main" && hasDraft()) show("main", null, page);
+      else return false;
+      return true;
+    };
+    const heading = (title, canGoBack) => {
+      const row = element("div", "chatpane-schedule-heading");
+      if (canGoBack) {
+        const backButton = action("", back, "chatpane-schedule-icon-button chatpane-schedule-back");
+        backButton.setAttribute("aria-label", t("page.schedule.back"));
+        backButton.append(icon("back"));
+        row.append(backButton);
+      }
+      const closeButton = action(
+        "",
+        () => close(true),
+        "chatpane-schedule-icon-button chatpane-schedule-close"
+      );
+      closeButton.setAttribute("aria-label", t("page.schedule.close"));
+      closeButton.append(icon("close"));
+      row.append(element("h2", "", title), closeButton);
+      return row;
+    };
+    const pageRow = (name, label2, target, count = 0) => {
+      const row = menuRow(
+        name,
+        label2,
+        () => show(target),
+        ...count ? [element("span", "chatpane-schedule-count", count.toLocaleString(formatLocale()))] : [],
+        icon("next", "chatpane-schedule-chevron")
+      );
+      row.dataset.chatpaneSchedulePage = target;
+      return row;
+    };
+    const mainPage = (container) => {
+      container.append(heading(t("page.schedule.schedule_send"), false));
+      const now = Date.now();
+      for (const preset of schedulePresets(now)) {
+        const choice = menuRow(
+          preset.id,
+          preset.label,
+          () => {
+            const current2 = schedulePresets(Date.now()).find((p) => p.id === preset.id);
+            if (current2) void save(current2.due);
+          },
+          element("span", "chatpane-schedule-time", formatScheduleTime(preset.due, now))
+        );
+        choice.classList.add("chatpane-schedule-preset");
+        container.append(choice);
+      }
+      container.querySelector(".chatpane-schedule-preset")?.setAttribute("data-autofocus", "");
+      container.append(
+        element("div", "chatpane-schedule-separator"),
+        pageRow("calendar", t("page.schedule.choose_date_time"), "custom")
+      );
+      if (rows.length)
+        container.append(pageRow("list", t("page.schedule.scheduled_messages"), "list", rows.length));
+      container.append(note("info", t("page.schedule.sends_while_running")));
+    };
+    const customPage = (container) => {
+      const item = editing;
+      container.append(
+        heading(
+          item ? t("page.schedule.reschedule_message") : t("page.schedule.choose_date_time"),
+          true
+        )
+      );
+      if (item) {
+        container.append(element("p", "chatpane-schedule-preview", item.text));
+        if (item.status === "uncertain")
+          container.append(
+            element("p", "chatpane-schedule-warning", t("page.schedule.uncertain_note"))
+          );
+      }
+      const due = item ? Math.max(item.due, Date.now() + 15 * 6e4) : Date.now() + 10 * 6e4;
       const fields = element("div", "chatpane-schedule-fields");
       const dateLabel = element("label", "", t("page.schedule.date"));
       const date = element("input", "");
@@ -13609,6 +13746,7 @@ ${text2}`)) {
       date.value = localDateValue(due);
       date.min = localDateValue(Date.now());
       date.required = true;
+      date.dataset.autofocus = "";
       const timeLabel = element("label", "", t("page.schedule.time_24h"));
       const time = element("input", "");
       time.type = "text";
@@ -13622,7 +13760,7 @@ ${text2}`)) {
       timeLabel.append(time);
       fields.append(dateLabel, timeLabel);
       const confirm = action(
-        editing ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_message"),
+        "",
         () => {
           if (!date.reportValidity() || !time.reportValidity()) return;
           const value = localScheduleTime(date.value, time.value);
@@ -13634,108 +13772,73 @@ ${text2}`)) {
         },
         "chatpane-schedule-primary"
       );
-      container.append(fields, confirm);
+      const label2 = () => {
+        const value = localScheduleTime(date.value, time.value);
+        confirm.textContent = value !== null && value > Date.now() ? t("page.schedule.schedule_for", { time: formatScheduleTime(value) }) : item ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_message");
+      };
+      for (const field of [date, time])
+        for (const type of ["input", "change"]) field.addEventListener(type, label2);
+      label2();
+      container.append(fields, note("zone", timeZoneLabel()), confirm);
+    };
+    const listPage = (container) => {
+      container.append(heading(t("page.schedule.scheduled_messages"), hasDraft()));
+      for (const row of [...rows].sort((a, b) => a.due - b.due)) {
+        const item = element("div", "chatpane-schedule-item");
+        const time = formatScheduleTime(row.due);
+        const problem = row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain";
+        const status = problem ? row.status === "uncertain" ? t("page.schedule.status.unconfirmed", { time }) : t("page.schedule.status.not_sent", { time }) : row.status === "sending" ? t("page.schedule.status.submitting", { time }) : row.status === "draft" ? t("page.schedule.status.not_scheduled", { time }) : t("page.schedule.status.scheduled", { time });
+        const meta = element("div", "chatpane-schedule-meta");
+        if (problem) meta.append(icon("warning", "chatpane-schedule-warning"));
+        meta.append(element("strong", problem ? "chatpane-schedule-warning" : "", status));
+        item.append(
+          meta,
+          element(
+            "span",
+            "chatpane-schedule-conversation",
+            row.thread === thread() ? t("page.schedule.this_conversation") : t("page.schedule.another_conversation")
+          ),
+          element("p", "chatpane-schedule-preview", row.text)
+        );
+        const actions = element("div", "chatpane-schedule-item-actions");
+        if (row.status !== "sending")
+          actions.append(
+            action(
+              row.status === "scheduled" ? t("page.schedule.edit_time") : t("page.schedule.reschedule"),
+              () => show("custom", row)
+            )
+          );
+        actions.append(
+          action(t("page.schedule.copy_text"), () => {
+            void navigator.clipboard.writeText(row.text).then(() => toast(t("page.schedule.copied"))).catch(() => toast(t("page.schedule.copy_failed")));
+          })
+        );
+        if (row.status !== "sending")
+          actions.append(
+            action(t("page.schedule.cancel"), () => {
+              void request({ op: "cancel", id: row.id }).then(() => {
+                if (page === "list") show("list");
+              }).catch(failed);
+            })
+          );
+        item.append(actions);
+        container.append(item);
+      }
+      if (!hasDraft()) container.append(note("info", t("page.schedule.write_text")));
     };
     const render = () => {
       if (!panel) return;
-      panel.replaceChildren();
-      const heading = element("div", "chatpane-schedule-heading");
-      const closeButton = action("", () => close(true), "chatpane-schedule-close");
-      closeButton.setAttribute("aria-label", t("page.schedule.close"));
-      closeButton.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
-      heading.append(
-        element(
-          "h2",
-          "",
-          editing ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_send")
-        ),
-        closeButton
-      );
-      panel.append(heading);
-      if (editing) {
-        panel.append(element("p", "chatpane-schedule-preview", editing.text));
-        if (editing.status === "uncertain")
-          panel.append(element("p", "chatpane-schedule-warning", t("page.schedule.uncertain_note")));
-        customPicker(panel, Math.max(editing.due, Date.now() + 15 * 6e4));
-      } else if (sourceText.trim()) {
-        for (const preset of schedulePresets(Date.now())) {
-          const choice = action(
-            "",
-            () => {
-              const updated = schedulePresets(Date.now()).find((p) => p.label === preset.label);
-              if (updated) void save(updated.due);
-            },
-            "chatpane-schedule-preset"
-          );
-          choice.append(
-            element("span", "", preset.label),
-            element("span", "chatpane-schedule-time", formatScheduleTime(preset.due))
-          );
-          panel.append(choice);
+      if (page === "list" && !rows.length) {
+        if (!hasDraft()) {
+          close(true);
+          return;
         }
-        const details = element("details", "chatpane-schedule-custom");
-        details.append(element("summary", "", t("page.schedule.choose_date_time")));
-        customPicker(details);
-        details.addEventListener("toggle", positionPanel);
-        panel.append(details);
-      } else panel.append(element("p", "chatpane-schedule-note", t("page.schedule.write_text")));
-      panel.append(
-        element(
-          "p",
-          "chatpane-schedule-note",
-          t("page.schedule.time_zone", { zone: Intl.DateTimeFormat().resolvedOptions().timeZone })
-        ),
-        element(
-          "p",
-          "chatpane-schedule-note chatpane-schedule-divider",
-          t("page.schedule.sends_while_running")
-        )
-      );
-      if (rows.length && !editing) {
-        panel.append(
-          element("h3", "chatpane-schedule-divider", t("page.schedule.scheduled_messages"))
-        );
-        for (const row of [...rows].sort((a, b) => a.due - b.due)) {
-          const item = element("div", "chatpane-schedule-item");
-          const time = formatScheduleTime(row.due, true);
-          const status = row.status === "missed" || row.status === "missed_draft" ? t("page.schedule.status.not_sent", { time }) : row.status === "uncertain" ? t("page.schedule.status.unconfirmed", { time }) : row.status === "sending" ? t("page.schedule.status.submitting", { time }) : row.status === "draft" ? t("page.schedule.status.not_scheduled", { time }) : t("page.schedule.status.scheduled", { time });
-          item.append(
-            element(
-              "strong",
-              row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain" ? "chatpane-schedule-warning" : "",
-              status
-            ),
-            element(
-              "small",
-              "chatpane-schedule-note",
-              row.thread === thread() ? t("page.schedule.this_conversation") : t("page.schedule.another_conversation")
-            ),
-            element("p", "chatpane-schedule-preview", row.text)
-          );
-          const actions = element("div", "chatpane-schedule-item-actions");
-          if (row.status !== "sending") {
-            actions.append(
-              action(
-                row.status === "scheduled" ? t("page.schedule.edit_time") : t("page.schedule.reschedule"),
-                () => {
-                  editing = row;
-                  render();
-                }
-              ),
-              action(t("page.schedule.cancel"), () => {
-                void request({ op: "cancel", id: row.id }).then(render).catch(failed);
-              })
-            );
-          }
-          actions.append(
-            action(t("page.schedule.copy_text"), () => {
-              void navigator.clipboard.writeText(row.text).then(() => toast(t("page.schedule.copied"))).catch(() => toast(t("page.schedule.copy_failed")));
-            })
-          );
-          item.append(actions);
-          panel.append(item);
-        }
+        page = "main";
       }
+      panel.replaceChildren();
+      if (page === "custom") customPage(panel);
+      else if (page === "list") listPage(panel);
+      else mainPage(panel);
       syncColors();
       positionPanel();
     };
@@ -13767,8 +13870,7 @@ ${text2}`)) {
       Object.assign(panel, language());
       document.body.append(panel);
       button?.setAttribute("aria-expanded", "true");
-      render();
-      panel.querySelector("button")?.focus();
+      show(hasDraft() ? "main" : "list");
     };
     function ensureButton() {
       const box = cachedBox?.isConnected && isShown(cachedBox) ? cachedBox : findComposer();
@@ -13894,7 +13996,7 @@ ${text2}`)) {
         (event) => {
           if (event.key === "Escape" && panel) {
             event.stopPropagation();
-            close(true);
+            if (!back()) close(true);
           }
         },
         true
@@ -15068,14 +15170,14 @@ ${text2}`)) {
       () => diag("title-bar.control", "chatpane:window-control emit failed")
     );
   }
-  var ICONS = {
+  var ICONS2 = {
     minimize: '<path d="M2 6h8" />',
     maximize: '<rect x="2" y="2" width="8" height="8" rx="1" />',
     restore: '<rect x="2" y="4" width="6" height="6" rx="1" /><path d="M4.5 4V3a1 1 0 0 1 1-1H9a1 1 0 0 1 1 1v3.5a1 1 0 0 1-1 1H8" />',
     close: '<path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />'
   };
-  function icon(name) {
-    return `<svg viewBox="0 0 12 12" aria-hidden="true">${ICONS[name]}</svg>`;
+  function icon2(name) {
+    return `<svg viewBox="0 0 12 12" aria-hidden="true">${ICONS2[name]}</svg>`;
   }
   function buildControls() {
     const box = document.createElement("div");
@@ -15148,15 +15250,15 @@ ${text2}`)) {
     const maximize = controls.querySelector('[data-control="maximize"]');
     const minimize = controls.querySelector('[data-control="minimize"]');
     const close = controls.querySelector('[data-control="close"]');
-    if (minimize && !minimize.innerHTML) minimize.innerHTML = icon("minimize");
-    if (close && !close.innerHTML) close.innerHTML = icon("close");
+    if (minimize && !minimize.innerHTML) minimize.innerHTML = icon2("minimize");
+    if (close && !close.innerHTML) close.innerHTML = icon2("close");
     if (minimize) minimize.hidden = !next.minimize;
     if (maximize) maximize.hidden = !next.maximize;
     if (maximize) {
       const name = next.maximized ? "restore" : "maximize";
       if (maximize.dataset.icon !== name) {
         maximize.dataset.icon = name;
-        maximize.innerHTML = icon(name);
+        maximize.innerHTML = icon2(name);
         const label2 = next.maximized ? t("page.window.restore") : t("page.window.maximize");
         maximize.setAttribute("aria-label", label2);
         maximize.title = label2;

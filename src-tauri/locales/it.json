@@ -742,7 +742,9 @@
   "page.schedule.button_saved#many": "Programma invio · {count} salvati",
   "page.schedule.button_saved#other": "Programma invio · {count} salvati",
   "page.schedule.close": "Chiudi programmazione",
+  "page.schedule.back": "Indietro",
   "page.schedule.schedule_message": "Programma messaggio",
+  "page.schedule.schedule_for": "Programma per {time}",
   "page.schedule.reschedule_message": "Riprogramma messaggio",
   "page.schedule.uncertain_note": "Controlla la conversazione prima di riprogrammare. Messenger potrebbe aver già accettato questo messaggio.",
   "page.schedule.preset.in_15_minutes": "Tra 15 minuti",
@@ -753,7 +755,6 @@
   "page.schedule.date": "Data",
   "page.schedule.time_24h": "Ora (24 h)",
   "page.schedule.write_text": "Scrivi un messaggio di testo per programmarlo.",
-  "page.schedule.time_zone": "{zone} · formato 24 ore",
   "page.schedule.sends_while_running": "Viene inviato automaticamente finché {app} è aperto e online.",
   "page.schedule.scheduled_messages": "Messaggi programmati",
   "page.schedule.status.not_sent": "Non inviato · {time}",
@@ -783,6 +784,6 @@
   "page.schedule.not_saved": "Il messaggio non è stato salvato.",
   "page.schedule.draft_changed": "La bozza è cambiata. Il messaggio non è stato programmato.",
   "page.schedule.clear_unconfirmed": "Non è stato possibile confermare lo svuotamento della bozza. Il messaggio è salvato ma non programmato.",
-  "page.schedule.scheduled": "Messaggio programmato per il {time}. Verrà inviato automaticamente.",
+  "page.schedule.scheduled": "Messaggio programmato per {time}. Verrà inviato automaticamente.",
   "page.schedule.invalid_time": "Scegli un'ora locale valida nel formato HH:mm."
 }

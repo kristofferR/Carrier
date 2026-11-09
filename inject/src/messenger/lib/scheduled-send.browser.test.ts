@@ -255,6 +255,8 @@ async function fixtures(
     log.dataset.threadId = "456";
     await settle();
     const icon = () => document.querySelector<HTMLButtonElement>("[data-chatpane-schedule]");
+    const openPage = (name: string) =>
+      document.querySelector<HTMLButtonElement>(`[data-chatpane-schedule-page="${name}"]`)?.click();
     assert("empty composer has no clock", !icon());
     box.textContent = "Draft";
     await settle();
@@ -483,6 +485,7 @@ async function fixtures(
       "quick choices open",
       document.querySelectorAll(".chatpane-schedule-preset").length >= 3,
     );
+    openPage("custom");
     assert(
       "custom picker defaults to ten minutes ahead in 24h format",
       document.querySelector<HTMLInputElement>(".chatpane-schedule-fields input[type=text]")
@@ -492,6 +495,10 @@ async function fixtures(
       "custom picker defaults to today",
       document.querySelector<HTMLInputElement>(".chatpane-schedule-fields input[type=date]")
         ?.value === "2026-09-23",
+    );
+    assert(
+      "custom confirm names the send time",
+      document.querySelector(".chatpane-schedule-primary")?.textContent === "Schedule for 18:28",
     );
     Date.now = realNow;
     const panel = document.querySelector<HTMLElement>(".chatpane-schedule-panel")!;
@@ -527,6 +534,12 @@ async function fixtures(
       getComputedStyle(panel.querySelector("h2")!).color === "rgb(5, 5, 5)",
     );
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert(
+      "Escape returns from a page to the menu",
+      !!document.querySelector(".chatpane-schedule-preset") &&
+        document.activeElement?.getAttribute("data-chatpane-schedule-page") === "custom",
+    );
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     assert("Escape closes", !document.querySelector(".chatpane-schedule-panel"));
     icon()?.click();
     await settle();
@@ -552,6 +565,7 @@ async function fixtures(
     await settle();
     icon()?.click();
     await settle();
+    openPage("list");
     document.querySelector<HTMLButtonElement>(".chatpane-schedule-item-actions button")?.click();
     const opsBeforeReschedule = page.scheduleOps.length;
     document.querySelector<HTMLButtonElement>(".chatpane-schedule-primary")?.click();
@@ -565,6 +579,7 @@ async function fixtures(
     );
     icon()?.click();
     await settle();
+    openPage("list");
     document.querySelector<HTMLButtonElement>(".chatpane-schedule-item-actions button")?.click();
     page.loseSaveReply = true;
     const warningsBeforeSave = page.warnings.length;
@@ -587,6 +602,7 @@ async function fixtures(
     await settle();
     icon()?.click();
     await settle();
+    openPage("list");
     document.querySelector<HTMLButtonElement>(".chatpane-schedule-item-actions button")?.click();
     const opsBeforeRecovered = page.scheduleOps.length;
     document.querySelector<HTMLButtonElement>(".chatpane-schedule-primary")?.click();
@@ -605,6 +621,7 @@ async function fixtures(
     await settle();
     icon()?.click();
     await settle();
+    openPage("list");
     document.querySelector<HTMLButtonElement>(".chatpane-schedule-item-actions button")?.click();
     const opsBeforeExpired = page.scheduleOps.length;
     document.querySelector<HTMLButtonElement>(".chatpane-schedule-primary")?.click();
