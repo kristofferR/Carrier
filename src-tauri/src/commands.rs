@@ -1184,7 +1184,7 @@ pub(crate) fn restart_app(app: tauri::AppHandle) {
 /// Open the folder holding Chatpane's log file, for attaching to bug reports.
 /// Called from the (local-origin) Settings window.
 #[tauri::command]
-pub(crate) fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     open::that_detached(&dir).map_err(|e| e.to_string())
@@ -1200,7 +1200,7 @@ pub(crate) fn open_facebook_language(app: tauri::AppHandle) {
 /// Create (without overwriting) and open the user-owned custom stylesheet.
 /// Called only from the trusted local Settings window.
 #[tauri::command]
-pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
     let path = ensure_custom_css(&app)?;
     open::that_detached(path).map_err(|error| error.to_string())
 }
