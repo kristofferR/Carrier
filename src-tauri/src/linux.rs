@@ -2,7 +2,7 @@
 
 use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
-use gtk::prelude::{GtkSettingsExt, GtkWindowExt, WidgetExt};
+use gtk::prelude::{Cast, ContainerExt, GtkSettingsExt, GtkWindowExt, WidgetExt};
 use tauri::Manager;
 use tauri::webview::{PermissionKind, PermissionResponse};
 use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
@@ -20,6 +20,25 @@ pub(crate) fn apply_activation_token(window: &tauri::WebviewWindow, token: &str)
         Ok(window) => window.set_startup_id(token),
         Err(error) => log::warn!("failed to apply window activation token: {error}"),
     }
+}
+
+/// GTK runs a menu item's shortcut only while its menu bar is on screen, so a
+/// hidden menu bar (crate::title_bar::shows_menu) would take Ctrl+Q and the
+/// rest with it. The bar lets them run regardless.
+pub(crate) fn keep_menu_shortcuts(window: &tauri::WebviewWindow) {
+    let target = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        let Ok(vbox) = target.default_vbox() else {
+            return;
+        };
+        for bar in vbox
+            .children()
+            .into_iter()
+            .filter_map(|child| child.downcast::<gtk::MenuBar>().ok())
+        {
+            bar.connect_can_activate_accel(|_, _| true);
+        }
+    });
 }
 
 /// Keep Messenger's HTTP cache while avoiding WebKitGTK's largest in-memory
@@ -174,8 +193,8 @@ pub(crate) fn install_webview_diagnostics(window: &tauri::WebviewWindow) {
 
 /// Best-effort "is this session a tiling window manager?". Nothing in X11 or
 /// Wayland lets a client ask, so match the session's advertised desktop
-/// identifiers against the well-known tilers. Drives the "auto" title-bar
-/// default; Settings → Appearance → Title Bar overrides it either way.
+/// identifiers against the well-known tilers. Under one, a window counts as
+/// tiled until the compositor says otherwise (crate::linux_tiling).
 pub(crate) fn is_tiling_wm() -> bool {
     static TILING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *TILING.get_or_init(|| {
