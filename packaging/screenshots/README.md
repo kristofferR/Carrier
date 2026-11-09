@@ -6,10 +6,14 @@ real conversations, contact names, photos, notifications, IDs, or personal deskt
 None of the images in `docs/screenshots/` are captures of the app. They are
 renders of the website's window mock in `docs/index.html`.
 
-- **Linux** (`chatpane-linux-en-*.png`): the mock framed as a KDE Breeze window
-  with the title `Chatpane` and a File, Edit, View and Help menu bar. Both PNGs
-  are 1021 × 744 pixels. Light is the default AppStream screenshot; use dark
-  first and light second in the Snap listing.
+- **Linux** (`chatpane-linux-en-*.png`): the mock in its Linux mode, as Chatpane
+  3.x looks on a floating desktop (KDE Plasma, GNOME) with the title bar setting
+  on Automatic: no title bar, Chatpane's own round minimize, maximize and close
+  buttons at the top right, and the menu bar hidden. Rendered with Noto Sans
+  and Noto Color Emoji, with a rounded border and a soft shadow on a
+  transparent background. Both PNGs are 1021 × 744 pixels. Light is the
+  default AppStream screenshot; use dark first and light second in the Snap
+  listing.
 - **Windows** (`chatpane-windows-en-*.png`): the mock in its Windows mode,
   rendered with Segoe UI and Segoe UI Emoji, composited onto a 1920 × 1080
   capture of a clean Windows 11 test VM desktop with its taskbar. The website's
@@ -30,8 +34,8 @@ and IEND chunks: no text, account, location, or EXIF metadata.
 
 | Image | SHA-256 |
 | --- | --- |
-| `chatpane-linux-en-light.png` | `61c602d1cb33cf092157977f2b6e69e6bf735bf99807da49e59ab0b850795ebb` |
-| `chatpane-linux-en-dark.png` | `5c2367c82934a6245fedca067e0c734b452dc5cb5dcafe8b1de87bfb5eb8c99e` |
+| `chatpane-linux-en-light.png` | `fa6148a6c3a078b58475a2ac2a1edba529e93a58d11fc0fab574b3dd8aad0e7a` |
+| `chatpane-linux-en-dark.png` | `672e717691b4f49e5fd6c03185b5b87f15b380643796deee89d606952a877ba2` |
 | `chatpane-windows-en-light.png` | `153d5907a5b80bf29e6faa4fa9e94cc663546276a024c2dd9b88b161bb038fad` |
 | `chatpane-windows-en-dark.png` | `d913fe701daa14832571ca0e24e139b1e8a30c28f520c48439f323238a1df566` |
 
