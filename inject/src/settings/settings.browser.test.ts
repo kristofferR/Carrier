@@ -71,6 +71,8 @@ interface Fixture {
   changes: SettingsChange[];
   calls: string[];
   failNext: boolean;
+  /** Lets native replies through, once the first frame has been checked. */
+  release: () => void;
 }
 
 declare global {
@@ -90,23 +92,36 @@ function installBridge(platform: string, strings: typeof globalThis.__CHATPANE_I
     maximize: false,
     maximized: false,
   };
+  let release = () => {};
+  const replies = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const fixture: Fixture = {
     current: { theme: "system", app_icon: "color-light", hide_names_avatars: true },
     changes: [],
     calls: [],
     failNext: false,
+    release,
   };
   window.settingsFixture = fixture;
+  window.__CHATPANE_SETTINGS_BOOT__ = {
+    settings: structuredClone(fixture.current) as Settings,
+    capabilities: {
+      snap: false,
+      autostart: true,
+      automaticUpdateChecks: true,
+      multiInstance: true,
+      debug: false,
+    },
+    version: "3.1.0",
+  };
   window.__TAURI_INTERNALS__ = {
     invoke: async (command, args) => {
       fixture.calls.push(command);
+      await replies;
       switch (command) {
-        case "plugin:app|version":
-          return "3.1.0";
         case "get_settings":
           return structuredClone(fixture.current);
-        case "runtime_capabilities":
-          return { autostart: true, automaticUpdateChecks: true, multiInstance: true };
         case "autostart_status":
           return "off";
         case "update_install_mode":
@@ -160,6 +175,10 @@ async function exerciseSettings() {
     input.click();
   };
   try {
+    // The first frame comes from the boot data, before any native reply.
+    assert(document.getElementById("rows")!.children.length > 0, "first frame is complete");
+    assert(document.getElementById("version")!.textContent!.includes("3.1.0"), "version");
+    fixture.release();
     await settle();
     assert(document.title === "Chatpane Settings", "early localization");
     assert(document.querySelectorAll('[role="tab"]').length === 7, "all tabs render");

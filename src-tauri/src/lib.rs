@@ -1200,7 +1200,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             title_bar::window_control,
             commands::get_settings,
-            commands::runtime_capabilities,
             commands::autostart_status,
             commands::open_login_items,
             commands::update_setting,

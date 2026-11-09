@@ -3,7 +3,6 @@ import { invoke } from "./bridge";
 import type {
   MessengerAccountChange,
   MessengerAccountState,
-  RuntimeCapabilities,
   Settings,
   SettingsChange,
   SoundOption,
@@ -11,6 +10,9 @@ import type {
   ThemeInfo,
 } from "./native-types";
 import { UpdateConsentController, type UpdateUiState } from "./update-consent";
+
+// Injected when the window is built, so the first frame is the whole page.
+const BOOT = window.__CHATPANE_SETTINGS_BOOT__!;
 
 const I18N = {
   lang: "en",
@@ -27,14 +29,7 @@ const errorMessage = (error: unknown) => (error instanceof Error ? error.message
 byId("tabs").setAttribute("aria-label", t("settings.tab.list_label"));
 byId("reset").textContent = t("settings.footer.reset");
 byId("check").textContent = t("settings.update.check");
-// The product name alone until (or unless) the version arrives.
-const showVersion = (version: string) => {
-  byId("version").textContent = t("settings.footer.version", { version }).trim();
-};
-showVersion("");
-invoke("plugin:app|version")
-  .then(showVersion)
-  .catch(() => {});
+byId("version").textContent = t("settings.footer.version", { version: BOOT.version }).trim();
 
 // Per-field metadata: [key, label, hint]. Grouping into tabs is below.
 const FIELDS = [
@@ -208,7 +203,7 @@ const ICONS = {
 const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
 const IS_WINDOWS = /Win/.test(navigator.platform || navigator.userAgent);
 const IS_LINUX = !IS_MAC && !IS_WINDOWS && /Linux/.test(navigator.userAgent);
-let runtimeCapabilities: RuntimeCapabilities | null = null;
+const runtimeCapabilities = BOOT.capabilities;
 
 // The shared attention setting is a Dock bounce on macOS and a taskbar
 // flash on Windows — same setting, per-OS wording (defined here because the
@@ -342,7 +337,7 @@ try {
   if (saved && TABS.some((tab) => tab.id === saved)) activeTab = saved;
 } catch (_) {}
 
-let settings: Partial<Settings> = {};
+let settings: Settings = BOOT.settings;
 const setStatus = (m: string) => (byId("status").textContent = m || "");
 
 function svgIcon(inner: string) {
@@ -1066,7 +1061,7 @@ function updateCheckHoursRow() {
     ],
     t("settings.advanced.update_check_hours.label"),
     t("settings.advanced.update_check_hours.hint"),
-    !settings.automatic_update_checks || !runtimeCapabilities?.automaticUpdateChecks,
+    !settings.automatic_update_checks || !runtimeCapabilities.automaticUpdateChecks,
     (value) => persist({ key: "update_check_hours", value }),
   );
 }
@@ -1207,9 +1202,9 @@ function switchRow(key: SwitchKey) {
     IS_WINDOWS &&
     (settings.hide_on_minimize || settings.hide_on_focus_loss || settings.hide_taskbar_icon);
   const runtimeUnavailable =
-    (key === "multi_instance" && !runtimeCapabilities?.multiInstance) ||
-    (key === "autostart" && !runtimeCapabilities?.autostart) ||
-    (key === "automatic_update_checks" && !runtimeCapabilities?.automaticUpdateChecks);
+    (key === "multi_instance" && !runtimeCapabilities.multiInstance) ||
+    (key === "autostart" && !runtimeCapabilities.autostart) ||
+    (key === "automatic_update_checks" && !runtimeCapabilities.automaticUpdateChecks);
   if ((key === "show_tray" && trayRequired) || runtimeUnavailable) {
     cb.disabled = true;
   }
@@ -1223,9 +1218,7 @@ function switchRow(key: SwitchKey) {
   } else if (key === "show_tray" && trayRequired) {
     hint = t("settings.tray.show_tray.required_hint");
   } else if (runtimeUnavailable) {
-    if (!runtimeCapabilities) {
-      hint = t("settings.unavailable.unverified");
-    } else if (key === "automatic_update_checks" && runtimeCapabilities.debug) {
+    if (key === "automatic_update_checks" && runtimeCapabilities.debug) {
       hint = t("settings.unavailable.debug_updates");
     } else if (key === "multi_instance") {
       hint = t("settings.unavailable.snap_single_instance");
@@ -1519,6 +1512,7 @@ const CUSTOM_ROWS = {
 };
 
 function isCustomRow(key: RowKey): key is CustomRowKey {
+  // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs Safari 15.4; macOS 10.15 ships older WebKit.
   return Object.prototype.hasOwnProperty.call(CUSTOM_ROWS, key);
 }
 
@@ -1635,23 +1629,10 @@ updateButton.onclick = async () => {
   }
 };
 
-(async () => {
-  try {
-    runtimeCapabilities = await invoke("runtime_capabilities");
-  } catch (e) {
-    console.error(e);
-  }
-  autostartStatus = await readAutostartStatus();
-  try {
-    settings = await invoke("get_settings");
-  } catch (e) {
-    console.error(e);
-  }
-  render();
-  try {
-    await updateController.initialize();
-  } catch (e) {
-    updateController.fail(e);
-    console.error(e);
-  }
-})();
+render();
+// The OS's Start on System Startup state, which may also correct the setting.
+refresh();
+updateController.initialize().catch((e) => {
+  updateController.fail(e);
+  console.error(e);
+});

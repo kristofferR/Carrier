@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Peringatan dan kegagalan integrasi halaman dicatat di sini — lampirkan file-nya ke laporan bug.",
   "settings.advanced.logs.open": "Buka folder log",
   "settings.advanced.logs.open_failed": "Tidak dapat membuka folder log.",
-  "settings.unavailable.unverified": "Tidak tersedia karena {app} tidak dapat memverifikasi kemampuan runtime ini.",
   "settings.unavailable.debug_updates": "Draf debug dikelola oleh chatpane-debug-update. Pembaruan rilis diblokir.",
   "settings.unavailable.snap_single_instance": "Paket Snap hanya mendukung satu proses {app} dalam satu waktu.",
   "settings.unavailable.snap_autostart": "“Jalankan saat sistem dimulai” belum didukung di paket Snap.",

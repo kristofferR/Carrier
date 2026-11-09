@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Uyarılar ve sayfa entegrasyonu hataları buraya kaydedilir — dosyayı hata raporlarına ekle.",
   "settings.advanced.logs.open": "Günlük klasörünü aç",
   "settings.advanced.logs.open_failed": "Günlük klasörü açılamadı.",
-  "settings.unavailable.unverified": "{app} bu çalışma zamanı özelliğini doğrulayamadığı için kullanılamıyor.",
   "settings.unavailable.debug_updates": "Hata ayıklama taslakları chatpane-debug-update tarafından yönetilir. Sürüm güncellemeleri engellendi.",
   "settings.unavailable.snap_single_instance": "Snap paketi aynı anda yalnızca bir {app} işlemini destekler.",
   "settings.unavailable.snap_autostart": "Sistem açılışında başlatma Snap paketinde henüz desteklenmiyor.",

@@ -331,10 +331,9 @@ pub(crate) struct RuntimeCapabilities {
     debug: bool,
 }
 
-/// Tell the trusted Settings page which host-owned features the package can
-/// safely expose. Backend sanitization remains the enforcement boundary.
-#[tauri::command]
-pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
+/// Which host-owned features the package can safely expose in Settings.
+/// Backend sanitization remains the enforcement boundary.
+fn runtime_capabilities() -> RuntimeCapabilities {
     let snap = is_snap();
     RuntimeCapabilities {
         snap,
@@ -343,6 +342,28 @@ pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
         multi_instance: !snap,
         debug: cfg!(debug_assertions),
     }
+}
+
+/// Everything the Settings page needs for its first frame, injected when the
+/// window is built so it never draws an empty page while it asks for it.
+#[derive(Debug, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct SettingsBoot {
+    settings: Settings,
+    capabilities: RuntimeCapabilities,
+    version: String,
+}
+
+pub(crate) fn settings_boot_script(app: &tauri::AppHandle, settings: &Settings) -> String {
+    let boot = SettingsBoot {
+        settings: settings.clone(),
+        capabilities: runtime_capabilities(),
+        version: app.package_info().version.to_string(),
+    };
+    format!(
+        "\n  window.__CHATPANE_SETTINGS_BOOT__ = {};",
+        serde_json::to_string(&boot).expect("Settings boot data serialises")
+    )
 }
 
 /// Whether Chatpane will start at login, read from the OS. Also corrects the

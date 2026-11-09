@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Avisos e falhas de integração com a página ficam registrados aqui — anexe o arquivo aos relatos de bugs.",
   "settings.advanced.logs.open": "Abrir pasta de logs",
   "settings.advanced.logs.open_failed": "Não foi possível abrir a pasta de logs.",
-  "settings.unavailable.unverified": "Indisponível porque o {app} não conseguiu verificar este recurso no ambiente atual.",
   "settings.unavailable.debug_updates": "As versões de depuração são gerenciadas pelo chatpane-debug-update. As atualizações de versões públicas estão bloqueadas.",
   "settings.unavailable.snap_single_instance": "O pacote Snap permite um processo do {app} por vez.",
   "settings.unavailable.snap_autostart": "“Abrir ao iniciar o sistema” ainda não é compatível com o pacote Snap.",

@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Тут записуються попередження й збої інтеграції зі сторінкою — додавайте цей файл до звітів про помилки.",
   "settings.advanced.logs.open": "Відкрити теку журналів",
   "settings.advanced.logs.open_failed": "Не вдалося відкрити теку журналів.",
-  "settings.unavailable.unverified": "Недоступно, бо {app} не може перевірити цю можливість середовища.",
   "settings.unavailable.debug_updates": "Налагоджувальними чернетками керує chatpane-debug-update. Оновлення випусків заблоковано.",
   "settings.unavailable.snap_single_instance": "Пакет Snap підтримує лише один процес {app} одночасно.",
   "settings.unavailable.snap_autostart": "Запуск під час старту системи ще не підтримується в пакеті Snap.",

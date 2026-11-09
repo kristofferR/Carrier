@@ -227,6 +227,7 @@
   };
 
   // inject/src/settings/index.ts
+  var BOOT = window.__CHATPANE_SETTINGS_BOOT__;
   var I18N = {
     lang: "en",
     dir: "ltr",
@@ -241,12 +242,7 @@
   byId("tabs").setAttribute("aria-label", settingsText("settings.tab.list_label"));
   byId("reset").textContent = settingsText("settings.footer.reset");
   byId("check").textContent = settingsText("settings.update.check");
-  var showVersion = (version) => {
-    byId("version").textContent = settingsText("settings.footer.version", { version }).trim();
-  };
-  showVersion("");
-  invoke("plugin:app|version").then(showVersion).catch(() => {
-  });
+  byId("version").textContent = settingsText("settings.footer.version", { version: BOOT.version }).trim();
   var FIELDS = [
     [
       "always_on_top",
@@ -405,7 +401,7 @@
   var IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
   var IS_WINDOWS = /Win/.test(navigator.platform || navigator.userAgent);
   var IS_LINUX = !IS_MAC && !IS_WINDOWS && /Linux/.test(navigator.userAgent);
-  var runtimeCapabilities = null;
+  var runtimeCapabilities = BOOT.capabilities;
   if (IS_WINDOWS) {
     FIELD_META.attention_on_message = {
       label: settingsText("settings.notifications.attention.label_windows"),
@@ -522,7 +518,7 @@
     if (saved && TABS.some((tab) => tab.id === saved)) activeTab = saved;
   } catch (_) {
   }
-  var settings = {};
+  var settings = BOOT.settings;
   var setStatus = (m) => byId("status").textContent = m || "";
   function svgIcon(inner) {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -1139,7 +1135,7 @@
       ],
       settingsText("settings.advanced.update_check_hours.label"),
       settingsText("settings.advanced.update_check_hours.hint"),
-      !settings.automatic_update_checks || !runtimeCapabilities?.automaticUpdateChecks,
+      !settings.automatic_update_checks || !runtimeCapabilities.automaticUpdateChecks,
       (value) => persist({ key: "update_check_hours", value })
     );
   }
@@ -1255,7 +1251,7 @@
       key === "hide_names" || key === "hide_avatars" ? (settings[key] ?? settings.hide_names_avatars) === true : !!settings[key]
     );
     const trayRequired = IS_WINDOWS && (settings.hide_on_minimize || settings.hide_on_focus_loss || settings.hide_taskbar_icon);
-    const runtimeUnavailable = key === "multi_instance" && !runtimeCapabilities?.multiInstance || key === "autostart" && !runtimeCapabilities?.autostart || key === "automatic_update_checks" && !runtimeCapabilities?.automaticUpdateChecks;
+    const runtimeUnavailable = key === "multi_instance" && !runtimeCapabilities.multiInstance || key === "autostart" && !runtimeCapabilities.autostart || key === "automatic_update_checks" && !runtimeCapabilities.automaticUpdateChecks;
     if (key === "show_tray" && trayRequired || runtimeUnavailable) {
       cb.disabled = true;
     }
@@ -1267,9 +1263,7 @@
     } else if (key === "show_tray" && trayRequired) {
       hint = settingsText("settings.tray.show_tray.required_hint");
     } else if (runtimeUnavailable) {
-      if (!runtimeCapabilities) {
-        hint = settingsText("settings.unavailable.unverified");
-      } else if (key === "automatic_update_checks" && runtimeCapabilities.debug) {
+      if (key === "automatic_update_checks" && runtimeCapabilities.debug) {
         hint = settingsText("settings.unavailable.debug_updates");
       } else if (key === "multi_instance") {
         hint = settingsText("settings.unavailable.snap_single_instance");
@@ -1627,24 +1621,10 @@
       console.error(e);
     }
   };
-  (async () => {
-    try {
-      runtimeCapabilities = await invoke("runtime_capabilities");
-    } catch (e) {
-      console.error(e);
-    }
-    autostartStatus = await readAutostartStatus();
-    try {
-      settings = await invoke("get_settings");
-    } catch (e) {
-      console.error(e);
-    }
-    render();
-    try {
-      await updateController.initialize();
-    } catch (e) {
-      updateController.fail(e);
-      console.error(e);
-    }
-  })();
+  render();
+  refresh();
+  updateController.initialize().catch((e) => {
+    updateController.fail(e);
+    console.error(e);
+  });
 })();

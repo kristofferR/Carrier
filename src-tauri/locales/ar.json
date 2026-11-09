@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "تُسجَّل هنا التحذيرات وإخفاقات التكامل مع الصفحة — أرفق الملف ببلاغات الأخطاء.",
   "settings.advanced.logs.open": "فتح مجلد السجلّات",
   "settings.advanced.logs.open_failed": "تعذّر فتح مجلد السجلّات.",
-  "settings.unavailable.unverified": "غير متاح لأن {app} لم يتمكن من التحقّق من هذه الإمكانية في بيئة التشغيل.",
   "settings.unavailable.debug_updates": "تُدار مسودات التصحيح بواسطة chatpane-debug-update. تحديثات الإصدارات العامة محظورة.",
   "settings.unavailable.snap_single_instance": "تدعم حزمة Snap تشغيل عملية واحدة فقط من {app} في كل مرة.",
   "settings.unavailable.snap_autostart": "التشغيل عند بدء النظام غير مدعوم بعد في حزمة Snap.",

@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Cảnh báo và lỗi tích hợp trang được ghi tại đây — hãy đính kèm tệp này khi báo lỗi.",
   "settings.advanced.logs.open": "Mở thư mục nhật ký",
   "settings.advanced.logs.open_failed": "Không thể mở thư mục nhật ký.",
-  "settings.unavailable.unverified": "Không khả dụng vì {app} không thể xác minh khả năng này của môi trường chạy.",
   "settings.unavailable.debug_updates": "Bản nháp debug do chatpane-debug-update quản lý. Cập nhật bản phát hành bị chặn.",
   "settings.unavailable.snap_single_instance": "Gói Snap chỉ hỗ trợ một tiến trình {app} tại một thời điểm.",
   "settings.unavailable.snap_autostart": "Gói Snap chưa hỗ trợ tùy chọn Khởi động cùng hệ thống.",

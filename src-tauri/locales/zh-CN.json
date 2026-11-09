@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "警告和页面集成故障会记录在这里，提交问题报告时请附上该文件。",
   "settings.advanced.logs.open": "打开日志文件夹",
   "settings.advanced.logs.open_failed": "无法打开日志文件夹。",
-  "settings.unavailable.unverified": "不可用，因为 {app} 无法验证此运行时功能。",
   "settings.unavailable.debug_updates": "调试草稿版由 chatpane-debug-update 管理。正式版更新已被阻止。",
   "settings.unavailable.snap_single_instance": "Snap 软件包一次只支持一个 {app} 进程。",
   "settings.unavailable.snap_autostart": "Snap 软件包尚不支持“开机自动启动”。",

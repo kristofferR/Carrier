@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Advarsler og fejl i sideintegrationen logges her – vedhæft filen til fejlrapporter.",
   "settings.advanced.logs.open": "Åbn logmappen",
   "settings.advanced.logs.open_failed": "Kunne ikke åbne logmappen.",
-  "settings.unavailable.unverified": "Ikke tilgængelig, fordi {app} ikke kunne bekræfte, at denne funktion understøttes.",
   "settings.unavailable.debug_updates": "Fejlfindingskladder styres af chatpane-debug-update. Opdateringer til udgivelser er blokeret.",
   "settings.unavailable.snap_single_instance": "Snap-pakken understøtter kun én proces af {app} ad gangen.",
   "settings.unavailable.snap_autostart": "Start ved systemstart understøttes endnu ikke i Snap-pakken.",

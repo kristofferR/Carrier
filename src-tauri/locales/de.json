@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Warnungen und Fehler der Seitenintegration werden hier protokolliert – häng die Datei an Fehlerberichte an.",
   "settings.advanced.logs.open": "Protokollordner öffnen",
   "settings.advanced.logs.open_failed": "Der Protokollordner konnte nicht geöffnet werden.",
-  "settings.unavailable.unverified": "Nicht verfügbar, weil {app} diese Laufzeitfunktion nicht überprüfen konnte.",
   "settings.unavailable.debug_updates": "Debug-Entwürfe werden von chatpane-debug-update verwaltet. Release-Updates sind blockiert.",
   "settings.unavailable.snap_single_instance": "Das Snap-Paket unterstützt nur einen {app}-Prozess gleichzeitig.",
   "settings.unavailable.snap_autostart": "„Beim Systemstart öffnen“ wird im Snap-Paket noch nicht unterstützt.",

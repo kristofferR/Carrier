@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "A figyelmeztetések és az oldalintegrációs hibák ide kerülnek – csatold a fájlt a hibabejelentésekhez.",
   "settings.advanced.logs.open": "Naplómappa megnyitása",
   "settings.advanced.logs.open_failed": "Nem sikerült megnyitni a naplómappát.",
-  "settings.unavailable.unverified": "Nem érhető el, mert a {app} nem tudta ellenőrizni ezt a futásidejű képességet.",
   "settings.unavailable.debug_updates": "A hibakeresési vázlatkiadásokat a chatpane-debug-update kezeli. A kiadási frissítések le vannak tiltva.",
   "settings.unavailable.snap_single_instance": "A Snap-csomag egyszerre csak egy {app}-folyamatot támogat.",
   "settings.unavailable.snap_autostart": "A Snap-csomag még nem támogatja az indítást rendszerinduláskor.",

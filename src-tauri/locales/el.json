@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Εδώ καταγράφονται οι προειδοποιήσεις και τα σφάλματα ενσωμάτωσης στη σελίδα — επισύναψε το αρχείο στις αναφορές σφαλμάτων.",
   "settings.advanced.logs.open": "Άνοιγμα φακέλου καταγραφής",
   "settings.advanced.logs.open_failed": "Δεν ήταν δυνατό το άνοιγμα του φακέλου καταγραφής.",
-  "settings.unavailable.unverified": "Μη διαθέσιμο, επειδή το {app} δεν μπόρεσε να επαληθεύσει αυτήν τη δυνατότητα του περιβάλλοντος εκτέλεσης.",
   "settings.unavailable.debug_updates": "Τις πρόχειρες εκδόσεις αποσφαλμάτωσης τις διαχειρίζεται το chatpane-debug-update. Οι ενημερώσεις κανονικών εκδόσεων είναι αποκλεισμένες.",
   "settings.unavailable.snap_single_instance": "Το πακέτο Snap υποστηρίζει μία διεργασία του {app} κάθε φορά.",
   "settings.unavailable.snap_autostart": "Η «Εκκίνηση με το σύστημα» δεν υποστηρίζεται ακόμα στο πακέτο Snap.",

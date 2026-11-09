@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "သတိပေးချက်များနဲ့ စာမျက်နှာ ပေါင်းစပ်မှု ချို့ယွင်းချက်တွေကို ဒီမှာ မှတ်တမ်းတင်ပါတယ် — bug report တွေမှာ ဖိုင်ကို ပူးတွဲပါ။",
   "settings.advanced.logs.open": "မှတ်တမ်း ဖိုင်တွဲကို ဖွင့်ရန်",
   "settings.advanced.logs.open_failed": "မှတ်တမ်း ဖိုင်တွဲကို ဖွင့်၍ မရပါ။",
-  "settings.unavailable.unverified": "{app} က ဒီ runtime စွမ်းရည်ကို အတည်မပြုနိုင်လို့ အသုံးမပြုနိုင်ပါ။",
   "settings.unavailable.debug_updates": "Debug draft တွေကို chatpane-debug-update က စီမံပါတယ်။ Release အပ်ဒိတ်တွေကို ပိတ်ထားပါတယ်။",
   "settings.unavailable.snap_single_instance": "Snap package က တစ်ကြိမ်မှာ {app} process တစ်ခုကိုသာ ပံ့ပိုးပါတယ်။",
   "settings.unavailable.snap_autostart": "Snap package မှာ စနစ်စတင်ချိန်မှာ ဖွင့်ခြင်းကို မပံ့ပိုးရသေးပါ။",

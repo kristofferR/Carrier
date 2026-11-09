@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "সতর্কবার্তা ও পেজ-ইন্টিগ্রেশনের ত্রুটি এখানে লগ হয়; বাগ রিপোর্টের সঙ্গে ফাইলটি যুক্ত করুন।",
   "settings.advanced.logs.open": "লগ ফোল্ডার খুলুন",
   "settings.advanced.logs.open_failed": "লগ ফোল্ডার খোলা যায়নি।",
-  "settings.unavailable.unverified": "পাওয়া যাচ্ছে না, কারণ {app} এই রানটাইম সক্ষমতা যাচাই করতে পারেনি।",
   "settings.unavailable.debug_updates": "ডিবাগ ড্রাফট chatpane-debug-update দিয়ে পরিচালিত হয়। রিলিজ আপডেট ব্লক করা আছে।",
   "settings.unavailable.snap_single_instance": "Snap প্যাকেজ একবারে {app}-এর একটি প্রসেসই সমর্থন করে।",
   "settings.unavailable.snap_autostart": "Snap প্যাকেজে “সিস্টেম চালু হলে শুরু করুন” এখনো সমর্থিত নয়।",

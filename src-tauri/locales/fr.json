@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Les avertissements et les échecs d'intégration à la page sont consignés ici. Joins le fichier à tes signalements de bugs.",
   "settings.advanced.logs.open": "Ouvrir le dossier des journaux",
   "settings.advanced.logs.open_failed": "Impossible d'ouvrir le dossier des journaux.",
-  "settings.unavailable.unverified": "Indisponible, car {app} n'a pas pu vérifier cette capacité d'exécution.",
   "settings.unavailable.debug_updates": "Les brouillons de débogage sont gérés par chatpane-debug-update. Les mises à jour publiques sont bloquées.",
   "settings.unavailable.snap_single_instance": "Le paquet Snap ne prend en charge qu'un seul processus {app} à la fois.",
   "settings.unavailable.snap_autostart": "« Lancer au démarrage » n'est pas encore pris en charge dans le paquet Snap.",

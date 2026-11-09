@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "අනතුරු ඇඟවීම් සහ පිටු ඒකාබද්ධ කිරීමේ දෝෂ මෙහි සටහන් වේ — දෝෂ වාර්තාවලට ගොනුව අමුණන්න.",
   "settings.advanced.logs.open": "ලොග් ෆෝල්ඩරය විවෘත කරන්න",
   "settings.advanced.logs.open_failed": "ලොග් ෆෝල්ඩරය විවෘත කළ නොහැකි විය.",
-  "settings.unavailable.unverified": "{app} හට මෙම runtime හැකියාව තහවුරු කළ නොහැකි වූ නිසා ලබා ගත නොහැක.",
   "settings.unavailable.debug_updates": "Debug drafts කළමනාකරණය කරන්නේ chatpane-debug-update මඟිනි. නිකුතු යාවත්කාලීන අවහිර කර ඇත.",
   "settings.unavailable.snap_single_instance": "Snap පැකේජය වරකට එක් {app} ක්‍රියාවලියකට පමණක් සහාය දක්වයි.",
   "settings.unavailable.snap_autostart": "Snap පැකේජයේ පද්ධති ආරම්භයේදී ඇරඹීමට තවම සහාය නොදක්වයි.",

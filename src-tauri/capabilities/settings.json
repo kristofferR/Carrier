@@ -8,7 +8,6 @@
     "notification:allow-is-permission-granted",
     "allow-window-control",
     "allow-get-settings",
-    "allow-runtime-capabilities",
     "allow-autostart-status",
     "allow-open-login-items",
     "allow-update-setting",

@@ -13,6 +13,7 @@ fn settings_types_match_native() {
         crate::settings::Settings::decl(&config),
         crate::settings_change::SettingsChange::decl(&config),
         crate::commands::RuntimeCapabilities::decl(&config),
+        crate::commands::SettingsBoot::decl(&config),
         crate::autostart::Status::decl(&config),
         crate::themes::ThemeMode::decl(&config),
         crate::themes::ThemeInfo::decl(&config),

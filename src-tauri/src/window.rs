@@ -1281,10 +1281,10 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     }
     // Match the Messenger windows' topmost state so the dialog isn't trapped
     // behind them when Always on Top is enabled.
-    let (aot, theme) = {
+    let (aot, theme, background) = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
-        (s.always_on_top, theme_for(&s))
+        (s.always_on_top, theme_for(&s), splash_background(&s))
     };
     let builder =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
@@ -1298,7 +1298,10 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
             .maximizable(false)
             .minimizable(false)
             .always_on_top(aot)
-            .theme(theme);
+            .theme(theme)
+            // The page's own background until its first frame, which the boot
+            // data below makes the whole page.
+            .background_color(background);
     // macOS: the window buttons float over the tab bar, as in the Messenger
     // windows (see macos::title_bar), so a theme change needs no rebuild.
     #[cfg(target_os = "macos")]
@@ -1315,6 +1318,7 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         builder
             .initialization_script(crate::title_bar::initial_script(&s, false))
             .initialization_script(crate::i18n::script(crate::i18n::Audience::Settings))
+            .initialization_script(crate::commands::settings_boot_script(app, &s))
             // The page draws the controls once it's loaded: restate them then.
             .on_page_load(|window, payload| {
                 if payload.event() == tauri::webview::PageLoadEvent::Finished {
@@ -1328,6 +1332,17 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
                 let state = app.state::<AppState>();
                 let s = state.settings.lock().unwrap();
                 crate::app_icon::apply_window_icon(&window, &s);
+                // Tauri's window background can invert white on macOS (tauri#12349).
+                #[cfg(target_os = "macos")]
+                {
+                    let win = window.clone();
+                    let dark = is_dark(&s);
+                    let _ = window.run_on_main_thread(move || {
+                        if let Ok(ptr) = win.ns_window() {
+                            crate::macos::theme::set_macos_window_bg(ptr, dark);
+                        }
+                    });
+                }
             }
             // A reopened Settings window starts from the initial state.
             window.on_window_event(|event| {

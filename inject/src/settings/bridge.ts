@@ -2,7 +2,6 @@ import type {
   MessengerAccountChange,
   MessengerAccountState,
   NotificationSound,
-  RuntimeCapabilities,
   Settings,
   SettingsChange,
   SoundOption,
@@ -13,12 +12,10 @@ import type {
 
 /** Argument and result contracts for the trusted Settings window's commands. */
 interface Commands {
-  "plugin:app|version": [undefined, string];
   window_control: [{ action: "drag" | "close" }, null];
   get_settings: [undefined, Settings];
   update_setting: [{ change: SettingsChange }, Settings];
   reset_settings: [undefined, Settings];
-  runtime_capabilities: [undefined, RuntimeCapabilities];
   autostart_status: [undefined, Status | null];
   open_login_items: [undefined, null];
   list_themes: [undefined, ThemeInfo[]];

@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Zaznamenávají se sem varování a chyby integrace se stránkou — soubor přilož k hlášení chyb.",
   "settings.advanced.logs.open": "Otevřít složku s protokoly",
   "settings.advanced.logs.open_failed": "Složku s protokoly se nepodařilo otevřít.",
-  "settings.unavailable.unverified": "Nedostupné, protože aplikace {app} nemohla ověřit tuto schopnost prostředí.",
   "settings.unavailable.debug_updates": "Ladicí koncepty spravuje chatpane-debug-update. Aktualizace vydání jsou blokované.",
   "settings.unavailable.snap_single_instance": "Balíček Snap podporuje jen jeden proces aplikace {app} najednou.",
   "settings.unavailable.snap_autostart": "Spouštění při startu systému zatím balíček Snap nepodporuje.",

@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Dito nila-log ang mga babala at pagpalya sa page integration — ilakip ang file sa mga bug report.",
   "settings.advanced.logs.open": "Buksan ang log folder",
   "settings.advanced.logs.open_failed": "Hindi mabuksan ang log folder.",
-  "settings.unavailable.unverified": "Hindi available dahil hindi ma-verify ng {app} ang runtime capability na ito.",
   "settings.unavailable.debug_updates": "Pinamamahalaan ng chatpane-debug-update ang mga debug draft. Naka-block ang mga release update.",
   "settings.unavailable.snap_single_instance": "Isang proseso lang ng {app} sa isang pagkakataon ang sinusuportahan ng Snap package.",
   "settings.unavailable.snap_autostart": "Hindi pa sinusuportahan sa Snap package ang Magsimula sa system startup.",

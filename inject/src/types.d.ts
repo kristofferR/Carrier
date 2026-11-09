@@ -129,6 +129,8 @@ interface Window {
   /** Called by the native side with the strip's current state. */
   __chatpaneTitleBar?: (state: unknown) => void;
   __CHATPANE_SETTINGS__?: ChatpaneSettings;
+  /** The Settings window's first-frame data, injected when it is built. */
+  __CHATPANE_SETTINGS_BOOT__?: import("./settings/native-types").SettingsBoot;
   /** Scheduled delivery availability fixed when the native process starts. */
   __CHATPANE_SCHEDULED_SEND_AVAILABLE__?: boolean;
   /** Conversation id a recycled window reopens; set only in rebuilt windows. */

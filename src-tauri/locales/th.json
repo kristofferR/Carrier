@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "คำเตือนและความล้มเหลวในการทำงานร่วมกับหน้าเว็บจะถูกบันทึกไว้ที่นี่ แนบไฟล์นี้ไปกับรายงานข้อบกพร่อง",
   "settings.advanced.logs.open": "เปิดโฟลเดอร์บันทึก",
   "settings.advanced.logs.open_failed": "เปิดโฟลเดอร์บันทึกไม่ได้",
-  "settings.unavailable.unverified": "ใช้งานไม่ได้ เพราะ {app} ยืนยันความสามารถนี้ของรันไทม์ไม่ได้",
   "settings.unavailable.debug_updates": "รุ่นร่างสำหรับดีบักจัดการโดย chatpane-debug-update การอัปเดตรุ่นเผยแพร่ถูกบล็อก",
   "settings.unavailable.snap_single_instance": "แพ็กเกจ Snap รองรับกระบวนการ {app} ได้ครั้งละหนึ่งรายการ",
   "settings.unavailable.snap_autostart": "แพ็กเกจ Snap ยังไม่รองรับ “เริ่มทำงานเมื่อเปิดเครื่อง”",

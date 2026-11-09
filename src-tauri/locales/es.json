@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Aquí se registran las advertencias y los fallos de integración con la página — adjunta el archivo a los reportes de errores.",
   "settings.advanced.logs.open": "Abrir carpeta de registros",
   "settings.advanced.logs.open_failed": "No se pudo abrir la carpeta de registros.",
-  "settings.unavailable.unverified": "No disponible porque {app} no pudo verificar esta función en este entorno.",
   "settings.unavailable.debug_updates": "chatpane-debug-update administra las versiones de depuración. Las actualizaciones de las versiones públicas están bloqueadas.",
   "settings.unavailable.snap_single_instance": "El paquete Snap admite un solo proceso de {app} a la vez.",
   "settings.unavailable.snap_autostart": "«Iniciar con el sistema» todavía no es compatible con el paquete Snap.",

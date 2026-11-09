@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "चेतावनी र पेज-इन्टिग्रेसनका त्रुटिहरू यहाँ लग हुन्छन्; बग रिपोर्टमा यो फाइल संलग्न गर्नुहोस्।",
   "settings.advanced.logs.open": "लग फोल्डर खोल्नुहोस्",
   "settings.advanced.logs.open_failed": "लग फोल्डर खोल्न सकिएन।",
-  "settings.unavailable.unverified": "उपलब्ध छैन, किनभने {app} ले यो रनटाइम क्षमता पुष्टि गर्न सकेन।",
   "settings.unavailable.debug_updates": "डिबग ड्राफ्टहरू chatpane-debug-update ले व्यवस्थापन गर्छ। रिलिज अपडेटहरू रोकिएका छन्।",
   "settings.unavailable.snap_single_instance": "Snap प्याकेजले एक पटकमा {app} को एउटा मात्र प्रोसेस समर्थन गर्छ।",
   "settings.unavailable.snap_autostart": "Snap प्याकेजमा “सिस्टम सुरु हुँदा चलाउनुहोस्” अहिलेसम्म समर्थित छैन।",

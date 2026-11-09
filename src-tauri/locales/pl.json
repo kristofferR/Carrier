@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Tu zapisywane są ostrzeżenia i błędy integracji ze stroną — dołączaj ten plik do zgłoszeń błędów.",
   "settings.advanced.logs.open": "Otwórz folder dzienników",
   "settings.advanced.logs.open_failed": "Nie udało się otworzyć folderu dzienników.",
-  "settings.unavailable.unverified": "Niedostępne, bo aplikacja {app} nie mogła zweryfikować tej możliwości środowiska.",
   "settings.unavailable.debug_updates": "Wersjami roboczymi debug zarządza chatpane-debug-update. Aktualizacje wydań są zablokowane.",
   "settings.unavailable.snap_single_instance": "Pakiet Snap obsługuje tylko jeden proces aplikacji {app} naraz.",
   "settings.unavailable.snap_autostart": "Uruchamianie przy starcie systemu nie jest jeszcze obsługiwane w pakiecie Snap.",

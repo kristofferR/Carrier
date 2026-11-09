@@ -573,7 +573,6 @@
   "settings.advanced.logs.hint": "Avvisi ed errori di integrazione con la pagina vengono registrati qui: allega il file alle segnalazioni di bug.",
   "settings.advanced.logs.open": "Apri cartella dei log",
   "settings.advanced.logs.open_failed": "Impossibile aprire la cartella dei log.",
-  "settings.unavailable.unverified": "Non disponibile perché {app} non è riuscito a verificare questa funzionalità di runtime.",
   "settings.unavailable.debug_updates": "Le bozze di debug sono gestite da chatpane-debug-update. Gli aggiornamenti delle release sono bloccati.",
   "settings.unavailable.snap_single_instance": "Il pacchetto Snap supporta un solo processo di {app} alla volta.",
   "settings.unavailable.snap_autostart": "«Avvia con il sistema» non è ancora supportato nel pacchetto Snap.",

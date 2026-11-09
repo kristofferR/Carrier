@@ -4,7 +4,6 @@
 const COMMANDS: &[&str] = &[
     "window_control",
     "get_settings",
-    "runtime_capabilities",
     "autostart_status",
     "open_login_items",
     "update_setting",
