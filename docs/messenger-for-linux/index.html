@@ -147,7 +147,7 @@
       <h2>Chatpane on Linux</h2>
       <p>Chatpane opens the real Messenger, the same one from your browser, so calls, group chats, reactions, photos and your full history are all there and stay in sync with your phone. On Linux it adds:</p>
       <ul>
-        <li><strong>Only Messenger.</strong> Facebook's Feed, Reels, Marketplace and global search are hidden. On floating desktops Chatpane draws its own window buttons, and an optional top menu bar is available.</li>
+        <li><strong>Only Messenger.</strong> Facebook's Feed, Reels, Marketplace and global search are hidden. Chatpane draws its own window buttons on floating windows and hides them when a tiling window manager such as Hyprland or Sway tiles the window. An optional top menu bar is available.</li>
         <li><strong>Notifications.</strong> Native notifications with the sender's photo. You can react, mark as read or mute from them, and reply inline on notification servers that support it, such as KDE Plasma.</li>
         <li><strong>Tray and badge.</strong> A tray icon with recent conversations, an unread count, start on login, start in the tray and hide on close.</li>
         <li><strong>Wayland ready.</strong> Chatpane picks GTK's Wayland backend on pure Wayland sessions and applies known rendering workarounds for older NVIDIA drivers and Niri.</li>
@@ -171,7 +171,7 @@
         </details>
         <details class="faq-item">
           <summary><h3>The window is blank. What can I do?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
-          <p class="faq-a">Start Chatpane with <code>CARRIER_LINUX_WEBKIT_SAFE_MODE=1 carrier</code>. That turns on WebKitGTK's rendering fallbacks, which fix blank or unstable windows on some GPU and compositor combinations. If it still happens, please <a href="https://github.com/kristofferR/Carrier/issues" rel="noopener">open an issue</a> with your distribution and desktop.</p>
+          <p class="faq-a">Start Chatpane with <code>CHATPANE_LINUX_WEBKIT_SAFE_MODE=1 chatpane</code>. That turns on WebKitGTK's rendering fallbacks, which fix blank or unstable windows on some GPU and compositor combinations. If it still happens, please <a href="https://github.com/kristofferR/Carrier/issues" rel="noopener">open an issue</a> with your distribution and desktop.</p>
         </details>
         <details class="faq-item">
           <summary><h3>Is there a Flatpak or Snap?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
