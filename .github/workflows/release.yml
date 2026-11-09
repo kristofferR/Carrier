@@ -853,8 +853,7 @@ jobs:
           SHA_LIN_ARM=$(sha256sum "/tmp/assets/Chatpane_${VERSION}_lin_arm.AppImage" | cut -d' ' -f1)
           SHA_LIN_X64=$(sha256sum "/tmp/assets/Chatpane_${VERSION}_lin_x64.AppImage" | cut -d' ' -f1)
 
-          # The site moves to https://chatpane.app/ once Pages serves it there.
-          HOMEPAGE="https://kristofferr.github.io/Carrier/"
+          HOMEPAGE="https://chatpane.app/"
           cat > /tmp/chatpane.rb << CASK_EOF
           cask "chatpane" do
             arch arm: "arm", intel: on_system_conditional(macos: "intel", linux: "x64")

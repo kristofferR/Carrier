@@ -8,7 +8,7 @@ pkgver=@PKGVER@
 pkgrel=1
 pkgdesc="Distraction-free desktop client for Facebook Messenger (formerly Carrier)"
 arch=('x86_64' 'aarch64')
-url="https://github.com/kristofferR/Carrier"
+url="https://chatpane.app/"
 license=('MIT')
 depends=('webkit2gtk-4.1' 'gtk3' 'hicolor-icon-theme')
 # Renamed from carrier: take over its installs and its /usr/bin/carrier.

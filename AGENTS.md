@@ -23,7 +23,9 @@ these keep `carrier`, on purpose:
 - the crate binary `carrier` (deb/rpm `/usr/bin/carrier`, `carrier.exe`,
   `~/.local/bin/carrier` for debug installs, the Linux window class)
 - the code that migrates from the old name, which has to name it
-- the repo `kristofferR/Carrier` and its site URL, until they move
+- the repo `kristofferR/Carrier`. The site is https://chatpane.app/; the old
+  `kristofferr.github.io/Carrier/` links redirect there only while the repo
+  keeps its name
 
 Chatpane is a tiny **Tauri v2** desktop client for **Facebook Messenger** (wraps
 `facebook.com/messages` in a chrome-stripped native window). Repo:
