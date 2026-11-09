@@ -49,6 +49,33 @@ export function notificationSenderPrefix(body: string, group: ConversationNotifi
   return { person, end };
 }
 
+/**
+ * The member a named group's notification title names as its sender, read
+ * with Messenger's own title templates for its UI language ("{senderName} to
+ * {threadName}" in English). Undefined unless the title is a template filled
+ * in with the group's name and exactly one member's name or nickname.
+ */
+export function addressedGroupSender(
+  title: string,
+  group: ConversationNotificationNames | null,
+  templates: readonly string[],
+) {
+  if (!group?.isGroup || !group.title) return undefined;
+  for (const template of templates) {
+    const [before, after, ...extra] = template
+      .split("{threadName}")
+      .join(group.title)
+      .split("{senderName}");
+    if (before === undefined || after === undefined || extra.length) continue;
+    if (title.length <= before.length + after.length) continue;
+    if (!title.startsWith(before) || !title.endsWith(after)) continue;
+    const sender = title.slice(before.length, title.length - after.length);
+    const person = namedParticipant(sender, group);
+    if (person) return person;
+  }
+  return undefined;
+}
+
 export function notificationSender(body: string, group: ConversationNotificationNames | null) {
   if (!group?.isGroup) return undefined;
   return notificationSenderPrefix(body, group)?.person;

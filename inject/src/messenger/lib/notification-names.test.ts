@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { nicknameMode, showNicknames } from "./nicknames";
 import { notificationDedupeKey, notificationPresentation } from "./notification-fallback";
 import {
+  addressedGroupSender,
   type ConversationNotificationNames,
   communicationSender,
   notificationNames,
@@ -284,6 +285,47 @@ describe("Messenger group-name reader", () => {
     const pending = databaseHarness();
     pending.modules.LSDatabaseSingleton = { LSDatabaseSingleton: new Promise(() => {}) };
     expect(await readConversationNotificationNames("123", pending.load, 1)).toBeNull();
+  });
+});
+
+describe("addressedGroupSender", () => {
+  const person = (name: string, nickname = "") => ({
+    name,
+    firstName: name.split(" ")[0]!,
+    nickname,
+    avatar: "",
+  });
+  const jane = person("Jane Doe", "Captain");
+  const club = {
+    title: "⚽ Book club ⚽",
+    isGroup: true,
+    participants: [jane, person("Jane Roe"), person("John Smith")],
+  };
+
+  const english = ["{senderName} to {threadName}"];
+
+  test("reads the title with Messenger's template, in any order and spacing", () => {
+    expect(addressedGroupSender("Jane Doe to ⚽ Book club ⚽", club, english)).toBe(jane);
+    expect(addressedGroupSender("Captain to ⚽ Book club ⚽", club, english)).toBe(jane);
+    const reversed = ["«{threadName}»: {senderName}"];
+    expect(addressedGroupSender("«⚽ Book club ⚽»: Jane Doe", club, reversed)).toBe(jane);
+    const unspaced = ["{senderName}さんから{threadName}へ"];
+    expect(addressedGroupSender("Jane Doeさんから⚽ Book club ⚽へ", club, unspaced)).toBe(jane);
+  });
+
+  test("names nobody unless the title fits a template and one member", () => {
+    // Both Janes go by "Jane": neither is certain.
+    expect(addressedGroupSender("Jane to ⚽ Book club ⚽", club, english)).toBeUndefined();
+    // An unknown sender, the group's own title, another template, or none.
+    expect(addressedGroupSender("Kim Lee to ⚽ Book club ⚽", club, english)).toBeUndefined();
+    expect(addressedGroupSender("⚽ Book club ⚽", club, english)).toBeUndefined();
+    expect(addressedGroupSender("Jane Doe an ⚽ Book club ⚽", club, english)).toBeUndefined();
+    expect(addressedGroupSender("Jane Doe to ⚽ Book club ⚽", club, [])).toBeUndefined();
+    // An unnamed group, or a one-to-one chat.
+    const unnamed = { ...club, title: "" };
+    expect(addressedGroupSender("Jane Doe to your group", unnamed, english)).toBeUndefined();
+    const direct = { ...club, isGroup: false };
+    expect(addressedGroupSender("Jane Doe to ⚽ Book club ⚽", direct, english)).toBeUndefined();
   });
 });
 

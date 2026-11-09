@@ -66,6 +66,7 @@ const MESSAGE_LIMIT = 100;
 export class PageMessageIndex {
   private readonly threads = new Map<string, string>();
   private readonly stale = new Set<string>();
+  private readonly raised = new Set<string>();
 
   record(messageId: string, threadId: string): void {
     this.threads.delete(messageId);
@@ -87,10 +88,42 @@ export class PageMessageIndex {
   isStale(tag: unknown): boolean {
     return typeof tag === "string" && this.stale.has(tag);
   }
+
+  /**
+   * Whether a Notification with this tag was already raised; records it if
+   * not. Messenger can notify twice about one message, and a web notification
+   * reusing a shown tag replaces it rather than adding another.
+   */
+  repeats(tag: unknown): boolean {
+    if (typeof tag !== "string" || !tag) return false;
+    if (this.raised.has(tag)) return true;
+    this.raised.add(tag);
+    if (this.raised.size > MESSAGE_LIMIT) this.raised.delete(this.raised.values().next().value!);
+    return false;
+  }
 }
 
 /** Shared by the module hook (writer) and the Notification bridge (reader). */
 export const pageMessages = new PageMessageIndex();
+
+/**
+ * How Messenger titles a named group's notification in its UI language,
+ * "{senderName} to {threadName}" in English. Read from its notification
+ * module's source when the module is defined; empty if that fails.
+ */
+export const groupTitleTemplates: string[] = [];
+
+/** The string literals in `source` that place both a sender and a group. */
+export function readGroupTitleTemplates(source: string): string[] {
+  const templates = new Set<string>();
+  for (const [, literal = ""] of source.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)) {
+    if (!literal.includes("{senderName}") || !literal.includes("{threadName}")) continue;
+    try {
+      templates.add(JSON.parse(`"${literal}"`));
+    } catch {}
+  }
+  return [...templates];
+}
 
 type Load = (name: string) => unknown;
 
@@ -251,9 +284,12 @@ export function wrapFactoryExports(
  * Wrap MWDesktopNotifications so each message it notifies about is recorded
  * first, and marked stale when it is old news. Messenger still notifies: the
  * Notification bridge suppresses a stale one the way it suppresses a muted
- * one, which also keeps its unread row from raising a fallback.
+ * one, which also keeps its unread row from raising a fallback. Its group
+ * title templates are read here too (see {@link groupTitleTemplates}).
  */
 export function wrapDesktopNotificationsFactory(factory: Factory, load: () => unknown): Factory {
+  const templates = readGroupTitleTemplates(Function.prototype.toString.call(factory));
+  groupTitleTemplates.splice(0, groupTitleTemplates.length, ...templates);
   return wrapFactoryExports(factory, (exports) => {
     const trigger = exports.triggerLocalNotification;
     if (typeof trigger !== "function") return false;

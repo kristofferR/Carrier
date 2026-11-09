@@ -688,6 +688,19 @@ const opaqueNotificationBodyMatches = (
   return sendersCompatible && opaqueTextMatches(left.message, right.message);
 };
 
+/**
+ * A receipt that knows its conversation compares only the message, like
+ * {@link pageNotificationMatchesRow}. Callers check the conversation first.
+ */
+const receiptMatches = (
+  receipt: { identity: OpaqueNotificationIdentity; thread?: string; draftThread?: string },
+  identity: OpaqueNotificationIdentity,
+): boolean =>
+  receipt.thread || receipt.draftThread
+    ? opaqueNotificationBodyMatches(receipt.identity, identity) ||
+      opaqueTextMatches(receipt.identity.body, identity.message)
+    : opaqueNotificationMatches(receipt.identity, identity);
+
 const validOpaqueTextIdentity = (
   value: unknown,
   prefixLimit: number,
@@ -834,7 +847,7 @@ export class PendingPageNotificationStore {
       let ambiguous = false;
       for (const [key, identity] of identities) {
         if (receipt.thread && receipt.thread !== hashText(key)) continue;
-        if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+        if (!receiptMatches(receipt, identity)) continue;
         if (match !== null && match !== key) {
           ambiguous = true;
           break;
@@ -869,8 +882,7 @@ export class PendingPageNotificationStore {
       if (
         !read.some(
           ({ key, identity }) =>
-            (!receipt.thread || receipt.thread === key) &&
-            opaqueNotificationMatches(receipt.identity, identity),
+            (!receipt.thread || receipt.thread === key) && receiptMatches(receipt, identity),
         )
       ) {
         continue;
@@ -1057,12 +1069,7 @@ export class PageNotificationReceiptStore {
       const receipt = this.receipts[index]!;
       if (receipt.draftThread && receipt.draftThread !== hashText(row.key || "")) continue;
       if (receipt.thread && receipt.thread !== hashText(row.key || "")) continue;
-      if (
-        !(receipt.draftThread
-          ? opaqueNotificationBodyMatches(receipt.identity, identity)
-          : opaqueNotificationMatches(receipt.identity, identity))
-      )
-        continue;
+      if (!receiptMatches(receipt, identity)) continue;
       this.receipts.splice(index, 1);
       this.persist();
       return receiptMatch(receipt);
@@ -1105,14 +1112,7 @@ export class PageNotificationReceiptStore {
       for (const [key, candidates] of identities) {
         if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
         if (receipt.thread && receipt.thread !== hashText(key)) continue;
-        if (
-          !candidates.some((identity) =>
-            receipt.draftThread
-              ? opaqueNotificationBodyMatches(receipt.identity, identity)
-              : opaqueNotificationMatches(receipt.identity, identity),
-          )
-        )
-          continue;
+        if (!candidates.some((identity) => receiptMatches(receipt, identity))) continue;
         // Two anchors for one thread can briefly show different messages.
         // Matching either one must not mark the other as delivered.
         if (candidates.some((identity) => identity.body.full !== candidates[0]!.body.full)) {
@@ -1167,9 +1167,7 @@ export class PageNotificationReceiptStore {
           ({ key, identity }) =>
             (!receipt.draftThread || receipt.draftThread === key) &&
             (!receipt.thread || receipt.thread === key) &&
-            (receipt.draftThread
-              ? opaqueNotificationBodyMatches(receipt.identity, identity)
-              : opaqueNotificationMatches(receipt.identity, identity)),
+            receiptMatches(receipt, identity),
         )
       ) {
         continue;
@@ -1220,9 +1218,7 @@ export class PageNotificationQueue {
       const age = rowChangeAt - signal.at;
       if (signal.thread !== undefined && row.key !== undefined && row.key !== signal.thread)
         continue;
-      if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
-        matches.push(index);
-      }
+      if (age >= 0 && pageNotificationMatchesRow(signal, row)) matches.push(index);
     }
     // Several indistinguishable page signals cannot be assigned safely. Drop
     // them from this eager queue so expiration or virtualization cannot later
@@ -1238,9 +1234,7 @@ export class PageNotificationQueue {
       const candidateKeys = new Set<string>();
       for (const candidate of candidateRows) {
         if (signal.thread !== undefined && candidate.key !== signal.thread) continue;
-        if (notificationTextMatches(signal.title, signal.body, candidate.title, candidate.body)) {
-          candidateKeys.add(candidate.key);
-        }
+        if (pageNotificationMatchesRow(signal, candidate)) candidateKeys.add(candidate.key);
       }
       if (candidateKeys.size !== 1 || (row.key !== undefined && !candidateKeys.has(row.key))) {
         this.signals.splice(index, 1);
@@ -1406,13 +1400,14 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
     candidateRows?: Iterable<NotificationText & { key: string }>,
     thread?: string,
   ): Row | null {
+    const page = { title, body, thread };
     const matches = [...this.rows.values()].filter((row) => {
       const age = at - row.at;
       return (
         (thread === undefined || row.key === thread) &&
         age >= 0 &&
         age <= matchWindowMs &&
-        notificationTextMatches(title, body, row.title, row.body)
+        pageNotificationMatchesRow(page, row)
       );
     });
     if (matches.length !== 1) return null;
@@ -1420,9 +1415,7 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
       const candidateKeys = new Set<string>();
       for (const candidate of candidateRows) {
         if (thread !== undefined && candidate.key !== thread) continue;
-        if (notificationTextMatches(title, body, candidate.title, candidate.body)) {
-          candidateKeys.add(candidate.key);
-        }
+        if (pageNotificationMatchesRow(page, candidate)) candidateKeys.add(candidate.key);
       }
       if (candidateKeys.size !== 1 || !candidateKeys.has(matches[0]!.key)) return null;
     }
@@ -1685,6 +1678,28 @@ export function notificationTextMatches(
       !normalizedRowBody ||
       matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) ||
       (sendersCompatible && matchesExactOrTruncated(page.message, row.message)))
+  );
+}
+
+/**
+ * Whether a page notification announces this row's update. One tagged with the
+ * row's own conversation compares only the message: Messenger titles a group
+ * message "<sender> to <group>", which no row title matches, and sends the
+ * bare message, which may itself contain ": ", where the row adds its sender.
+ */
+export function pageNotificationMatchesRow(
+  page: NotificationText & { thread?: string | undefined },
+  row: NotificationText & { key?: string },
+): boolean {
+  if (page.thread === undefined || page.thread !== row.key) {
+    return notificationTextMatches(page.title, page.body, row.title, row.body);
+  }
+  return (
+    notificationTextMatches("", page.body, "", row.body) ||
+    matchesExactOrTruncated(
+      normalizeNotificationText(page.body),
+      splitGroupSender(normalizeNotificationText(row.body)).message,
+    )
   );
 }
 
