@@ -53,13 +53,25 @@ jobs:
         run: |
           set -euo pipefail
           skip() { echo "::notice::$1"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          api() {
+            local response
+            if response=$(gh api --include "$1"); then
+              printf '%s\n' "$response" | sed '1,/^\r\{0,1\}$/d'
+            elif [[ "$response" =~ ^HTTP/[^[:space:]]+[[:space:]]404[[:space:]] ]]; then
+              return 4 # Expected missing resource; other failures must fail the step.
+            else
+              return 1
+            fi
+          }
 
           [ -n "$WINGET_TOKEN" ] || skip "WINGET_TOKEN not configured, skipping the winget submission."
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || skip "$TAG is not a stable release tag."
 
           # The tags endpoint only returns published releases (404 for drafts).
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>/dev/null) \
-            || skip "$TAG is not published (still a draft?)."
+          release=$(api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG") || {
+            [ "$?" -eq 4 ] && skip "$TAG is not published (still a draft?)."
+            exit 1
+          }
           [ "$(jq -r '.prerelease' <<< "$release")" = "false" ] || skip "$TAG is a prerelease."
 
           version="${TAG#v}"
@@ -74,10 +86,14 @@ jobs:
           arm64=$(installer "Chatpane_${version}_win_arm_setup.exe")
 
           root="repos/microsoft/winget-pkgs/contents/manifests/k/kristofferR/Chatpane"
-          gh api "$root" >/dev/null 2>&1 \
-            || skip "$PACKAGE_ID is not in winget-pkgs yet; submit the first version by hand."
-          if gh api "$root/$version" >/dev/null 2>&1; then
+          api "$root" >/dev/null || {
+            [ "$?" -eq 4 ] && skip "$PACKAGE_ID is not in winget-pkgs yet; submit the first version by hand."
+            exit 1
+          }
+          if api "$root/$version" >/dev/null; then
             skip "$PACKAGE_ID $version is already in winget-pkgs."
+          else
+            [ "$?" -eq 4 ] || exit 1
           fi
 
           {
