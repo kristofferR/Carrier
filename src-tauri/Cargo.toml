@@ -1,7 +1,7 @@
 [package]
 name = "chatpane"
 version = "3.1.0"
-description = "A tiny, distraction-free desktop client for Facebook Messenger"
+description = "An unofficial desktop app for Facebook Messenger"
 authors = ["kristofferR"]
 edition = "2024"
 # At least the highest dependency MSRV (Tauri 2 + plugins: 1.90) and the

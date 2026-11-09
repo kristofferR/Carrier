@@ -89,7 +89,7 @@ jobs:
             -e '/{{#if mime_type}}/,/{{\/if}}/d' \
             -e '/{{\/if}}/d' \
             -e 's/{{categories}}/Network;/' \
-            -e 's/{{comment}}/Distraction-free Messenger desktop client/' \
+            -e 's/{{comment}}/Unofficial desktop app for Facebook Messenger/' \
             -e 's/{{exec}}/chatpane/g' \
             -e 's/{{icon}}/chatpane/g' \
             -e 's/{{name}}/Chatpane/g' \

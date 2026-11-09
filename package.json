@@ -1,7 +1,7 @@
 {
   "name": "chatpane",
   "version": "3.1.0",
-  "description": "A tiny, distraction-free desktop client for Facebook Messenger, built with Tauri.",
+  "description": "An unofficial desktop app for Facebook Messenger, built with Tauri.",
   "license": "MIT",
   "type": "module",
   "scripts": {

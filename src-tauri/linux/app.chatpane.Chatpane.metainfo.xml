@@ -4,7 +4,7 @@
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
   <name>Chatpane</name>
-  <summary>A focused desktop client for Facebook Messenger</summary>
+  <summary>Unofficial desktop app for Facebook Messenger</summary>
   <description>
     <p>
       Chatpane wraps Messenger in a small native desktop window and removes the

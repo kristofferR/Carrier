@@ -143,7 +143,7 @@ if (mac) {
   await rm(join(applications, "carrier.desktop"), { force: true });
   await writeFile(
     join(applications, "Chatpane.desktop"),
-    `[Desktop Entry]\nCategories=Network;InstantMessaging;\nComment=Distraction-free Messenger desktop client\nExec=${desktopQuote(binary)}\nStartupWMClass=chatpane\nIcon=app.chatpane.Chatpane\nName=Chatpane\nTerminal=false\nType=Application\nActions=new-conversation;settings;\n\n[Desktop Action new-conversation]\nName=New Conversation\nExec=${desktopQuote(binary)} --new-conversation\n\n[Desktop Action settings]\nName=Settings\nExec=${desktopQuote(binary)} --settings\n`,
+    `[Desktop Entry]\nCategories=Network;InstantMessaging;\nComment=Unofficial desktop app for Facebook Messenger\nExec=${desktopQuote(binary)}\nStartupWMClass=chatpane\nIcon=app.chatpane.Chatpane\nName=Chatpane\nTerminal=false\nType=Application\nActions=new-conversation;settings;\n\n[Desktop Action new-conversation]\nName=New Conversation\nExec=${desktopQuote(binary)} --new-conversation\n\n[Desktop Action settings]\nName=Settings\nExec=${desktopQuote(binary)} --settings\n`,
   );
   const { settings } = await loadSettings();
   if ("autostart" in settings && settings.autostart === true) {

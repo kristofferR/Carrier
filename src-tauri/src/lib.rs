@@ -1,4 +1,4 @@
-//! Chatpane — a tiny, distraction-free desktop client for Facebook Messenger.
+//! Chatpane — an unofficial desktop app for Facebook Messenger.
 //!
 //! Opens a WebView window pointed at the Messenger web app, injects a stylesheet
 //! that hides Facebook's surrounding chrome, and adds quality-of-life features:

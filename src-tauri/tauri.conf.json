@@ -25,7 +25,7 @@
     ],
     "publisher": "kristofferR",
     "category": "SocialNetworking",
-    "shortDescription": "Distraction-free Messenger desktop client",
+    "shortDescription": "Unofficial desktop app for Facebook Messenger",
     "longDescription": "Chatpane wraps the Facebook Messenger web app in a tiny native window and strips away the surrounding Facebook chrome \u2014 no Feed, no Reels, no Marketplace. Built with Tauri.",
     "icon": [
       "icons/32x32.png",

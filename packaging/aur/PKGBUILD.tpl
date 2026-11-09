@@ -6,7 +6,7 @@
 pkgname=chatpane
 pkgver=@PKGVER@
 pkgrel=1
-pkgdesc="Distraction-free desktop client for Facebook Messenger"
+pkgdesc="Unofficial desktop app for Facebook Messenger"
 arch=('x86_64' 'aarch64')
 url="https://chatpane.app/"
 license=('MIT')
