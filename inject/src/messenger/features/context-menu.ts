@@ -281,6 +281,22 @@ async function mediaBlob(src: string, maxSize: number): Promise<Blob> {
   return fetched;
 }
 
+/** `blob` as a PNG, the one image type every clipboard takes (WebView2 refuses JPEG). */
+async function pngBlob(blob: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (png) => (png ? resolve(png) : reject(new Error("image conversion failed"))),
+      "image/png",
+    ),
+  );
+}
+
 const copyAddress = (text: string) =>
   navigator.clipboard
     ?.writeText(cleanSharedUrl(text))
@@ -334,7 +350,8 @@ async function copyImageSrc(src: string, action?: string) {
   if (action) await chatpaneClaimContextAction(action);
   const blob = await mediaBlob(src, action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB);
   if (!action) {
-    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+    const image = ClipboardItem.supports?.(blob.type) === false ? await pngBlob(blob) : blob;
+    await navigator.clipboard.write([new ClipboardItem({ [image.type]: image })]);
     return;
   }
   const dataUrl = await new NativePromise<string>((resolve, reject) => {

@@ -4579,6 +4579,20 @@ ${button.innerHTML}`)
     if (fetched.size > maxSize) throw new Error("file too large");
     return fetched;
   }
+  async function pngBlob(blob) {
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return new Promise(
+      (resolve, reject) => canvas.toBlob(
+        (png) => png ? resolve(png) : reject(new Error("image conversion failed")),
+        "image/png"
+      )
+    );
+  }
   var copyAddress = (text2) => navigator.clipboard?.writeText(cleanSharedUrl(text2)).then(() => toast(t("shared.context.address_copied"))).catch(() => toast(t("shared.context.copy_failed")));
   var copyText = (text2) => navigator.clipboard?.writeText(text2).then(() => toast(t("shared.context.text_copied"))).catch(() => toast(t("shared.context.copy_failed")));
   async function downloadSrc(src, fallbackName, action2) {
@@ -4612,7 +4626,8 @@ ${button.innerHTML}`)
     if (action2) await chatpaneClaimContextAction(action2);
     const blob = await mediaBlob(src, action2 ? MAX_CLIPBOARD_IMAGE : MAX_BLOB);
     if (!action2) {
-      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      const image = ClipboardItem.supports?.(blob.type) === false ? await pngBlob(blob) : blob;
+      await navigator.clipboard.write([new ClipboardItem({ [image.type]: image })]);
       return;
     }
     const dataUrl = await new NativePromise2((resolve, reject) => {
