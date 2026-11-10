@@ -1,0 +1,177 @@
+/*
+ * Pinned chats (Ref #457): the conversations the user pinned to the top of
+ * the chat list, kept natively per Facebook account (src-tauri/src/pinned_chats.rs)
+ * because Facebook clears unknown localStorage keys on Mac page loads. Each pin
+ * keeps the name the chat list last showed, for a pinned chat Messenger has not
+ * loaded yet. The section itself is drawn by pinned-chats-section.ts.
+ */
+
+/** Mirrors MAX_PINS and MAX_NAME_CHARS in src-tauri/src/pinned_chats.rs. */
+export const MAX_PINNED_CHATS = 50;
+export const MAX_PINNED_NAME_CHARS = 60;
+
+export interface PinnedChat {
+  id: string;
+  name: string;
+}
+
+const THREAD_ID_RE = /^\d{1,32}$/;
+
+function cleanName(name: unknown): string {
+  if (typeof name !== "string") return "";
+  return [...name.replace(/\s+/g, " ").trim()].slice(0, MAX_PINNED_NAME_CHARS).join("");
+}
+
+/** Pins from untrusted input: valid ids only, each once, in order, capped. */
+export function parsePinnedChats(value: unknown): PinnedChat[] {
+  if (!Array.isArray(value)) return [];
+  const out: PinnedChat[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (out.length >= MAX_PINNED_CHATS) break;
+    if (!item || typeof item !== "object") continue;
+    const { id, name } = item as Record<string, unknown>;
+    if (typeof id !== "string" || !THREAD_ID_RE.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name: cleanName(name) });
+  }
+  return out;
+}
+
+/** An account's pins as native code keeps them. The revision rises with every change. */
+export interface PinnedSnapshot {
+  revision: number;
+  pins: PinnedChat[];
+}
+
+/** A native snapshot of an account's pins, or null when it isn't one. */
+export function parsePinnedSnapshot(value: unknown): PinnedSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const { revision, pins } = value as Record<string, unknown>;
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision)) return null;
+  return { revision, pins: parsePinnedChats(pins) };
+}
+
+/** `list` with `chat` pinned last, or `list` itself when it can't be added. */
+export function withPin(list: readonly PinnedChat[], chat: PinnedChat): readonly PinnedChat[] {
+  if (!THREAD_ID_RE.test(chat.id) || list.length >= MAX_PINNED_CHATS) return list;
+  if (list.some((pin) => pin.id === chat.id)) return list;
+  return [...list, { id: chat.id, name: cleanName(chat.name) }];
+}
+
+export function withoutPin(list: readonly PinnedChat[], id: string): readonly PinnedChat[] {
+  return list.some((pin) => pin.id === id) ? list.filter((pin) => pin.id !== id) : list;
+}
+
+/** `list` with a pin's remembered name updated; unchanged for an empty name. */
+export function withName(
+  list: readonly PinnedChat[],
+  id: string,
+  name: string,
+): readonly PinnedChat[] {
+  const clean = cleanName(name);
+  if (!clean || !list.some((pin) => pin.id === id && pin.name !== clean)) return list;
+  return list.map((pin) => (pin.id === id ? { id, name: clean } : pin));
+}
+
+/** One change to the pins, as the page sends it to native code. */
+export type PinChange =
+  | { op: "pin"; id: string; name: string }
+  | { op: "unpin"; id: string }
+  | { op: "rename"; id: string; name: string };
+
+/** `list` with `change` made; `list` itself when it changes nothing. */
+export function applyPinChange(
+  list: readonly PinnedChat[],
+  change: PinChange,
+): readonly PinnedChat[] {
+  if (change.op === "pin") return withPin(list, change);
+  if (change.op === "unpin") return withoutPin(list, change.id);
+  return withName(list, change.id, change.name);
+}
+
+export interface PinnedChatsStore {
+  subscribe(listener: () => void): () => void;
+  /** Stable until the pins change, as React's external-store hook needs. */
+  getSnapshot(): readonly PinnedChat[];
+  /** The pinned ids, stable alongside the snapshot. */
+  getIds(): ReadonlySet<string>;
+  replace(next: readonly PinnedChat[]): void;
+}
+
+export function createPinnedChatsStore(): PinnedChatsStore {
+  let pins: readonly PinnedChat[] = [];
+  let ids: ReadonlySet<string> = new Set();
+  const listeners = new Set<() => void>();
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    getSnapshot: () => pins,
+    getIds: () => ids,
+    replace(next) {
+      if (
+        next.length === pins.length &&
+        next.every((pin, i) => pin.id === pins[i]?.id && pin.name === pins[i]?.name)
+      )
+        return;
+      pins = next;
+      ids = new Set(next.map((pin) => pin.id));
+      for (const listener of [...listeners]) listener();
+    },
+  };
+}
+
+/**
+ * Keeps `store` in step with native code. A change shows at once and goes to
+ * native code after the ones before it. The pins shown are always the newest
+ * answer with the changes still unconfirmed on top, so a read that was under
+ * way during a change can't undo it, and an answer older than the newest is
+ * ignored but still retires its change.
+ */
+export function createPinnedChatsSync(
+  store: PinnedChatsStore,
+  request: (change?: PinChange) => Promise<PinnedSnapshot | null>,
+) {
+  let latest: PinnedSnapshot | null = null;
+  const unconfirmed: PinChange[] = [];
+  let sending = false;
+  const show = (snapshot: PinnedSnapshot | null) => {
+    if (snapshot && (!latest || snapshot.revision >= latest.revision)) latest = snapshot;
+    if (latest) store.replace(unconfirmed.reduce(applyPinChange, latest.pins));
+  };
+  return {
+    async refresh() {
+      show(await request());
+    },
+    async change(change: PinChange) {
+      const list = store.getSnapshot();
+      const changed = applyPinChange(list, change);
+      if (changed === list) return;
+      store.replace(changed);
+      unconfirmed.push(change);
+      if (sending) return;
+      sending = true;
+      let resync = false;
+      try {
+        while (unconfirmed[0] || resync) {
+          if (unconfirmed[0]) {
+            const snapshot = await request(unconfirmed[0]);
+            unconfirmed.shift();
+            if (!snapshot) resync = true;
+            show(snapshot);
+          } else {
+            resync = false;
+            show(await request());
+          }
+        }
+      } finally {
+        sending = false;
+      }
+    },
+  };
+}
+
+/** The page's pins. One per page: the section and the menus share it. */
+export const pinnedChats = createPinnedChatsStore();

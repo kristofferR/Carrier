@@ -1,6 +1,6 @@
 // Pure logic for the chat-list row menu: which rows of a conversation's own
-// "More options" menu Chatpane repeats on right-click, and in what order. The
-// DOM driving lives in features/chat-row-menu.ts.
+// "More options" menu Chatpane repeats on right-click, and in what order, plus
+// Chatpane's own rows. The DOM driving lives in features/chat-row-menu.ts.
 
 import { ancestors, type Fiber, propsOf, renders } from "./react-fiber";
 
@@ -132,6 +132,13 @@ export function blockAction(blockedByViewerStatus: number | null): ChatRowAction
     ? "shared.context.unblock"
     : "shared.context.block";
 }
+
+// Chatpane's own first row: pin or unpin the chat (Ref #457).
+// Keep in sync with CHAT_PIN_CONTEXT_MENU_KEYS in src-tauri/src/menu.rs.
+export const CHAT_PIN_CONTEXT_MENU_KEYS = [
+  "shared.context.pin_chat",
+  "shared.context.unpin_chat",
+] as const;
 
 // Chatpane's own rows, after Messenger's: export that conversation (Ref #371).
 // Keep in sync with CHAT_EXPORT_CONTEXT_MENU_KEYS in src-tauri/src/menu.rs.

@@ -39,6 +39,7 @@ import { initNotificationActions } from "./features/notification-actions";
 import { initNotificationBridge } from "./features/notifications";
 import { initPaneResize } from "./features/pane-resize";
 import { initPasskeyLoginNotice } from "./features/passkey-login-notice";
+import { initPinnedChats } from "./features/pinned-chats";
 import { initQuickMute } from "./features/quick-mute";
 import { initQuickReply } from "./features/quick-reply";
 import { initRateLimit } from "./features/rate-limit";
@@ -116,6 +117,7 @@ function main() {
   initFeature("chat-gradient", initChatGradient);
   initFeature("unread-badge", initUnreadBadge);
   initFeature("recent-threads", initRecentThreads);
+  initFeature("pinned-chats", initPinnedChats);
   initFeature("thread-nav", initThreadNav);
   initFeature("conversation-export", initConversationExport);
   initFeature("quick-reply", initQuickReply);

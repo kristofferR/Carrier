@@ -299,8 +299,8 @@
     return (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1] ?? null;
   }
   function accountScopedStorageKey(baseKey, cookie) {
-    const account2 = accountId(cookie);
-    return account2 ? `${baseKey}:${account2}` : null;
+    const account3 = accountId(cookie);
+    return account3 ? `${baseKey}:${account3}` : null;
   }
   function isMessengerContentPath(pathname) {
     const path = String(pathname || "");
@@ -366,8 +366,8 @@
     const seconds = Number(text2);
     return Number.isSafeInteger(seconds) ? seconds : null;
   }
-  async function readMessengerDndUntil(account2, load, timeoutMs = 750) {
-    if (!/^\d+$/.test(account2) || typeof load !== "function") return null;
+  async function readMessengerDndUntil(account3, load, timeoutMs = 750) {
+    if (!/^\d+$/.test(account3) || typeof load !== "function") return null;
     let timer;
     const read = async () => {
       const singleton = load("LSDatabaseSingleton");
@@ -375,7 +375,7 @@
       const i64 = load("I64");
       const table = db?.tables?.notification_settings;
       if (typeof table?.get !== "function" || typeof i64?.of_string !== "function") return null;
-      const row = await table.get(i64.of_string(account2));
+      const row = await table.get(i64.of_string(account3));
       if (!row || typeof row !== "object") return 0;
       return muteUntilFromDatabase(
         row.globalMuteUntil,
@@ -432,7 +432,7 @@
     const [presence] = await loadFacebookModules(load, ["MWInboxSettingsPresenceDialog.entrypoint"]);
     await loadRoot(presence);
   }
-  async function readMessengerAccount(load, account2) {
+  async function readMessengerAccount(load, account3) {
     await loadPreferencesCode(load);
     const [environment, relay, query, resolve] = await loadFacebookModules(load, [
       "CometRelayEnvironment",
@@ -442,15 +442,15 @@
     ]);
     const data = await relay.fetchQuery(defaultExport(environment), query, {}, { fetchPolicy: "network-only" }).toPromise();
     if (!data?.viewer) throw new Error(t("page.account.no_settings"));
-    const dndUntil = await readMessengerDndUntil(account2, load, 3e3);
+    const dndUntil = await readMessengerDndUntil(account3, load, 3e3);
     return stateFromViewer(
       data.viewer,
       defaultExport(resolve),
       dndUntil,
-      await readReadReceipts(load, account2)
+      await readReadReceipts(load, account3)
     );
   }
-  async function readReadReceipts(load, account2, timeoutMs = 3e3) {
+  async function readReadReceipts(load, account3, timeoutMs = 3e3) {
     let timer;
     try {
       return await Promise.race([
@@ -470,7 +470,7 @@
       ]);
       const db = await database2.LSDatabaseSingleton;
       const table = db.tables?.messaging_privacy_settings;
-      const row = typeof table?.get === "function" ? await table.get(i64.of_string(account2)) : null;
+      const row = typeof table?.get === "function" ? await table.get(i64.of_string(account3)) : null;
       let pageDefault = null;
       try {
         pageDefault = load?.("MessengerWebPrivacySettings")?.read_receipts_disabled;
@@ -501,7 +501,7 @@
       "readwrite"
     );
   }
-  async function changeMessengerAccount(load, account2, change) {
+  async function changeMessengerAccount(load, account3, change) {
     await loadPreferencesCode(load);
     if (change.setting === "sounds") {
       const [environment, mutation] = await loadFacebookModules(load, [
@@ -517,10 +517,10 @@
     } else if (change.setting === "readReceipts") {
       await setReadReceipts(load, change.value);
     } else {
-      await setDoNotDisturb(load, account2, change.value);
+      await setDoNotDisturb(load, account3, change.value);
     }
     for (let attempt = 0; ; attempt++) {
-      const state3 = await readMessengerAccount(load, account2);
+      const state3 = await readMessengerAccount(load, account3);
       if (applied(state3, change)) return state3;
       if (attempt === 3) throw new Error(t("page.account.not_applied"));
       await new Promise((resolve) => setTimeout(resolve, 1e3));
@@ -541,7 +541,7 @@
       }
     }
   }
-  async function setDoNotDisturb(load, account2, minutes) {
+  async function setDoNotDisturb(load, account3, minutes) {
     const [i64, serverTime, database2, factory, writer, update] = await loadFacebookModules(load, [
       "I64",
       "ServerTime",
@@ -556,7 +556,7 @@
     const makeFactory = defaultExport(factory);
     const run = defaultExport(update);
     await db.runInTransaction((tx) => run(makeFactory(tx), { globalMuteUntil: until }), "readwrite");
-    writer.updateMute(account2, seconds === 0 ? 0 : i64.to_float(until));
+    writer.updateMute(account3, seconds === 0 ? 0 : i64.to_float(until));
   }
   async function setActiveStatus(load, on2) {
     const [environment, relay, mutation, report, database2, gkx, qex] = await loadFacebookModules(
@@ -605,9 +605,9 @@
   function initAccountRequests() {
     if (!window.__TAURI_INTERNALS__) return;
     const signedIn = () => {
-      const account2 = accountId(document.cookie);
-      if (!account2) throw new Error(t("page.account.log_in_first"));
-      return account2;
+      const account3 = accountId(document.cookie);
+      if (!account3) throw new Error(t("page.account.log_in_first"));
+      return account3;
     };
     const actions = {
       // Log Out (Ref #356): Facebook's own logout, so the session ends there too.
@@ -638,16 +638,16 @@
         return state3;
       }
     };
-    const reply = (request, payload) => invoke("plugin:event|emit", {
+    const reply = (request2, payload) => invoke("plugin:event|emit", {
       event: "chatpane:account-result",
-      payload: { request, ...payload }
+      payload: { request: request2, ...payload }
     });
-    window.__chatpaneAccount = (request, action2, value) => {
+    window.__chatpaneAccount = (request2, action2, value) => {
       const run = actions[action2];
-      (run ? Promise.resolve().then(() => run(value)) : Promise.reject(new Error("Unknown request"))).then((state3) => reply(request, { ok: true, state: state3 })).catch((error) => {
+      (run ? Promise.resolve().then(() => run(value)) : Promise.reject(new Error("Unknown request"))).then((state3) => reply(request2, { ok: true, state: state3 })).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         diag(`account.${action2}`, message.slice(0, 200));
-        return reply(request, { ok: false, error: message });
+        return reply(request2, { ok: false, error: message });
       });
     };
   }
@@ -955,15 +955,15 @@
       if (!visible) return { state: "pending", wait_ms: 0 };
       this.lastSample = now;
       if (!this.request) {
-        const request = {
+        const request2 = {
           since: now,
           handle: this.requestFrame(() => {
-            if (this.request !== request) return;
+            if (this.request !== request2) return;
             this.request = void 0;
             this.hasFrame = true;
           })
         };
-        this.request = request;
+        this.request = request2;
       }
       const wait_ms = Math.max(0, Math.round(now - this.request.since));
       return {
@@ -972,6 +972,25 @@
       };
     }
   };
+
+  // inject/src/messenger/lib/emoji.ts
+  var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
+  var SYSTEM_EMOJI_GLYPH_ATTR = "data-chatpane-system-emoji-glyph";
+  var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
+  var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
+  var KEYCAP_RE = /[#*0-9]️?⃣/gu;
+  function emojiGlyph(value) {
+    const text2 = String(value || "").trim();
+    if (/^\(y\)$/i.test(text2)) return "👍";
+    if (!text2 || text2.length > 24 || !EMOJI_TEXT_RE.test(text2)) return "";
+    if (LABEL_TEXT_RE.test(text2.replace(KEYCAP_RE, ""))) return "";
+    return text2;
+  }
+  function isReactionMenuShape(children) {
+    if (children.length < 6 || children.length > 9) return false;
+    const addButton = children.at(-1);
+    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
+  }
 
   // inject/src/messenger/features/conversation-actions.ts
   function isShown(el) {
@@ -991,6 +1010,26 @@
       if (needles.some((n) => label.includes(n))) return el;
     }
     return null;
+  }
+  function textWithEmoji(el) {
+    let text2 = "";
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node instanceof Text) {
+        if (!node.parentElement?.closest(`[${SYSTEM_EMOJI_GLYPH_ATTR}]`)) text2 += node.data;
+      } else if (node instanceof HTMLImageElement) {
+        text2 += emojiGlyph(node.getAttribute("alt"));
+      }
+    }
+    return text2;
+  }
+  function chatRowName(el) {
+    const row = el.closest('[role="row"]') || el;
+    for (const span of row.querySelectorAll("span")) {
+      const text2 = textWithEmoji(span).replace(/\s+/g, " ").trim();
+      if (text2 && !SEPARATOR_RE.test(text2)) return [...text2].slice(0, 60).join("");
+    }
+    return "";
   }
   function chatRows() {
     const seen = /* @__PURE__ */ new Set();
@@ -2158,11 +2197,11 @@ ${button.innerHTML}`)
     };
     const checkWorker = () => {
       const state3 = workerConnectionState();
-      const account2 = accountKey();
+      const account3 = accountKey();
       const id = workerId();
-      if (!probeIdentity || probeIdentity.account !== account2 || probeIdentity.id !== id || probeIdentity.state !== state3) {
+      if (!probeIdentity || probeIdentity.account !== account3 || probeIdentity.id !== id || probeIdentity.state !== state3) {
         const replaced = probeIdentity !== void 0;
-        probeIdentity = { account: account2, id, state: state3 };
+        probeIdentity = { account: account3, id, state: state3 };
         workerFailures.succeeded();
         verified = void 0;
         stateRouteUnavailableFor = void 0;
@@ -2182,7 +2221,7 @@ ${button.innerHTML}`)
         return;
       }
       const sendAndReceive = bridge.sendAndReceive.bind(bridge);
-      const stillCurrent = () => account2 === accountKey() && state3 === workerConnectionState() && id === workerId();
+      const stillCurrent = () => account3 === accountKey() && state3 === workerConnectionState() && id === workerId();
       const observation = stateRouteUnavailableFor?.() ? void 0 : observeWorkerConnection(state3, now);
       workerProbePending = true;
       let live = true;
@@ -2193,18 +2232,18 @@ ${button.innerHTML}`)
           WORKER_HEARTBEAT_TIMEOUT_MS
         );
       });
-      const request = (route) => sendAndReceive("backend", route, void 0, {
+      const request2 = (route) => sendAndReceive("backend", route, void 0, {
         isLoggingDisabled: true,
         timeoutMs: WORKER_HEARTBEAT_TIMEOUT_MS
       });
       Promise.resolve().then(() => {
         observation?.start();
-        const probe = observation ? Promise.all([request("resendWorkerStateManagerValuesToMainThread"), observation.value]).then(([, connected]) => connected).catch((error) => {
+        const probe = observation ? Promise.all([request2("resendWorkerStateManagerValuesToMainThread"), observation.value]).then(([, connected]) => connected).catch((error) => {
           if (!live || !stillCurrent() || !isMissingWorkerStateRoute(error)) throw error;
           stateRouteUnavailableFor = stillCurrent;
           observation.dispose();
-          return request("getWorkerHeartbeat").then(() => void 0);
-        }) : request("getWorkerHeartbeat").then(() => void 0);
+          return request2("getWorkerHeartbeat").then(() => void 0);
+        }) : request2("getWorkerHeartbeat").then(() => void 0);
         return Promise.race([probe, deadline]);
       }).then((connected) => {
         verified = void 0;
@@ -2213,7 +2252,7 @@ ${button.innerHTML}`)
           return;
         }
         workerFailures.succeeded();
-        if (connected === true && account2 && typeof id === "string" && id.length > 0 && observation?.receivedAt !== void 0) {
+        if (connected === true && account3 && typeof id === "string" && id.length > 0 && observation?.receivedAt !== void 0) {
           verified = { at: observation.receivedAt, stillCurrent };
         }
         if (connected === true) {
@@ -2342,7 +2381,7 @@ ${button.innerHTML}`)
   async function probeFacebook(fetch2) {
     const controller = new AbortController();
     const timer = nativeSetTimeout2(() => controller.abort(), PROBE_TIMEOUT_MS);
-    const request = (url, init) => fetch2(url, {
+    const request2 = (url, init) => fetch2(url, {
       cache: "no-store",
       credentials: "omit",
       redirect: "manual",
@@ -2353,11 +2392,11 @@ ${button.innerHTML}`)
       return await new Promise((resolve) => {
         let failures2 = 0;
         const probes = [
-          request("/favicon.ico", { method: "HEAD" }),
+          request2("/favicon.ico", { method: "HEAD" }),
           // Cross-origin, so no-cors: an opaque response still proves
           // reachability. Fetch rejects no-cors requests that don't follow
           // redirects, so this one does.
-          request(SECOND_PROBE_URL, { mode: "no-cors", redirect: "follow" })
+          request2(SECOND_PROBE_URL, { mode: "no-cors", redirect: "follow" })
         ];
         for (const probe of probes) {
           probe.then(
@@ -3808,6 +3847,10 @@ ${button.innerHTML}`)
   function blockAction(blockedByViewerStatus) {
     return blockedByViewerStatus === MESSAGE_BLOCKED || blockedByViewerStatus === FULLY_BLOCKED ? "shared.context.unblock" : "shared.context.block";
   }
+  var CHAT_PIN_CONTEXT_MENU_KEYS = [
+    "shared.context.pin_chat",
+    "shared.context.unpin_chat"
+  ];
   var CHAT_EXPORT_CONTEXT_MENU_KEYS = [
     "shared.context.export_chat_html",
     "shared.context.export_chat_json"
@@ -3914,25 +3957,6 @@ ${button.innerHTML}`)
   }
   function pointerActivationIsSound(expected, current2, x, y) {
     return rectsMatch(expected, current2) && pointInRect(current2, x, y);
-  }
-
-  // inject/src/messenger/lib/emoji.ts
-  var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
-  var SYSTEM_EMOJI_GLYPH_ATTR = "data-chatpane-system-emoji-glyph";
-  var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
-  var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
-  var KEYCAP_RE = /[#*0-9]️?⃣/gu;
-  function emojiGlyph(value) {
-    const text2 = String(value || "").trim();
-    if (/^\(y\)$/i.test(text2)) return "👍";
-    if (!text2 || text2.length > 24 || !EMOJI_TEXT_RE.test(text2)) return "";
-    if (LABEL_TEXT_RE.test(text2.replace(KEYCAP_RE, ""))) return "";
-    return text2;
-  }
-  function isReactionMenuShape(children) {
-    if (children.length < 6 || children.length > 9) return false;
-    const addButton = children.at(-1);
-    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
   }
 
   // inject/src/messenger/lib/message-menu.ts
@@ -4088,7 +4112,8 @@ ${button.innerHTML}`)
     return null;
   };
   function chatRowFor(anchor) {
-    return anchor.getAttribute("href")?.includes("/t/") && rowMenuButton(anchor) ? anchor : null;
+    if (!anchor.getAttribute("href")?.includes("/t/")) return null;
+    return rowMenuButton(anchor) || anchor.hasAttribute("data-chatpane-pinned-chat") ? anchor : null;
   }
   var menuRows = (menu) => [...menu.querySelectorAll('[role="menuitem"]')];
   function chatRowComponents() {
@@ -4653,10 +4678,10 @@ ${button.innerHTML}`)
   var reactionEmoji = (row) => (row.querySelector("img[alt]")?.getAttribute("alt") || row.textContent || "").trim();
   var moreRows = (menu) => menu.querySelectorAll('[role="menuitem"]');
   function isOwnSender(senderId) {
-    const account2 = accountId(document.cookie);
+    const account3 = accountId(document.cookie);
     try {
       const i64 = pageRequire()?.("I64");
-      return account2 !== null && senderId != null && String(i64?.to_string?.(senderId)) === account2;
+      return account3 !== null && senderId != null && String(i64?.to_string?.(senderId)) === account3;
     } catch {
       return false;
     }
@@ -4782,6 +4807,674 @@ ${button.innerHTML}`)
   }
   var runMessageAction = (message, action2) => drive(message, () => pressMessageAction(message, action2), action2);
 
+  // inject/src/messenger/lib/pinned-chats.ts
+  var MAX_PINNED_CHATS = 50;
+  var MAX_PINNED_NAME_CHARS = 60;
+  var THREAD_ID_RE = /^\d{1,32}$/;
+  function cleanName(name) {
+    if (typeof name !== "string") return "";
+    return [...name.replace(/\s+/g, " ").trim()].slice(0, MAX_PINNED_NAME_CHARS).join("");
+  }
+  function parsePinnedChats(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const item of value) {
+      if (out.length >= MAX_PINNED_CHATS) break;
+      if (!item || typeof item !== "object") continue;
+      const { id, name } = item;
+      if (typeof id !== "string" || !THREAD_ID_RE.test(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ id, name: cleanName(name) });
+    }
+    return out;
+  }
+  function parsePinnedSnapshot(value) {
+    if (!value || typeof value !== "object") return null;
+    const { revision, pins } = value;
+    if (typeof revision !== "number" || !Number.isSafeInteger(revision)) return null;
+    return { revision, pins: parsePinnedChats(pins) };
+  }
+  function withPin(list, chat) {
+    if (!THREAD_ID_RE.test(chat.id) || list.length >= MAX_PINNED_CHATS) return list;
+    if (list.some((pin) => pin.id === chat.id)) return list;
+    return [...list, { id: chat.id, name: cleanName(chat.name) }];
+  }
+  function withoutPin(list, id) {
+    return list.some((pin) => pin.id === id) ? list.filter((pin) => pin.id !== id) : list;
+  }
+  function withName(list, id, name) {
+    const clean = cleanName(name);
+    if (!clean || !list.some((pin) => pin.id === id && pin.name !== clean)) return list;
+    return list.map((pin) => pin.id === id ? { id, name: clean } : pin);
+  }
+  function applyPinChange(list, change) {
+    if (change.op === "pin") return withPin(list, change);
+    if (change.op === "unpin") return withoutPin(list, change.id);
+    return withName(list, change.id, change.name);
+  }
+  function createPinnedChatsStore() {
+    let pins = [];
+    let ids = /* @__PURE__ */ new Set();
+    const listeners = /* @__PURE__ */ new Set();
+    return {
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSnapshot: () => pins,
+      getIds: () => ids,
+      replace(next) {
+        if (next.length === pins.length && next.every((pin, i) => pin.id === pins[i]?.id && pin.name === pins[i]?.name))
+          return;
+        pins = next;
+        ids = new Set(next.map((pin) => pin.id));
+        for (const listener of [...listeners]) listener();
+      }
+    };
+  }
+  function createPinnedChatsSync(store, request2) {
+    let latest = null;
+    const unconfirmed = [];
+    let sending = false;
+    const show = (snapshot) => {
+      if (snapshot && (!latest || snapshot.revision >= latest.revision)) latest = snapshot;
+      if (latest) store.replace(unconfirmed.reduce(applyPinChange, latest.pins));
+    };
+    return {
+      async refresh() {
+        show(await request2());
+      },
+      async change(change) {
+        const list = store.getSnapshot();
+        const changed = applyPinChange(list, change);
+        if (changed === list) return;
+        store.replace(changed);
+        unconfirmed.push(change);
+        if (sending) return;
+        sending = true;
+        let resync = false;
+        try {
+          while (unconfirmed[0] || resync) {
+            if (unconfirmed[0]) {
+              const snapshot = await request2(unconfirmed[0]);
+              unconfirmed.shift();
+              if (!snapshot) resync = true;
+              show(snapshot);
+            } else {
+              resync = false;
+              show(await request2());
+            }
+          }
+        } finally {
+          sending = false;
+        }
+      }
+    };
+  }
+  var pinnedChats = createPinnedChatsStore();
+
+  // inject/src/messenger/lib/page-notifications.ts
+  var CHAT_POPPER_MODULE = "useMWLSChatPopperUpper";
+  var DESKTOP_NOTIFICATIONS_MODULE = "MWDesktopNotifications";
+  var CHAT_POPPER_REWRITES = [
+    // Notify while the window is merely unfocused, not only when hidden.
+    [
+      /(\w+)\("VisibilityAPI"\)\.isVisibilityHidden\(\)===!0/,
+      '($1("VisibilityAPI").isVisibilityHidden()===!0||!document.hasFocus())'
+    ],
+    // The installed-app gate.
+    [/\w+\("isMessengerPWA"\)\(\)&&\w+\("justknobx"\)\._\("1465"\)/, "!0"]
+  ];
+  function rewriteChatPopperSource(source) {
+    let rewritten = source;
+    for (const [pattern, replacement] of CHAT_POPPER_REWRITES) {
+      if (rewritten.match(new RegExp(pattern.source, "g"))?.length !== 1) return null;
+      rewritten = rewritten.replace(pattern, replacement);
+    }
+    return rewritten;
+  }
+  function messengerId(value, i64ToString) {
+    let text2 = value;
+    if (typeof value === "number" || typeof value === "bigint") text2 = String(value);
+    else if (typeof value !== "string" && value != null && i64ToString) {
+      try {
+        text2 = i64ToString(value);
+      } catch {
+        return null;
+      }
+    }
+    return typeof text2 === "string" && /^\d+$/.test(text2) ? text2 : null;
+  }
+  var MESSAGE_LIMIT = 100;
+  var PageMessageIndex = class {
+    constructor() {
+      __publicField(this, "threads", /* @__PURE__ */ new Map());
+      __publicField(this, "stale", /* @__PURE__ */ new Set());
+      __publicField(this, "raised", /* @__PURE__ */ new Set());
+    }
+    record(messageId, threadId) {
+      this.threads.delete(messageId);
+      this.threads.set(messageId, threadId);
+      if (this.threads.size > MESSAGE_LIMIT) this.threads.delete(this.threads.keys().next().value);
+    }
+    /** The conversation of the notification tagged with this message id. */
+    threadFor(tag) {
+      return typeof tag === "string" ? this.threads.get(tag) : void 0;
+    }
+    /** The message is old news (see {@link isOldNews}): its notification is suppressed. */
+    markStale(messageId) {
+      this.stale.add(messageId);
+      if (this.stale.size > MESSAGE_LIMIT) this.stale.delete(this.stale.values().next().value);
+    }
+    isStale(tag) {
+      return typeof tag === "string" && this.stale.has(tag);
+    }
+    /**
+     * Whether a Notification with this tag was already raised; records it if
+     * not. Messenger can notify twice about one message, and a web notification
+     * reusing a shown tag replaces it rather than adding another.
+     */
+    repeats(tag) {
+      if (typeof tag !== "string" || !tag) return false;
+      if (this.raised.has(tag)) return true;
+      this.raised.add(tag);
+      if (this.raised.size > MESSAGE_LIMIT) this.raised.delete(this.raised.values().next().value);
+      return false;
+    }
+  };
+  var pageMessages = new PageMessageIndex();
+  var groupTitleTemplates = [];
+  function readGroupTitleTemplates(source) {
+    const templates = /* @__PURE__ */ new Set();
+    for (const [, literal = ""] of source.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)) {
+      if (!literal.includes("{senderName}") || !literal.includes("{threadName}")) continue;
+      try {
+        templates.add(JSON.parse(`"${literal}"`));
+      } catch {
+      }
+    }
+    return [...templates];
+  }
+  function recordNotifiedMessage(message, load) {
+    if (!message || typeof message !== "object") return;
+    const row = message;
+    if (typeof row.messageId !== "string" || !row.messageId) return;
+    const threadId = messageThreadId(message, load);
+    if (threadId) pageMessages.record(row.messageId, threadId);
+  }
+  function messageThreadId(message, load) {
+    if (!message || typeof message !== "object") return null;
+    return pageId(message.threadKey, load);
+  }
+  function pageId(value, load) {
+    let i64ToString;
+    try {
+      const i64 = typeof load === "function" ? load("I64") : null;
+      if (typeof i64?.to_string === "function") {
+        i64ToString = i64.to_string.bind(i64);
+      }
+    } catch {
+    }
+    return messengerId(value, i64ToString);
+  }
+  var LATE_NOTIFICATION_MS = 2 * 6e4;
+  function isOldNews(sentMs, nowMs, readUpToMs) {
+    if (sentMs === null) return false;
+    if (nowMs !== null && nowMs - sentMs > LATE_NOTIFICATION_MS) return true;
+    return readUpToMs !== null && readUpToMs >= sentMs;
+  }
+  function messengerMillis(value, load) {
+    let i64ToString;
+    try {
+      const i64 = typeof load === "function" ? load("I64") : null;
+      if (typeof i64?.to_string === "function") i64ToString = i64.to_string.bind(i64);
+    } catch {
+    }
+    const digits = messengerId(value, i64ToString);
+    const millis = digits === null ? Number.NaN : Number(digits);
+    return Number.isSafeInteger(millis) ? millis : null;
+  }
+  function serverNowMs(load) {
+    try {
+      const time = typeof load === "function" ? load("ServerTime") : null;
+      const millis = time?.getMillis?.();
+      return typeof millis === "number" && Number.isFinite(millis) ? millis : null;
+    } catch {
+      return null;
+    }
+  }
+  async function readOldNews(db, message, load, timeoutMs = 750) {
+    if (!message || typeof message !== "object") return false;
+    const row = message;
+    const sentMs = messengerMillis(row.timestampMs, load);
+    if (sentMs === null) return false;
+    const nowMs = serverNowMs(load);
+    if (isOldNews(sentMs, nowMs, null)) return true;
+    const threads = db?.tables?.threads;
+    if (typeof threads?.get !== "function") return false;
+    let timer;
+    const read = async () => {
+      const thread2 = await threads.get(row.threadKey);
+      if (!thread2 || typeof thread2 !== "object") return false;
+      return isOldNews(sentMs, nowMs, messengerMillis(thread2.lastReadWatermarkTimestampMs, load));
+    };
+    try {
+      return await Promise.race([
+        read().catch(() => false),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(false), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  function sameArity(wrapped3, original) {
+    try {
+      Object.defineProperty(wrapped3, "length", { value: original.length });
+    } catch {
+    }
+    return wrapped3;
+  }
+  function wrapFactoryExports(factory, patch) {
+    const tryPatch = (exports) => Boolean(exports) && typeof exports === "object" && patch(exports);
+    return sameArity(function(...args) {
+      const result = Reflect.apply(factory, this, args);
+      for (const candidate of [result, ...args.slice(-2)]) {
+        try {
+          if (tryPatch(candidate)) break;
+          if (candidate && typeof candidate === "object" && tryPatch(candidate.exports)) {
+            break;
+          }
+        } catch {
+        }
+      }
+      return result;
+    }, factory);
+  }
+  function wrapDesktopNotificationsFactory(factory, load) {
+    const templates = readGroupTitleTemplates(Function.prototype.toString.call(factory));
+    groupTitleTemplates.splice(0, groupTitleTemplates.length, ...templates);
+    return wrapFactoryExports(factory, (exports) => {
+      const trigger = exports.triggerLocalNotification;
+      if (typeof trigger !== "function") return false;
+      exports.triggerLocalNotification = function(...args) {
+        const notify = () => Reflect.apply(trigger, this, args);
+        let check;
+        try {
+          const page = load();
+          recordNotifiedMessage(args[1], page);
+          check = readOldNews(args[0], args[1], page);
+        } catch {
+          return notify();
+        }
+        return check.then((old) => {
+          const messageId = args[1]?.messageId;
+          if (old && typeof messageId === "string") pageMessages.markStale(messageId);
+          return notify();
+        }, notify);
+      };
+      return true;
+    });
+  }
+  function wrapChatPopperFactory(factory, loadRewritten2, onUnmatched) {
+    let rewritten = null;
+    const source = rewriteChatPopperSource(Function.prototype.toString.call(factory));
+    if (source === null) onUnmatched();
+    else {
+      loadRewritten2(source, (ready2) => {
+        rewritten = ready2;
+      });
+    }
+    return sameArity(function(...args) {
+      return Reflect.apply(rewritten ?? factory, this, args);
+    }, factory);
+  }
+  var rewriteSeq = 0;
+  function loadRewrittenScript(source, ready2, doc, global, report) {
+    const key = `__chatpaneRewritten${++rewriteSeq}`;
+    const url = URL.createObjectURL(
+      new Blob([`window[${JSON.stringify(key)}] = (${source});`], { type: "text/javascript" })
+    );
+    const script = doc.createElement("script");
+    script.src = url;
+    const done = () => {
+      URL.revokeObjectURL(url);
+      script.remove();
+    };
+    script.onload = () => {
+      const rewritten = global[key];
+      delete global[key];
+      done();
+      if (typeof rewritten === "function") {
+        ready2(rewritten);
+        report("loaded");
+      } else report("invalid");
+    };
+    script.onerror = () => {
+      done();
+      report("refused");
+    };
+    (doc.head ?? doc.documentElement).append(script);
+  }
+
+  // inject/src/messenger/lib/pinned-chats-section.ts
+  var THREAD_LIST_MODULE = "MWThreadList.react";
+  var PINNED_SECTION_SLOT = "cr:34927";
+  var PINNED_UTILS_MODULE = "MWLSPinnedThreadUtils";
+  var INBOX_ENTRY_POINT = "inboxThreadList";
+  function isPinnedListView(props, idString) {
+    if (!props || typeof props !== "object") return false;
+    const list = props;
+    if (list.lsEntryPoint !== INBOX_ENTRY_POINT || list.customThreadFilter != null) return false;
+    if (list.filter == null) return true;
+    try {
+      return String(idString(list.filter)) === "0";
+    } catch (_) {
+      return false;
+    }
+  }
+  function hasMethods(value, names) {
+    return !!value && (typeof value === "object" || typeof value === "function") && names.every((name) => typeof value[name] === "function");
+  }
+  var keepEveryThread = () => true;
+  function createParts(load, store, hooks) {
+    const react2 = load("react");
+    const i64 = load("I64");
+    const queries = load("ReQL");
+    const suspense = load("ReQLSuspense");
+    const useReStore = defaultExport(load("useReStore"));
+    const ThreadListItem = defaultExport(load("MWThreadListItem.react"));
+    const ThreadKeyProvider = load("MWThreadKey.react")?.MWThreadKeyProvider;
+    const DialogProvider = defaultExport(load("CometTransientDialogProvider.react"));
+    if (!hasMethods(react2, [
+      "createElement",
+      "createContext",
+      "useContext",
+      "useSyncExternalStore",
+      "useMemo",
+      "useEffect",
+      "useRef"
+    ]) || !react2.Suspense || typeof react2.Component !== "function" || !hasMethods(i64, ["of_string", "to_string", "equal"]) || !hasMethods(queries, ["fromTableAscending"]) || !hasMethods(suspense, ["useFirst"]) || typeof useReStore !== "function" || !ThreadListItem || !ThreadKeyProvider || !DialogProvider)
+      return null;
+    const int64 = i64;
+    const threads = queries;
+    const rows = suspense;
+    const h = react2.createElement;
+    const { Suspense, useContext, useEffect, useMemo, useRef, useSyncExternalStore } = react2;
+    const readStore = useReStore;
+    const authority = defaultExport(load("LSAuthorityLevel"));
+    const intEnum = load("LSIntEnum");
+    const partial = authority?.CLIENT_PARTIAL;
+    const complete = (thread2) => typeof partial !== "number" || !hasMethods(intEnum, ["toNumber"]) || intEnum.toNumber(thread2.authorityLevel) > partial;
+    let routerContext = null;
+    try {
+      routerContext = defaultExport(
+        pageRequire()?.("CometRouterDispatcherContext")
+      );
+    } catch (_) {
+    }
+    const router = routerContext?.Provider ? routerContext : react2.createContext(null);
+    const ListView = react2.createContext(false);
+    let failed = false;
+    const failureListeners = /* @__PURE__ */ new Set();
+    const subscribeFailure = (listener) => {
+      failureListeners.add(listener);
+      return () => failureListeners.delete(listener);
+    };
+    const hasFailed = () => failed;
+    const Base = react2.Component;
+    class Boundary extends Base {
+      constructor() {
+        super(...arguments);
+        __publicField(this, "state", { failed: false });
+      }
+      static getDerivedStateFromError() {
+        return { failed: true };
+      }
+      componentDidCatch(error) {
+        hooks.onError(error);
+        if (failed) return;
+        failed = true;
+        for (const listener of [...failureListeners]) listener();
+      }
+      render() {
+        return this.state.failed ? null : this.props.children ?? null;
+      }
+    }
+    function FallbackRow(props) {
+      const pin = props.pin;
+      const dispatcher = useContext(router);
+      const path = `/messages/t/${pin.id}/`;
+      const initial = ([...pin.name][0] ?? "").toLocaleUpperCase();
+      const open = (event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+          return;
+        if (!hasMethods(dispatcher, ["go"])) return;
+        event.preventDefault();
+        try {
+          dispatcher.go(path, {});
+        } catch (_) {
+          location.assign(path);
+        }
+      };
+      return h(
+        "div",
+        { role: "row", className: "chatpane-pinned-fallback", "data-chatpane-pinned-row": "" },
+        h(
+          "div",
+          { role: "gridcell" },
+          h(
+            "a",
+            {
+              href: path,
+              role: "link",
+              "aria-label": pin.name,
+              "data-chatpane-pinned-chat": "",
+              onClick: open
+            },
+            h(
+              "svg",
+              { viewBox: "0 0 40 40", "aria-hidden": "true" },
+              h("circle", { cx: 20, cy: 20, r: 20 }),
+              h("text", { x: 20, y: 20, textAnchor: "middle", dominantBaseline: "central" }, initial)
+            ),
+            h("span", null, pin.name)
+          )
+        )
+      );
+    }
+    function PinnedRow(props) {
+      const pin = props.pin;
+      const list = props.list;
+      const db = readStore();
+      const thread2 = rows.useFirst(
+        () => threads.fromTableAscending(db?.tables?.threads).getKeyRange(int64.of_string(pin.id)),
+        [db, pin.id],
+        "ChatpanePinnedChats.row"
+      );
+      const ref = useRef(null);
+      useEffect(() => {
+        if (ref.current) hooks.onRow(pin.id, ref.current);
+      });
+      if (!thread2 || !complete(thread2)) return h(FallbackRow, { pin });
+      if (!int64.equal(thread2.parentThreadKey, list.parentThreadKey)) return null;
+      const selected = list.selectedThreadKey != null && int64.equal(list.selectedThreadKey, thread2.threadKey);
+      return h(
+        "div",
+        { ref, "data-chatpane-pinned-row": "" },
+        h(
+          ThreadKeyProvider,
+          { id: thread2.threadKey },
+          h(
+            DialogProvider,
+            null,
+            h(ThreadListItem, {
+              lsEntryPoint: list.lsEntryPoint,
+              lsSubEntryPoint: list.lsSubEntryPoint,
+              messagingEntrypoint: list.messagingEntrypoint,
+              onClose: list.onClose,
+              selected,
+              showFollowUpReminder: false,
+              size: 56,
+              thread: thread2
+            })
+          )
+        )
+      );
+    }
+    function ChatpanePinnedChats(props) {
+      const shown = useContext(ListView);
+      const pins = useSyncExternalStore(store.subscribe, store.getSnapshot);
+      const broken = useSyncExternalStore(subscribeFailure, hasFailed);
+      if (!shown || broken || pins.length === 0) return null;
+      return h(
+        Boundary,
+        null,
+        h(
+          "div",
+          { className: "chatpane-pinned-chats", role: "rowgroup", "aria-label": hooks.title() },
+          ...pins.map(
+            (pin) => h(Suspense, { key: pin.id, fallback: null }, h(PinnedRow, { pin, list: props }))
+          )
+        )
+      );
+    }
+    function useChatpaneFilterPinnedThreads() {
+      const shown = useContext(ListView);
+      const ids = useSyncExternalStore(store.subscribe, store.getIds);
+      const broken = useSyncExternalStore(subscribeFailure, hasFailed);
+      return useMemo(
+        () => shown && !broken && ids.size ? (thread2) => {
+          const key = thread2?.threadKey;
+          return key == null || !ids.has(String(int64.to_string(key)));
+        } : keepEveryThread,
+        [shown, broken, ids]
+      );
+    }
+    const utils = /* @__PURE__ */ new WeakMap();
+    return {
+      Section: ChatpanePinnedChats,
+      utils(original) {
+        if (!original || typeof original !== "object") return original;
+        let patched = utils.get(original);
+        if (!patched) {
+          patched = { ...original, useFilterPinnedThreads: useChatpaneFilterPinnedThreads };
+          utils.set(original, patched);
+        }
+        return patched;
+      },
+      wrapList(list) {
+        return function ChatpaneThreadList(props) {
+          return h(
+            ListView.Provider,
+            { value: isPinnedListView(props, (value) => int64.to_string(value)) },
+            h(list, props)
+          );
+        };
+      }
+    };
+  }
+  function listExports(result, args) {
+    for (const candidate of [result, ...args.slice(-2)]) {
+      for (const value of [candidate, candidate?.exports]) {
+        if (value && typeof value === "object" && typeof value.default === "function")
+          return value;
+      }
+    }
+    return null;
+  }
+  function wrapThreadListFactory(factory, store, hooks) {
+    return sameArity(function(...args) {
+      const require2 = args[1];
+      const load = args[3];
+      if (typeof require2 !== "function" || typeof load !== "function")
+        return Reflect.apply(factory, this, args);
+      let parts = null;
+      try {
+        parts = createParts(load, store, hooks);
+      } catch (error) {
+        hooks.onError(error);
+      }
+      args[1] = sameArity(function(...names) {
+        if (parts && names[0] === PINNED_SECTION_SLOT) return parts.Section;
+        return Reflect.apply(require2, this, names);
+      }, require2);
+      args[3] = sameArity(function(...names) {
+        const value = Reflect.apply(load, this, names);
+        return parts && names[0] === PINNED_UTILS_MODULE ? parts.utils(value) : value;
+      }, load);
+      const result = Reflect.apply(factory, this, args);
+      try {
+        const exports = parts && listExports(result, args);
+        if (parts && exports) exports.default = parts.wrapList(exports.default);
+      } catch (error) {
+        hooks.onError(error);
+      }
+      return result;
+    }, factory);
+  }
+  function interceptThreadListModule(define, store, hooks) {
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        if (args[0] === THREAD_LIST_MODULE && typeof args[2] === "function") {
+          args[2] = wrapThreadListFactory(args[2], store, hooks);
+        }
+        return Reflect.apply(target, thisArg, args);
+      }
+    });
+  }
+
+  // inject/src/messenger/features/pinned-chats.ts
+  var CHANGED_EVENT = "chatpane:pinned-chats-changed";
+  var account = null;
+  async function request(change) {
+    const owner = account;
+    if (!owner || typeof chatpanePinnedChats !== "function") return null;
+    try {
+      const snapshot = parsePinnedSnapshot(
+        await chatpanePinnedChats(change ? { account: owner, ...change } : { account: owner })
+      );
+      return owner === account ? snapshot : null;
+    } catch (_) {
+      diag("pinned-chats.sync", "request failed");
+      return null;
+    }
+  }
+  var sync = createPinnedChatsSync(pinnedChats, request);
+  function isChatPinned(id) {
+    return pinnedChats.getIds().has(id);
+  }
+  function canPinChat() {
+    return account !== null && pinnedChats.getSnapshot().length < MAX_PINNED_CHATS;
+  }
+  function setChatPinned(id, name, pinned) {
+    if (account) void sync.change(pinned ? { op: "pin", id, name } : { op: "unpin", id });
+  }
+  function interceptPinnedChatModules(define) {
+    const rowNames = /* @__PURE__ */ new WeakMap();
+    return interceptThreadListModule(define, pinnedChats, {
+      title: () => t("page.pinned_chats.title"),
+      // Keep the remembered name in step with what the chat list shows, for
+      // when the chat isn't loaded on a later start.
+      onRow(id, row) {
+        const name = chatRowName(row);
+        if (!account || rowNames.get(row) === name) return;
+        rowNames.set(row, name);
+        void sync.change({ op: "rename", id, name });
+      },
+      onError: (error) => diag("pinned-chats.section", error instanceof Error ? error.name : "render failed")
+    });
+  }
+  function initPinnedChats() {
+    if (!window.__TAURI_INTERNALS__) return;
+    account = accountId(document.cookie);
+    if (!account) return;
+    window.addEventListener(CHANGED_EVENT, () => void sync.refresh());
+    void sync.refresh();
+  }
+
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
   var MAX_CLIPBOARD_IMAGE = 16 * 1024 * 1024;
@@ -4808,6 +5501,7 @@ ${button.innerHTML}`)
       ...VIDEO_CONTEXT_MENU_KEYS,
       ...LINK_CONTEXT_MENU_KEYS,
       ...MESSAGE_CONTEXT_MENU_KEYS,
+      ...CHAT_PIN_CONTEXT_MENU_KEYS,
       ...CHAT_ROW_CONTEXT_MENU_KEYS,
       ...CHAT_EXPORT_CONTEXT_MENU_KEYS
     ].map((key) => [key, t(key)])
@@ -5132,7 +5826,7 @@ ${button.innerHTML}`)
         rectOf(message ? messageTextBlock(message) ?? message : target)
       ) : null;
       menuRequest += 1;
-      const request = menuRequest;
+      const request2 = menuRequest;
       const readAbandonably = async (read) => {
         nativeReflectApply3(nativeAddEventListener2, document, ["pointerdown", abandonMenu, true]);
         nativeReflectApply3(nativeAddEventListener2, document, ["keydown", abandonMenu, true]);
@@ -5146,12 +5840,18 @@ ${button.innerHTML}`)
       if (conversation) {
         const href = conversation.getAttribute("href") ?? "";
         const actions = await readAbandonably(() => readChatRowActions(conversation));
-        if (request !== menuRequest) return;
+        if (request2 !== menuRequest) return;
+        const threadId = threadIdFromHref(href);
+        if (threadId && isChatPinned(threadId)) {
+          addItem([CHAT_PIN_CONTEXT_MENU_KEYS[1], () => setChatPinned(threadId, "", false)]);
+        } else if (threadId && canPinChat()) {
+          const name = chatRowName(conversation);
+          addItem([CHAT_PIN_CONTEXT_MENU_KEYS[0], () => setChatPinned(threadId, name, true)]);
+        }
         for (let index = 0; index < actions.length; index += 1) {
           const action2 = actions[index];
           if (action2) addItem([action2, () => runChatRowAction(href, action2)]);
         }
-        const threadId = threadIdFromHref(href);
         if (threadId) {
           addItem([
             CHAT_EXPORT_CONTEXT_MENU_KEYS[0],
@@ -5169,7 +5869,7 @@ ${button.innerHTML}`)
       }
       if (message) {
         const offer = await readAbandonably(() => readMessageOffer(message));
-        if (request !== menuRequest) return;
+        if (request2 !== menuRequest) return;
         for (let index = 0; index < offer.reactions.length; index += 1) {
           const reaction = offer.reactions[index];
           if (reaction)
@@ -5270,7 +5970,7 @@ ${button.innerHTML}`)
         const fn = item[1];
         const rowIndex = menuItems.length;
         const reaction = item[3];
-        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_KEYS.includes(label) ? 2 : conversation && CHAT_ROW_CONTEXT_MENU_KEYS.includes(label) ? 3 : conversation && CHAT_EXPORT_CONTEXT_MENU_KEYS.includes(label) ? 4 : 0;
+        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_KEYS.includes(label) ? 2 : conversation && CHAT_ROW_CONTEXT_MENU_KEYS.includes(label) ? 3 : conversation && CHAT_EXPORT_CONTEXT_MENU_KEYS.includes(label) ? 4 : conversation && CHAT_PIN_CONTEXT_MENU_KEYS.includes(label) ? 5 : 0;
         if (previousGroup !== null && previousGroup !== group) {
           const divider = nativeReflectApply3(nativeCreateElement, document, [
             "div"
@@ -6337,18 +7037,18 @@ ${button.innerHTML}`)
       return "";
     }
   }
-  function communicationSender(title, body, group, account2, showNicknames2, titleKind, groupTitle = "", photo = false) {
-    if (!group || !account2) return void 0;
+  function communicationSender(title, body, group, account3, showNicknames2, titleKind, groupTitle = "", photo = false) {
+    if (!group || !account3) return void 0;
     const display = (person2) => showNicknames2 && person2.nickname || person2.name;
     if (!group.isGroup) {
-      const others = group.participants.filter((person3) => person3.id && person3.id !== account2);
+      const others = group.participants.filter((person3) => person3.id && person3.id !== account3);
       const person2 = others.length === 1 ? others[0] : void 0;
       return person2?.id ? { id: person2.id, name: display(person2), group: "", photo: true } : void 0;
     }
     const kind = titleKind === "unknown" && group.title ? normalizeSenderName(title) === normalizeSenderName(group.title) ? "group" : "sender" : titleKind;
     const person = kind === "sender" ? namedParticipant(title, group) : notificationSenderPrefix(body, group)?.person;
     const name = group.title || groupTitle;
-    if (!person?.id || person.id === account2 || !name) return void 0;
+    if (!person?.id || person.id === account3 || !name) return void 0;
     return { id: person.id, name: display(person), group: name, photo };
   }
 
@@ -6388,13 +7088,13 @@ ${button.innerHTML}`)
     const readNames = (key) => {
       const existing = pending.get(key);
       if (existing) return existing;
-      const request = loadNames(key);
-      pending.set(key, request);
-      void request.then(
+      const request2 = loadNames(key);
+      pending.set(key, request2);
+      void request2.then(
         () => pending.delete(key),
         () => pending.delete(key)
       );
-      return request;
+      return request2;
     };
     const hook = function useChatpaneReplyAttribution(...args) {
       const text2 = Reflect.apply(original, this, args);
@@ -7309,251 +8009,6 @@ ${button.innerHTML}`)
     return mutedThreads.isMuted(id);
   }
 
-  // inject/src/messenger/lib/page-notifications.ts
-  var CHAT_POPPER_MODULE = "useMWLSChatPopperUpper";
-  var DESKTOP_NOTIFICATIONS_MODULE = "MWDesktopNotifications";
-  var CHAT_POPPER_REWRITES = [
-    // Notify while the window is merely unfocused, not only when hidden.
-    [
-      /(\w+)\("VisibilityAPI"\)\.isVisibilityHidden\(\)===!0/,
-      '($1("VisibilityAPI").isVisibilityHidden()===!0||!document.hasFocus())'
-    ],
-    // The installed-app gate.
-    [/\w+\("isMessengerPWA"\)\(\)&&\w+\("justknobx"\)\._\("1465"\)/, "!0"]
-  ];
-  function rewriteChatPopperSource(source) {
-    let rewritten = source;
-    for (const [pattern, replacement] of CHAT_POPPER_REWRITES) {
-      if (rewritten.match(new RegExp(pattern.source, "g"))?.length !== 1) return null;
-      rewritten = rewritten.replace(pattern, replacement);
-    }
-    return rewritten;
-  }
-  function messengerId(value, i64ToString) {
-    let text2 = value;
-    if (typeof value === "number" || typeof value === "bigint") text2 = String(value);
-    else if (typeof value !== "string" && value != null && i64ToString) {
-      try {
-        text2 = i64ToString(value);
-      } catch {
-        return null;
-      }
-    }
-    return typeof text2 === "string" && /^\d+$/.test(text2) ? text2 : null;
-  }
-  var MESSAGE_LIMIT = 100;
-  var PageMessageIndex = class {
-    constructor() {
-      __publicField(this, "threads", /* @__PURE__ */ new Map());
-      __publicField(this, "stale", /* @__PURE__ */ new Set());
-      __publicField(this, "raised", /* @__PURE__ */ new Set());
-    }
-    record(messageId, threadId) {
-      this.threads.delete(messageId);
-      this.threads.set(messageId, threadId);
-      if (this.threads.size > MESSAGE_LIMIT) this.threads.delete(this.threads.keys().next().value);
-    }
-    /** The conversation of the notification tagged with this message id. */
-    threadFor(tag) {
-      return typeof tag === "string" ? this.threads.get(tag) : void 0;
-    }
-    /** The message is old news (see {@link isOldNews}): its notification is suppressed. */
-    markStale(messageId) {
-      this.stale.add(messageId);
-      if (this.stale.size > MESSAGE_LIMIT) this.stale.delete(this.stale.values().next().value);
-    }
-    isStale(tag) {
-      return typeof tag === "string" && this.stale.has(tag);
-    }
-    /**
-     * Whether a Notification with this tag was already raised; records it if
-     * not. Messenger can notify twice about one message, and a web notification
-     * reusing a shown tag replaces it rather than adding another.
-     */
-    repeats(tag) {
-      if (typeof tag !== "string" || !tag) return false;
-      if (this.raised.has(tag)) return true;
-      this.raised.add(tag);
-      if (this.raised.size > MESSAGE_LIMIT) this.raised.delete(this.raised.values().next().value);
-      return false;
-    }
-  };
-  var pageMessages = new PageMessageIndex();
-  var groupTitleTemplates = [];
-  function readGroupTitleTemplates(source) {
-    const templates = /* @__PURE__ */ new Set();
-    for (const [, literal = ""] of source.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)) {
-      if (!literal.includes("{senderName}") || !literal.includes("{threadName}")) continue;
-      try {
-        templates.add(JSON.parse(`"${literal}"`));
-      } catch {
-      }
-    }
-    return [...templates];
-  }
-  function recordNotifiedMessage(message, load) {
-    if (!message || typeof message !== "object") return;
-    const row = message;
-    if (typeof row.messageId !== "string" || !row.messageId) return;
-    const threadId = messageThreadId(message, load);
-    if (threadId) pageMessages.record(row.messageId, threadId);
-  }
-  function messageThreadId(message, load) {
-    if (!message || typeof message !== "object") return null;
-    return pageId(message.threadKey, load);
-  }
-  function pageId(value, load) {
-    let i64ToString;
-    try {
-      const i64 = typeof load === "function" ? load("I64") : null;
-      if (typeof i64?.to_string === "function") {
-        i64ToString = i64.to_string.bind(i64);
-      }
-    } catch {
-    }
-    return messengerId(value, i64ToString);
-  }
-  var LATE_NOTIFICATION_MS = 2 * 6e4;
-  function isOldNews(sentMs, nowMs, readUpToMs) {
-    if (sentMs === null) return false;
-    if (nowMs !== null && nowMs - sentMs > LATE_NOTIFICATION_MS) return true;
-    return readUpToMs !== null && readUpToMs >= sentMs;
-  }
-  function messengerMillis(value, load) {
-    let i64ToString;
-    try {
-      const i64 = typeof load === "function" ? load("I64") : null;
-      if (typeof i64?.to_string === "function") i64ToString = i64.to_string.bind(i64);
-    } catch {
-    }
-    const digits = messengerId(value, i64ToString);
-    const millis = digits === null ? Number.NaN : Number(digits);
-    return Number.isSafeInteger(millis) ? millis : null;
-  }
-  function serverNowMs(load) {
-    try {
-      const time = typeof load === "function" ? load("ServerTime") : null;
-      const millis = time?.getMillis?.();
-      return typeof millis === "number" && Number.isFinite(millis) ? millis : null;
-    } catch {
-      return null;
-    }
-  }
-  async function readOldNews(db, message, load, timeoutMs = 750) {
-    if (!message || typeof message !== "object") return false;
-    const row = message;
-    const sentMs = messengerMillis(row.timestampMs, load);
-    if (sentMs === null) return false;
-    const nowMs = serverNowMs(load);
-    if (isOldNews(sentMs, nowMs, null)) return true;
-    const threads = db?.tables?.threads;
-    if (typeof threads?.get !== "function") return false;
-    let timer;
-    const read = async () => {
-      const thread2 = await threads.get(row.threadKey);
-      if (!thread2 || typeof thread2 !== "object") return false;
-      return isOldNews(sentMs, nowMs, messengerMillis(thread2.lastReadWatermarkTimestampMs, load));
-    };
-    try {
-      return await Promise.race([
-        read().catch(() => false),
-        new Promise((resolve) => {
-          timer = setTimeout(() => resolve(false), timeoutMs);
-        })
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  function sameArity(wrapped3, original) {
-    try {
-      Object.defineProperty(wrapped3, "length", { value: original.length });
-    } catch {
-    }
-    return wrapped3;
-  }
-  function wrapFactoryExports(factory, patch) {
-    const tryPatch = (exports) => Boolean(exports) && typeof exports === "object" && patch(exports);
-    return sameArity(function(...args) {
-      const result = Reflect.apply(factory, this, args);
-      for (const candidate of [result, ...args.slice(-2)]) {
-        try {
-          if (tryPatch(candidate)) break;
-          if (candidate && typeof candidate === "object" && tryPatch(candidate.exports)) {
-            break;
-          }
-        } catch {
-        }
-      }
-      return result;
-    }, factory);
-  }
-  function wrapDesktopNotificationsFactory(factory, load) {
-    const templates = readGroupTitleTemplates(Function.prototype.toString.call(factory));
-    groupTitleTemplates.splice(0, groupTitleTemplates.length, ...templates);
-    return wrapFactoryExports(factory, (exports) => {
-      const trigger = exports.triggerLocalNotification;
-      if (typeof trigger !== "function") return false;
-      exports.triggerLocalNotification = function(...args) {
-        const notify = () => Reflect.apply(trigger, this, args);
-        let check;
-        try {
-          const page = load();
-          recordNotifiedMessage(args[1], page);
-          check = readOldNews(args[0], args[1], page);
-        } catch {
-          return notify();
-        }
-        return check.then((old) => {
-          const messageId = args[1]?.messageId;
-          if (old && typeof messageId === "string") pageMessages.markStale(messageId);
-          return notify();
-        }, notify);
-      };
-      return true;
-    });
-  }
-  function wrapChatPopperFactory(factory, loadRewritten2, onUnmatched) {
-    let rewritten = null;
-    const source = rewriteChatPopperSource(Function.prototype.toString.call(factory));
-    if (source === null) onUnmatched();
-    else {
-      loadRewritten2(source, (ready2) => {
-        rewritten = ready2;
-      });
-    }
-    return sameArity(function(...args) {
-      return Reflect.apply(rewritten ?? factory, this, args);
-    }, factory);
-  }
-  var rewriteSeq = 0;
-  function loadRewrittenScript(source, ready2, doc, global, report) {
-    const key = `__chatpaneRewritten${++rewriteSeq}`;
-    const url = URL.createObjectURL(
-      new Blob([`window[${JSON.stringify(key)}] = (${source});`], { type: "text/javascript" })
-    );
-    const script = doc.createElement("script");
-    script.src = url;
-    const done = () => {
-      URL.revokeObjectURL(url);
-      script.remove();
-    };
-    script.onload = () => {
-      const rewritten = global[key];
-      delete global[key];
-      done();
-      if (typeof rewritten === "function") {
-        ready2(rewritten);
-        report("loaded");
-      } else report("invalid");
-    };
-    script.onerror = () => {
-      done();
-      report("refused");
-    };
-    (doc.head ?? doc.documentElement).append(script);
-  }
-
   // inject/src/messenger/features/messenger-sounds.ts
   /*! Includes code adapted from fMess (https://github.com/toanbku/fmess).
    *
@@ -7857,8 +8312,8 @@ ${button.innerHTML}`)
       const wrapped3 = interceptOnce(
         value,
         (define) => createFacebookModuleDefineInterceptor(
-          interceptNotificationModules(
-            interceptErrorBlock(interceptSoundModules(define))
+          interceptPinnedChatModules(
+            interceptNotificationModules(interceptErrorBlock(interceptSoundModules(define)))
           ),
           shouldBlockTelemetry,
           (restore2) => searchIndex.register(restore2),
@@ -9556,10 +10011,10 @@ ${button.innerHTML}`)
     let lastActive = null;
     let unavailableReported = false;
     const refresh = () => {
-      const account2 = accountId(document.cookie);
-      if (reading || !account2) return;
+      const account3 = accountId(document.cookie);
+      if (reading || !account3) return;
       reading = true;
-      readMessengerDndUntil(account2, window.require).then((until) => {
+      readMessengerDndUntil(account3, window.require).then((until) => {
         if (until === null) {
           if (!unavailableReported) {
             diag("notify.messenger-dnd-unreadable", "Do Not Disturb unreadable");
@@ -9586,10 +10041,10 @@ ${button.innerHTML}`)
   // inject/src/messenger/lib/action-target.ts
   function actionTargetFor(value, cookie) {
     if (typeof value !== "object" || value === null) return null;
-    const { account: account2, message = "", reaction = "" } = value;
-    if (typeof account2 !== "string" || typeof message !== "string" || typeof reaction !== "string")
+    const { account: account3, message = "", reaction = "" } = value;
+    if (typeof account3 !== "string" || typeof message !== "string" || typeof reaction !== "string")
       return null;
-    return account2 !== "" && account2 === accountId(cookie) ? { account: account2, message, reaction } : null;
+    return account3 !== "" && account3 === accountId(cookie) ? { account: account3, message, reaction } : null;
   }
 
   // inject/src/messenger/lib/notification-actions.ts
@@ -9670,11 +10125,11 @@ ${button.innerHTML}`)
       await wait(200);
     }
   }
-  async function reactToMessage(load, request) {
+  async function reactToMessage(load, request2) {
     const { db, i64 } = await database(load);
     const message = record3(
       await db.runInTransaction(
-        (tx) => tx.messages.index("messageId").get(request.messageId),
+        (tx) => tx.messages.index("messageId").get(request2.messageId),
         "readonly",
         void 0,
         void 0,
@@ -9683,9 +10138,9 @@ ${button.innerHTML}`)
     );
     if (!message) return "message-missing";
     const threadKey = message.threadKey;
-    if (String(i64.to_string(threadKey)) !== request.threadId) return "thread-mismatch";
+    if (String(i64.to_string(threadKey)) !== request2.threadId) return "thread-mismatch";
     const sender = String(i64.to_string(message.senderId));
-    if (sender === request.account) return "own-message";
+    if (sender === request2.account) return "own-message";
     const thread2 = record3(await db.tables.threads.get(threadKey));
     if (!thread2) return "thread-missing";
     const types = load("LSMessagingThreadTypeUtil");
@@ -9700,7 +10155,7 @@ ${button.innerHTML}`)
         load,
         "MAWDbMsg",
         "toMsgId"
-      )(request.messageId);
+      )(request2.messageId);
       if (!msgId) return "message-id";
       const ready2 = await exported(load, "MAWMiActOnActThreadReady", "waitForACTThreadReady")(db.tables, threadKey, TRACE);
       const protocolId = await exported(
@@ -9709,7 +10164,7 @@ ${button.innerHTML}`)
         "getProtocolMsgIdByMsgIdUI"
       )(msgId);
       if (!ready2?.chatJid || !protocolId) return "protocol-id";
-      if (Date.now() >= request.deadline) return "expired";
+      if (Date.now() >= request2.deadline) return "expired";
       let qplEventType;
       try {
         qplEventType = exported(
@@ -9723,7 +10178,7 @@ ${button.innerHTML}`)
         args: {
           groupIndex: void 0,
           groupingKey: "",
-          reaction: request.reaction,
+          reaction: request2.reaction,
           reactToAuthor: sender,
           reactToProtocolMsgId: protocolId,
           source
@@ -9741,7 +10196,7 @@ ${button.innerHTML}`)
       "isReactionsV2Enabled"
     );
     if (v2(thread2)) return "reactions-v2";
-    const actorId = i64.of_string(request.account);
+    const actorId = i64.of_string(request2.account);
     const mine = record3(
       await db.runInTransaction(
         (tx) => tx.reactions.get(threadKey, message.messageId, actorId),
@@ -9751,7 +10206,7 @@ ${button.innerHTML}`)
         TRACE
       )
     );
-    if (mine?.reaction === request.reaction) return "ok";
+    if (mine?.reaction === request2.reaction) return "ok";
     const factory = exported(load, "LSFactory");
     const upsert = exported(
       load,
@@ -9759,11 +10214,11 @@ ${button.innerHTML}`)
     );
     return db.runInTransaction(
       async (tx) => {
-        if (Date.now() >= request.deadline) return "expired";
+        if (Date.now() >= request2.deadline) return "expired";
         await upsert(factory(tx), {
           actorId,
           messageId: message.messageId,
-          reaction: request.reaction,
+          reaction: request2.reaction,
           sendAttribution: source,
           threadKey,
           timestampMs: i64.of_float(Date.now())
@@ -11078,8 +11533,8 @@ ${button.innerHTML}`)
      * watching began and not caught up late (after sleep), and not announced
      * already. Whose message it reacts to is for the caller to check.
      */
-    first(reaction, account2, now) {
-      if (reaction.actor === account2 || reaction.at === null || reaction.at < this.since) {
+    first(reaction, account3, now) {
+      if (reaction.actor === account3 || reaction.at === null || reaction.at < this.since) {
         return false;
       }
       if (isOldNews(reaction.at, now, null)) return false;
@@ -11349,9 +11804,9 @@ ${button.innerHTML}`)
         const announcements = new ReactionAnnouncements(now());
         reactions.subscribe((_event, change) => {
           const reaction = changedReaction(change, load);
-          const account2 = accountId(document.cookie);
-          if (!reaction || !account2 || !announcements.first(reaction, account2, now())) return;
-          ownMessageText(db, load, reaction, account2).then((text2) => {
+          const account3 = accountId(document.cookie);
+          if (!reaction || !account3 || !announcements.first(reaction, account3, now())) return;
+          ownMessageText(db, load, reaction, account3).then((text2) => {
             if (text2 !== void 0) announce(reaction, text2);
           }).catch(() => {
           });
@@ -11359,7 +11814,7 @@ ${button.innerHTML}`)
       }).catch(() => diag("notify.reactions", "Messenger's reaction APIs did not load"));
     }, 1e3);
   }
-  async function ownMessageText(db, load, reaction, account2) {
+  async function ownMessageText(db, load, reaction, account3) {
     const message = await db.runInTransaction?.(
       (tx) => tx.messages.index("messageId").get(reaction.message),
       "readonly",
@@ -11370,7 +11825,7 @@ ${button.innerHTML}`)
     if (!message || typeof message !== "object") return void 0;
     const row = message;
     if (messageThreadId(row, load) !== reaction.thread) return void 0;
-    if (pageId(row.senderId, load) !== account2) return void 0;
+    if (pageId(row.senderId, load) !== account3) return void 0;
     let unvault;
     try {
       const vault = load("MAWVault");
@@ -13062,7 +13517,7 @@ ${button.innerHTML}`)
     };
     let searchedLog = null;
     let sidesStale = true;
-    const sync = () => {
+    const sync2 = () => {
       if (document.hidden || !attachStyles()) return;
       if (!isMessengerContentPath(location.pathname)) {
         edges.list.remove();
@@ -13100,13 +13555,13 @@ ${button.innerHTML}`)
       placeEdge("list", list, main2);
       placeEdge("details", details, row?.firstElementChild ?? null);
     };
-    setInterval(sync, 1e3);
+    setInterval(sync2, 1e3);
     document.addEventListener(
       "click",
       () => {
         searchedLog = null;
-        setTimeout(sync, 50);
-        setTimeout(sync, 400);
+        setTimeout(sync2, 50);
+        setTimeout(sync2, 400);
       },
       { capture: true, passive: true }
     );
@@ -13118,7 +13573,7 @@ ${button.innerHTML}`)
       },
       { passive: true }
     );
-    document.addEventListener("visibilitychange", sync);
+    document.addEventListener("visibilitychange", sync2);
   }
 
   // inject/src/messenger/lib/passkey-login.ts
@@ -13768,14 +14223,6 @@ ${text2}`)) {
     if (!window.__TAURI_INTERNALS__) return;
     const MAX_THREADS = 9;
     const EMPTY_GRACE_MS = 15e3;
-    const rowName = (a) => {
-      const row = a.closest('[role="row"]') || a;
-      for (const span of row.querySelectorAll("span")) {
-        const t2 = (span.textContent || "").replace(/\s+/g, " ").trim();
-        if (t2 && !SEPARATOR_RE.test(t2)) return t2.slice(0, 60);
-      }
-      return "";
-    };
     const chatListScrolledFromTop = (rows) => {
       const first = rows[0];
       if (!first) return false;
@@ -13788,7 +14235,7 @@ ${text2}`)) {
       const names = /* @__PURE__ */ new Map();
       for (const a of chatRows()) {
         const id = threadIdFromHref(a.getAttribute("href"));
-        if (id && !names.has(id)) names.set(id, rowName(a));
+        if (id && !names.has(id)) names.set(id, chatRowName(a));
       }
       return names;
     };
@@ -13809,7 +14256,7 @@ ${text2}`)) {
       for (const a of rows) {
         const id = threadIdFromHref(a.getAttribute("href"));
         if (!id || seen.has(id)) continue;
-        const name = rowName(a);
+        const name = chatRowName(a);
         if (!name) continue;
         seen.add(id);
         out.push({ name, href: `/t/${id}/` });
@@ -13874,7 +14321,7 @@ ${text2}`)) {
   }
 
   // inject/src/messenger/features/scheduled-send.ts
-  var account = () => accountScopedStorageKey("schedule", document.cookie)?.split(":")[1] ?? null;
+  var account2 = () => accountScopedStorageKey("schedule", document.cookie)?.split(":")[1] ?? null;
   var thread = () => {
     const id = threadIdFromHref(location.pathname);
     return id ? `/t/${id}/` : null;
@@ -13907,7 +14354,7 @@ ${text2}`)) {
     return !routeChanged && loadedThread === thread() ? loadedThread : null;
   };
   async function deliverScheduledMessage(message, connectionReady = ready) {
-    if (!connectionReady() || account() !== message.account || sendWindow(message.due, Date.now()) !== "due")
+    if (!connectionReady() || account2() !== message.account || sendWindow(message.due, Date.now()) !== "due")
       return "defer";
     const existing = findComposer();
     if (existing && (composerText(existing).trim() || hasComposerMedia(existing))) return "defer";
@@ -13934,7 +14381,7 @@ ${text2}`)) {
     document.addEventListener("keydown", onInput, true);
     try {
       while (Date.now() <= deadline) {
-        if (interrupted || account() !== message.account || !connectionReady()) break;
+        if (interrupted || account2() !== message.account || !connectionReady()) break;
         const current2 = findComposer();
         if (thread() !== message.thread) {
           if (inserted) break;
@@ -13962,13 +14409,13 @@ ${text2}`)) {
           await pause3();
           continue;
         }
-        if (Date.now() > message.due + SEND_GRACE_MS || account() !== message.account || !connectionReady())
+        if (Date.now() > message.due + SEND_GRACE_MS || account2() !== message.account || !connectionReady())
           break;
         clicked = true;
         send.click();
         const confirmUntil = Date.now() + 5e3;
         while (Date.now() < confirmUntil) {
-          if (thread() !== message.thread || account() !== message.account || !box.isConnected)
+          if (thread() !== message.thread || account2() !== message.account || !box.isConnected)
             return "uncertain";
           if (!composerText(box).trim()) return "sent";
           await pause3();
@@ -13978,7 +14425,7 @@ ${text2}`)) {
     } finally {
       document.removeEventListener("pointerdown", onInput, true);
       document.removeEventListener("keydown", onInput, true);
-      if (!clicked && inserted && box?.isConnected && thread() === message.thread && account() === message.account && composerText(box) === message.text)
+      if (!clicked && inserted && box?.isConnected && thread() === message.thread && account2() === message.account && composerText(box) === message.text)
         cleared = replaceComposerText(box, "");
     }
     if (clicked) return "uncertain";
@@ -14055,11 +14502,11 @@ ${text2}`)) {
       button?.setAttribute("aria-expanded", "false");
       if (focus) button?.focus();
     };
-    const request = async (operation) => {
-      const current2 = account();
+    const request2 = async (operation) => {
+      const current2 = account2();
       if (!current2) throw new Error(t("page.schedule.sign_in"));
       const response = await chatpaneScheduledSend({ ...operation, account: current2 });
-      if (account() !== current2) throw new Error(t("page.schedule.account_changed"));
+      if (account2() !== current2) throw new Error(t("page.schedule.account_changed"));
       if (response.error) throw new Error(response.error);
       owner = current2;
       rows = response.items;
@@ -14082,7 +14529,7 @@ ${text2}`)) {
         void 0,
         { warning: true }
       );
-      for (const row of missed) await request({ op: "seen", id: row.id });
+      for (const row of missed) await request2({ op: "seen", id: row.id });
     };
     const positionPanel = () => {
       if (!panel || !button) return;
@@ -14102,7 +14549,7 @@ ${text2}`)) {
     };
     const save = async (due) => {
       if (busy2) return;
-      const current2 = account();
+      const current2 = account2();
       if (!current2 || current2 !== owner || thread() !== panelThread) {
         close();
         return;
@@ -14135,7 +14582,7 @@ ${text2}`)) {
       try {
         let result;
         try {
-          result = await request({
+          result = await request2({
             op: "save",
             ...editingItem ? { id: editingItem.id } : {},
             thread: editingItem?.thread ?? expectedThread ?? void 0,
@@ -14146,7 +14593,7 @@ ${text2}`)) {
           if (!editingItem || recoveredDraft) throw error;
           let saved;
           try {
-            saved = (await request({ op: "list" })).items.find((row) => row.id === editingItem.id);
+            saved = (await request2({ op: "list" })).items.find((row) => row.id === editingItem.id);
           } catch {
           }
           if (saved?.status !== "scheduled" || saved.account !== current2 || saved.thread !== editingItem.thread || saved.text !== text2 || saved.due !== due) {
@@ -14164,12 +14611,12 @@ ${text2}`)) {
         if (!result.saved) throw new Error(t("page.schedule.not_saved"));
         if (!editingItem || recoveredDraft) {
           const textToClear = recoveredDraft ? editingItem?.text ?? "" : expectedText;
-          const unchanged = expectedBox?.isConnected && thread() === expectedThread && account() === current2 && composerText(expectedBox) === textToClear && !hasComposerMedia(expectedBox);
+          const unchanged = expectedBox?.isConnected && thread() === expectedThread && account2() === current2 && composerText(expectedBox) === textToClear && !hasComposerMedia(expectedBox);
           if (!unchanged || !expectedBox) {
-            if (!editingItem) await request({ op: "cancel", id: result.saved });
+            if (!editingItem) await request2({ op: "cancel", id: result.saved });
             throw new Error(t("page.schedule.draft_changed"));
           }
-          const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account() === current2 && !hasComposerMedia(expectedBox);
+          const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account2() === current2 && !hasComposerMedia(expectedBox);
           replaceComposerText(expectedBox, "");
           for (let attempt = 0; attempt < 10; attempt++) {
             await pause3();
@@ -14182,11 +14629,11 @@ ${text2}`)) {
         }
         if (!editingItem || recoveredDraft) {
           try {
-            await request({ op: "arm", id: result.saved });
+            await request2({ op: "arm", id: result.saved });
           } catch (error) {
             let status;
             try {
-              status = (await request({ op: "list" })).items.find(
+              status = (await request2({ op: "list" })).items.find(
                 (row) => row.id === result.saved
               )?.status;
             } catch {
@@ -14367,7 +14814,7 @@ ${text2}`)) {
         if (row.status !== "sending")
           actions.append(
             action(t("page.schedule.cancel"), () => {
-              void request({ op: "cancel", id: row.id }).then(() => {
+              void request2({ op: "cancel", id: row.id }).then(() => {
                 if (page === "list") show("list");
               }).catch(failed);
             })
@@ -14408,7 +14855,7 @@ ${text2}`)) {
       sourceText = composerText(box);
       panelThread = thread();
       try {
-        await request({ op: "list" });
+        await request2({ op: "list" });
       } catch (error) {
         failed(error);
         return;
@@ -14427,7 +14874,7 @@ ${text2}`)) {
       const box = cachedBox?.isConnected && isShown(cachedBox) ? cachedBox : findComposer();
       cachedBox = box;
       const region = box && composerRegion(box);
-      if (owner && owner !== account()) {
+      if (owner && owner !== account2()) {
         rows = [];
         owner = null;
         close();
@@ -14478,11 +14925,11 @@ ${text2}`)) {
       syncColors();
     }
     const poll = async () => {
-      if (polling || busy2 || !account() || window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ === false)
+      if (polling || busy2 || !account2() || window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ === false)
         return;
       polling = true;
       try {
-        await request({ op: "list" });
+        await request2({ op: "list" });
         await warning();
         while (canDeliver && ready()) {
           const due = nextDueMessage(rows, Date.now());
@@ -14497,7 +14944,7 @@ ${text2}`)) {
               location.href = `https://www.facebook.com/messages${due.thread}`;
               return false;
             }
-            const claimed = await request({ op: "claim", id: due.id });
+            const claimed = await request2({ op: "claim", id: due.id });
             if (claimed.claimed !== due.id) return false;
             const job = claimed.items.find((row) => row.id === due.id && row.status === "sending");
             if (!job) return false;
@@ -14506,7 +14953,7 @@ ${text2}`)) {
             try {
               outcome = await deliverScheduledMessage(job);
             } finally {
-              if (account() === job.account) await request({ op: outcome, id: job.id, due: job.due });
+              if (account2() === job.account) await request2({ op: outcome, id: job.id, due: job.due });
             }
             return outcome !== "defer";
           });
@@ -14684,7 +15131,7 @@ ${text2}`)) {
   var CHATS_ATTR2 = "data-chatpane-chats";
   function initSelection() {
     const html = document.documentElement;
-    const sync = () => {
+    const sync2 = () => {
       const onChats = isMessengerContentPath(location.pathname);
       if (html.hasAttribute(CHATS_ATTR2) !== onChats) html.toggleAttribute(CHATS_ATTR2, onChats);
     };
@@ -14692,12 +15139,12 @@ ${text2}`)) {
       const original = history[method2];
       history[method2] = function(...args) {
         const result = original.apply(this, args);
-        sync();
+        sync2();
         return result;
       };
     }
-    window.addEventListener("popstate", sync);
-    sync();
+    window.addEventListener("popstate", sync2);
+    sync2();
     const pageSelectAll = (target) => html.hasAttribute(CHATS_ATTR2) && !html.hasAttribute("data-chatpane-login") && (target === document.body || target === html);
     document.addEventListener(
       "selectstart",
@@ -16051,9 +16498,9 @@ ${text2}`)) {
   var TYPING_LABEL = "3";
   var IS_TYPING = /(is_typing(?:\\)*":)1(?![0-9])/g;
   function clearTyping(text2) {
-    const request = parseJson(text2);
-    if (request?.type !== TYPING_REQUEST) return null;
-    const update = nested(request, "payload");
+    const request2 = parseJson(text2);
+    if (request2?.type !== TYPING_REQUEST) return null;
+    const update = nested(request2, "payload");
     if (update?.label !== TYPING_LABEL || !nested(update, "payload")?.is_typing) return null;
     const edited = text2.replace(IS_TYPING, "$10");
     return edited === text2 ? null : edited;
@@ -16074,9 +16521,9 @@ ${text2}`)) {
       if (end > bytes.length) return null;
       let part = bytes.subarray(pos, end);
       const json = bytes[pos] === PART_DATA && end > pos + 8 ? new TextDecoder().decode(bytes.subarray(pos + 8, end)) : null;
-      const request = json && clearTyping(json);
-      if (request) {
-        const encoded = new TextEncoder().encode(request);
+      const request2 = json && clearTyping(json);
+      if (request2) {
+        const encoded = new TextEncoder().encode(request2);
         const length = encoded.length + 2;
         part = new Uint8Array(8 + encoded.length);
         part.set(bytes.subarray(pos, pos + 3));
@@ -16715,6 +17162,7 @@ ${text2}`)) {
     initFeature("chat-gradient", initChatGradient);
     initFeature("unread-badge", initUnreadBadge);
     initFeature("recent-threads", initRecentThreads);
+    initFeature("pinned-chats", initPinnedChats);
     initFeature("thread-nav", initThreadNav);
     initFeature("conversation-export", initConversationExport);
     initFeature("quick-reply", initQuickReply);

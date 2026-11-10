@@ -10,6 +10,7 @@ import { isFacebookRateLimitError } from "../lib/rate-limit";
 import { interceptErrorBlock } from "./messenger-error-block";
 import { installMessengerSoundPlayback, interceptSoundModules } from "./messenger-sounds";
 import { interceptNotificationModules } from "./page-notifications";
+import { interceptPinnedChatModules } from "./pinned-chats";
 import { reportRateLimit } from "./rate-limit";
 import { syncProcessing } from "./sync-processing";
 import { workerRecovery, workerReplacement } from "./worker-recovery";
@@ -75,8 +76,8 @@ export function initFacebookModuleInterception() {
       value as FacebookModuleDefine,
       (define) =>
         createFacebookModuleDefineInterceptor(
-          interceptNotificationModules(
-            interceptErrorBlock(interceptSoundModules(define)),
+          interceptPinnedChatModules(
+            interceptNotificationModules(interceptErrorBlock(interceptSoundModules(define))),
           ) as FacebookModuleDefine,
           shouldBlockTelemetry,
           (restore) => searchIndex.register(restore),

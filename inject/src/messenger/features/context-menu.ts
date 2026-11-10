@@ -3,7 +3,7 @@
 // (download / copy / copy address / open in browser), matching the original.
 // Right-click a message (or press the context-menu key on a focused one) for
 // its reactions and Messenger's own message actions, after any media actions.
-// Right-click a conversation in the chat list for its own menu, plus export,
+// Right-click a conversation in the chat list for its own menu, plus pin and export,
 // in place of its link's. Selected text and other links keep their usual menus.
 import { language, t } from "../../i18n";
 import {
@@ -13,7 +13,11 @@ import {
   toastDownloadFailure,
   toastDownloadSaved,
 } from "../bridge";
-import { CHAT_EXPORT_CONTEXT_MENU_KEYS, CHAT_ROW_CONTEXT_MENU_KEYS } from "../lib/chat-row-menu";
+import {
+  CHAT_EXPORT_CONTEXT_MENU_KEYS,
+  CHAT_PIN_CONTEXT_MENU_KEYS,
+  CHAT_ROW_CONTEXT_MENU_KEYS,
+} from "../lib/chat-row-menu";
 import { waitForNativeDownload } from "../lib/download-completion";
 import { dataUrlBlob, filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 import { cssPropertyName, type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
@@ -26,6 +30,7 @@ import {
 } from "../lib/message-menu";
 import { threadIdFromHref } from "../lib/threads";
 import { chatRowFor, readChatRowActions, runChatRowAction } from "./chat-row-menu";
+import { chatRowName } from "./conversation-actions";
 import { startConversationExport } from "./conversation-export";
 import {
   messageFor,
@@ -34,6 +39,7 @@ import {
   readMessageOffer,
   runMessageAction,
 } from "./message-menu";
+import { canPinChat, isChatPinned, setChatPinned } from "./pinned-chats";
 
 const MAX_BLOB = 512 * 1024 * 1024;
 // Native copying base64-encodes the blob before it crosses the IPC bridge, so
@@ -72,6 +78,7 @@ const ROW_LABELS: Record<string, string> = Object.fromEntries(
     ...VIDEO_CONTEXT_MENU_KEYS,
     ...LINK_CONTEXT_MENU_KEYS,
     ...MESSAGE_CONTEXT_MENU_KEYS,
+    ...CHAT_PIN_CONTEXT_MENU_KEYS,
     ...CHAT_ROW_CONTEXT_MENU_KEYS,
     ...CHAT_EXPORT_CONTEXT_MENU_KEYS,
   ].map((key) => [key, t(key)]),
@@ -559,11 +566,17 @@ export function initContextMenu() {
       const href = conversation.getAttribute("href") ?? "";
       const actions = await readAbandonably(() => readChatRowActions(conversation));
       if (request !== menuRequest) return;
+      const threadId = threadIdFromHref(href);
+      if (threadId && isChatPinned(threadId)) {
+        addItem([CHAT_PIN_CONTEXT_MENU_KEYS[1], () => setChatPinned(threadId, "", false)]);
+      } else if (threadId && canPinChat()) {
+        const name = chatRowName(conversation);
+        addItem([CHAT_PIN_CONTEXT_MENU_KEYS[0], () => setChatPinned(threadId, name, true)]);
+      }
       for (let index = 0; index < actions.length; index += 1) {
         const action = actions[index];
         if (action) addItem([action, () => runChatRowAction(href, action)]);
       }
-      const threadId = threadIdFromHref(href);
       if (threadId) {
         addItem([
           CHAT_EXPORT_CONTEXT_MENU_KEYS[0],
@@ -749,7 +762,9 @@ export function initContextMenu() {
             ? 3
             : conversation && (CHAT_EXPORT_CONTEXT_MENU_KEYS as readonly string[]).includes(label)
               ? 4
-              : 0;
+              : conversation && (CHAT_PIN_CONTEXT_MENU_KEYS as readonly string[]).includes(label)
+                ? 5
+                : 0;
       if (previousGroup !== null && previousGroup !== group) {
         const divider = nativeReflectApply(nativeCreateElement, document, [
           "div",

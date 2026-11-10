@@ -940,6 +940,9 @@ const CHAT_ROW_CONTEXT_MENU_KEYS: &[&str] = &[
     "shared.context.report",
     "shared.context.leave_group",
 ];
+/// Chatpane's own first conversation row: pin or unpin the chat (Ref #457).
+const CHAT_PIN_CONTEXT_MENU_KEYS: &[&str] =
+    &["shared.context.pin_chat", "shared.context.unpin_chat"];
 /// Chatpane's own conversation rows, after Messenger's: export the chat. The
 /// native menu shows them as an "Export chat" submenu of the formats in
 /// `CHAT_EXPORT_FORMATS`, index-aligned.
@@ -972,6 +975,7 @@ fn context_menu_key(label: &str) -> Option<&'static str> {
         VIDEO_CONTEXT_MENU_KEYS,
         LINK_CONTEXT_MENU_KEYS,
         MESSAGE_CONTEXT_MENU_KEYS,
+        CHAT_PIN_CONTEXT_MENU_KEYS,
         CHAT_ROW_CONTEXT_MENU_KEYS,
         CHAT_EXPORT_CONTEXT_MENU_KEYS,
     ]
@@ -1047,10 +1051,12 @@ fn valid_message_items(items: &[NativeContextMenuItem]) -> bool {
         })
 }
 
-/// A conversation's own rows, then its export rows, in their fixed order.
+/// Pin or unpin, the conversation's own rows, then its export rows, in their
+/// fixed order.
 fn valid_chat_row_items(items: &[NativeContextMenuItem]) -> bool {
-    let keys: Vec<&str> = CHAT_ROW_CONTEXT_MENU_KEYS
+    let keys: Vec<&str> = CHAT_PIN_CONTEXT_MENU_KEYS
         .iter()
+        .chain(CHAT_ROW_CONTEXT_MENU_KEYS)
         .chain(CHAT_EXPORT_CONTEXT_MENU_KEYS)
         .copied()
         .collect();
@@ -1203,8 +1209,8 @@ fn append_context_menu_items(
     items: &[NativeContextMenuItem],
 ) -> tauri::Result<()> {
     let id = |item: &NativeContextMenuItem| format!("chatpane-context:{label}:{}", item.action);
-    // Media rows, the React submenu, message actions, conversation actions,
-    // and conversation export each form a group.
+    // Media rows, the React submenu, message actions, pinning, conversation
+    // actions, and conversation export each form a group.
     let group = |item: &NativeContextMenuItem| {
         if item.reaction {
             1
@@ -1214,6 +1220,8 @@ fn append_context_menu_items(
             3
         } else if CHAT_EXPORT_CONTEXT_MENU_KEYS.contains(&item.label.as_str()) {
             4
+        } else if CHAT_PIN_CONTEXT_MENU_KEYS.contains(&item.label.as_str()) {
+            5
         } else {
             0
         }
@@ -1525,7 +1533,9 @@ mod tests {
             "MESSAGE_CONTEXT_MENU_KEYS" => {
                 include_str!("../../inject/src/messenger/lib/message-menu.ts")
             }
-            "CHAT_ROW_CONTEXT_MENU_KEYS" | "CHAT_EXPORT_CONTEXT_MENU_KEYS" => {
+            "CHAT_PIN_CONTEXT_MENU_KEYS"
+            | "CHAT_ROW_CONTEXT_MENU_KEYS"
+            | "CHAT_EXPORT_CONTEXT_MENU_KEYS" => {
                 include_str!("../../inject/src/messenger/lib/chat-row-menu.ts")
             }
             _ => include_str!("../../inject/src/messenger/features/context-menu.ts"),
@@ -1760,6 +1770,15 @@ mod tests {
         items.swap(0, 4);
         items.truncate(4);
 
+        // Pinning comes first, also alone (a pinned chat Messenger hasn't loaded).
+        items.insert(0, context_item("shared.context.pin_chat", '9'));
+        assert!(valid_context_menu_items(&items));
+        assert!(valid_context_menu_items(&items[..1]));
+        items.swap(0, 1);
+        assert!(!valid_context_menu_items(&items));
+        items.swap(0, 1);
+        items.remove(0);
+
         // Rows keep their fixed order, never repeat, and carry no value.
         items.swap(0, 1);
         assert!(!valid_context_menu_items(&items));
@@ -1816,6 +1835,7 @@ mod tests {
             ("VIDEO_CONTEXT_MENU_KEYS", VIDEO_CONTEXT_MENU_KEYS),
             ("LINK_CONTEXT_MENU_KEYS", LINK_CONTEXT_MENU_KEYS),
             ("MESSAGE_CONTEXT_MENU_KEYS", MESSAGE_CONTEXT_MENU_KEYS),
+            ("CHAT_PIN_CONTEXT_MENU_KEYS", CHAT_PIN_CONTEXT_MENU_KEYS),
             ("CHAT_ROW_CONTEXT_MENU_KEYS", CHAT_ROW_CONTEXT_MENU_KEYS),
             (
                 "CHAT_EXPORT_CONTEXT_MENU_KEYS",
@@ -1833,6 +1853,7 @@ mod tests {
             VIDEO_CONTEXT_MENU_KEYS,
             LINK_CONTEXT_MENU_KEYS,
             MESSAGE_CONTEXT_MENU_KEYS,
+            CHAT_PIN_CONTEXT_MENU_KEYS,
             CHAT_ROW_CONTEXT_MENU_KEYS,
             CHAT_EXPORT_CONTEXT_MENU_KEYS,
         ]

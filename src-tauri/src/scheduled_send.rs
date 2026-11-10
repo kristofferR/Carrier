@@ -393,7 +393,7 @@ impl Store {
     }
 }
 
-fn valid_account(account: &str) -> bool {
+pub(crate) fn valid_account(account: &str) -> bool {
     !account.is_empty() && account.len() <= 32 && account.bytes().all(|b| b.is_ascii_digit())
 }
 

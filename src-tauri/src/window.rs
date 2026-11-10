@@ -1842,10 +1842,13 @@ fn init_script(
     }}
     return chatpaneAuthorizedEmit('chatpane:reply-result', {{ id: id, attempt: attempt, ok: ok }});
   }};
-  var chatpaneScheduledSend = function (payload) {{
+  // A signed request whose signed '<event>-result' carries JSON `data` for
+  // this call alone: scheduled messages (scheduled_send.rs) and pinned chats
+  // (pinned_chats.rs).
+  var chatpaneDataCall = function (requestEvent, payload, timedOutMessage) {{
     if (!chatpaneAuthorizedEmit || !chatpaneVerifyResult) return NativePromise.reject(new Error('native bridge unavailable'));
     var request = chatpaneNativeRequest();
-    var resultEvent = 'chatpane:scheduled-send-result';
+    var resultEvent = requestEvent + '-result';
     return new NativePromise(function (resolve, reject) {{
       var cleanup = function () {{
         nativeClearTimeout(timeout);
@@ -1859,11 +1862,17 @@ fn init_script(
         cleanup();
         try {{ resolve(JSON.parse(result.data)); }} catch (error) {{ reject(error); }}
       }};
-      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error({scheduled_timeout_literal})); }}, 15000);
+      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error(timedOutMessage)); }}, 15000);
       nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
       payload.request = request;
-      chatpaneAuthorizedEmit('chatpane:scheduled-send', payload).catch(function (error) {{ cleanup(); reject(error); }});
+      chatpaneAuthorizedEmit(requestEvent, payload).catch(function (error) {{ cleanup(); reject(error); }});
     }});
+  }};
+  var chatpaneScheduledSend = function (payload) {{
+    return chatpaneDataCall('chatpane:scheduled-send', payload, {scheduled_timeout_literal});
+  }};
+  var chatpanePinnedChats = function (payload) {{
+    return chatpaneDataCall('chatpane:pinned-chats', payload, 'pinned chats timed out');
   }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every

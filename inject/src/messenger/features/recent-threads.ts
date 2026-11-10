@@ -8,26 +8,14 @@ import { invoke } from "../bridge";
 import { nicknameMode } from "../lib/nicknames";
 import { hidesNames } from "../lib/privacy";
 import { readRecentThreads } from "../lib/recent-threads";
-import { accountId, SEPARATOR_RE, threadIdFromHref } from "../lib/threads";
-import { chatRows } from "./conversation-actions";
+import { accountId, threadIdFromHref } from "../lib/threads";
+import { chatRowName, chatRows } from "./conversation-actions";
 
 export function initRecentThreads() {
   if (!window.__TAURI_INTERNALS__) return;
 
   const MAX_THREADS = 9;
   const EMPTY_GRACE_MS = 15000;
-
-  // A thread row's display name. Facebook's class names are hashed and
-  // unstable, so take the row's first span with real text — the name renders
-  // before the message preview and timestamp.
-  const rowName = (a: HTMLAnchorElement) => {
-    const row = a.closest('[role="row"]') || a;
-    for (const span of row.querySelectorAll("span")) {
-      const t = (span.textContent || "").replace(/\s+/g, " ").trim();
-      if (t && !SEPARATOR_RE.test(t)) return t.slice(0, 60);
-    }
-    return "";
-  };
 
   const chatListScrolledFromTop = (rows: HTMLAnchorElement[]) => {
     const first = rows[0];
@@ -43,7 +31,7 @@ export function initRecentThreads() {
     const names = new Map<string, string>();
     for (const a of chatRows()) {
       const id = threadIdFromHref(a.getAttribute("href"));
-      if (id && !names.has(id)) names.set(id, rowName(a));
+      if (id && !names.has(id)) names.set(id, chatRowName(a));
     }
     return names;
   };
@@ -69,7 +57,7 @@ export function initRecentThreads() {
     for (const a of rows) {
       const id = threadIdFromHref(a.getAttribute("href"));
       if (!id || seen.has(id)) continue;
-      const name = rowName(a);
+      const name = chatRowName(a);
       if (!name) continue;
       seen.add(id);
       out.push({ name, href: `/t/${id}/` });

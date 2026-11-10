@@ -53,6 +53,7 @@ mod notifications;
 mod page_commands;
 mod pane_widths;
 mod pause;
+mod pinned_chats;
 mod preflight;
 mod render_recovery;
 mod renderer_memory;
@@ -1248,6 +1249,7 @@ pub fn run() {
             clear_pending_webview_data(app.handle());
             account::install(app.handle());
             pane_widths::install(app.handle());
+            pinned_chats::install(app.handle());
             growth::install(app.handle());
 
             // Portable zips have no installer to register the scheme, and a moved
