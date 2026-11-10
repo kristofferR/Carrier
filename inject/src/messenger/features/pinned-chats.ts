@@ -55,12 +55,17 @@ export function setChatPinned(id: string, name: string, pinned: boolean) {
 
 /** Fill Messenger's pinned-section slot in the chat list (see pinned-chats-section.ts). */
 export function interceptPinnedChatModules(define: (...args: unknown[]) => unknown) {
+  const rowNames = new WeakMap<Element, string>();
   return interceptThreadListModule(define, pinnedChats, {
     title: () => t("page.pinned_chats.title"),
     // Keep the remembered name in step with what the chat list shows, for
     // when the chat isn't loaded on a later start.
     onRow(id, row) {
-      if (account) void sync.change({ op: "rename", id, name: chatRowName(row) });
+      const name = chatRowName(row);
+      if (!account || rowNames.get(row) === name) return;
+      // A rejected save can rerender this row with the old remembered name.
+      rowNames.set(row, name);
+      void sync.change({ op: "rename", id, name });
     },
     onError: (error) =>
       diag("pinned-chats.section", error instanceof Error ? error.name : "render failed"),

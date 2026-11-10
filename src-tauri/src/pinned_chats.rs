@@ -77,7 +77,7 @@ fn pins_from_value(value: &serde_json::Value) -> Vec<Pin> {
     pins
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Store {
     accounts: Vec<AccountPins>,
 }
@@ -230,6 +230,23 @@ struct PinnedChats {
     revision: u64,
 }
 
+impl PinnedChats {
+    /// Publish changes only after they have been saved successfully.
+    fn apply(&mut self, account: &str, change: &Change) -> Result<bool, String> {
+        let Some(pins) = change.apply(&self.store.get(account)) else {
+            return Ok(false);
+        };
+        let mut next = self.store.clone();
+        if !next.set(account, pins) {
+            return Ok(false);
+        }
+        save(&self.path, &next)?;
+        self.store = next;
+        self.revision += 1;
+        Ok(true)
+    }
+}
+
 #[derive(Serialize)]
 struct Reply<'a> {
     request: &'a str,
@@ -305,16 +322,10 @@ pub(crate) fn install(app: &tauri::AppHandle) {
             // Answer under the lock, so snapshots leave in the order they were made.
             let mut pinned = state.lock().unwrap();
             let mut changed = false;
-            if let Some(next) = request
-                .change
-                .as_ref()
-                .and_then(|change| change.apply(&pinned.store.get(&request.account)))
-                && pinned.store.set(&request.account, next)
-            {
-                changed = true;
-                pinned.revision += 1;
-                if let Err(e) = save(&pinned.path, &pinned.store) {
-                    log::error!("failed to save pinned chats: {e}");
+            if let Some(change) = request.change.as_ref() {
+                match pinned.apply(&request.account, change) {
+                    Ok(saved) => changed = saved,
+                    Err(e) => log::error!("failed to save pinned chats: {e}"),
                 }
             }
             let data = serde_json::json!({
@@ -442,6 +453,45 @@ mod tests {
         let hostile = br#"[{"account":"me","pins":[{"id":"1","name":"x"}]},{"account":"5"}]"#;
         assert!(Store::from_json(hostile).accounts.is_empty());
         assert!(Store::from_json(b"not json").accounts.is_empty());
+    }
+
+    #[test]
+    fn failed_save_keeps_the_snapshot_and_allows_retry() {
+        let dir = std::env::temp_dir().join(format!("chatpane-pins-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A file in place of the config directory makes saving fail on every platform.
+        let parent = dir.join("config");
+        std::fs::write(&parent, b"blocked").unwrap();
+        let mut pinned = PinnedChats {
+            path: parent.join(STORE_FILE),
+            store: Store::default(),
+            revision: 1,
+        };
+        for account in 1..=MAX_ACCOUNTS {
+            pinned
+                .store
+                .set(&account.to_string(), vec![pin("10", "Ada")]);
+        }
+        let previous = pinned.store.accounts.clone();
+        let change = Change::Pin {
+            id: "20".into(),
+            name: "Grace".into(),
+        };
+        assert!(pinned.apply("123", &change).is_err());
+        assert_eq!(pinned.store.accounts, previous);
+        assert_eq!(pinned.revision, 1);
+
+        std::fs::remove_file(&parent).unwrap();
+        assert!(pinned.apply("123", &change).unwrap());
+        assert_eq!(pinned.store.get("123"), vec![pin("20", "Grace")]);
+        assert_eq!(pinned.revision, 2);
+        assert_eq!(
+            Store::from_json(&std::fs::read(&pinned.path).unwrap()).accounts,
+            pinned.store.accounts
+        );
+        assert!(!pinned.apply("123", &change).unwrap());
+        assert_eq!(pinned.revision, 2);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

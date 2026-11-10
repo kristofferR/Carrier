@@ -4861,7 +4861,13 @@ ${button.innerHTML}`)
           { role: "gridcell" },
           h(
             "a",
-            { href: path, role: "link", "data-chatpane-pinned-chat": "", onClick: open },
+            {
+              href: path,
+              role: "link",
+              "aria-label": pin.name,
+              "data-chatpane-pinned-chat": "",
+              onClick: open
+            },
             h(
               "svg",
               { viewBox: "0 0 40 40", "aria-hidden": "true" },
@@ -5043,12 +5049,16 @@ ${button.innerHTML}`)
     if (account) void sync.change(pinned ? { op: "pin", id, name } : { op: "unpin", id });
   }
   function interceptPinnedChatModules(define) {
+    const rowNames = /* @__PURE__ */ new WeakMap();
     return interceptThreadListModule(define, pinnedChats, {
       title: () => t("page.pinned_chats.title"),
       // Keep the remembered name in step with what the chat list shows, for
       // when the chat isn't loaded on a later start.
       onRow(id, row) {
-        if (account) void sync.change({ op: "rename", id, name: chatRowName(row) });
+        const name = chatRowName(row);
+        if (!account || rowNames.get(row) === name) return;
+        rowNames.set(row, name);
+        void sync.change({ op: "rename", id, name });
       },
       onError: (error) => diag("pinned-chats.section", error instanceof Error ? error.name : "render failed")
     });

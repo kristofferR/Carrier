@@ -205,7 +205,13 @@ function createParts(load: Load, store: PinnedChatsStore, hooks: PinnedSectionHo
         { role: "gridcell" },
         h(
           "a",
-          { href: path, role: "link", "data-chatpane-pinned-chat": "", onClick: open },
+          {
+            href: path,
+            role: "link",
+            "aria-label": pin.name,
+            "data-chatpane-pinned-chat": "",
+            onClick: open,
+          },
           h(
             "svg",
             { viewBox: "0 0 40 40", "aria-hidden": "true" },
