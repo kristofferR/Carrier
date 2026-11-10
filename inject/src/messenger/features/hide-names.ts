@@ -5,15 +5,20 @@
 // hidden alone (Ref #364).
 // Facebook's generated class names churn, so this keeps the selectors shallow
 // and marks identity surfaces by stable roles, links, and layout shape.
+import { pageRequire } from "../lib/facebook-loader";
+import { participantFirstName, readConversationNotificationNames } from "../lib/notification-names";
 import {
   hidesAvatars,
   hidesNames,
   isMetaText,
   locateSpan,
   mentionRanges,
+  nameRanges,
   prefixRange,
   previewIdentity,
 } from "../lib/privacy";
+import { isRenderedBy, moduleExport } from "../lib/react-fiber";
+import { threadIdFromHref } from "../lib/threads";
 
 const IDENTITY_ATTR = "data-chatpane-private-identity";
 const AVATAR_ATTR = "data-chatpane-private-avatar";
@@ -27,6 +32,12 @@ const PREFIX_HIGHLIGHT = "chatpane-private-identity";
 // -webkit-text-fill-color, both of which Messenger sets on previews. The text
 // elements under a name range get those reset (messenger.css).
 const PREFIX_HOST_ATTR = "data-chatpane-private-prefix";
+// Each chat's participant names, from Messenger's database: a preview names
+// its sender in the UI language's own word order ("Kim sent a photo").
+const NAMES_TTL_MS = 5 * 60_000;
+// Unanswered (database not ready yet): ask again soon.
+const NAMES_RETRY_MS = 10_000;
+const NAMES_LIMIT = 300;
 
 export function initHideNames() {
   const html = document.documentElement;
@@ -37,6 +48,38 @@ export function initHideNames() {
   const namesHidden = () => hidesNames(window.__CHATPANE_SETTINGS__);
   const avatarsHidden = () => hidesAvatars(window.__CHATPANE_SETTINGS__);
   const on = () => namesHidden() || avatarsHidden();
+
+  const chatNames = new Map<string, { names: string[] | null; at: number }>();
+  const loadingNames = new Set<string>();
+  /** The chat's participant names, once read; null until then or when
+   * Messenger can't say (the "Name:" prefix stands in). */
+  function namesFor(id: string): string[] | null {
+    const known = chatNames.get(id);
+    const ttl = known?.names ? NAMES_TTL_MS : NAMES_RETRY_MS;
+    if ((!known || Date.now() - known.at > ttl) && !loadingNames.has(id)) {
+      loadingNames.add(id);
+      readConversationNotificationNames(id, pageRequire())
+        .then((info) => {
+          const names = info
+            ? info.participants.flatMap((person) => [
+                person.name,
+                participantFirstName(person),
+                person.nickname,
+              ])
+            : null;
+          chatNames.delete(id);
+          chatNames.set(id, { names, at: Date.now() });
+          if (chatNames.size > NAMES_LIMIT) chatNames.delete(chatNames.keys().next().value!);
+          if (names && String(names) !== String(known?.names)) schedule();
+        })
+        .catch(() => {
+          chatNames.delete(id);
+          chatNames.set(id, { names: null, at: Date.now() });
+        })
+        .finally(() => loadingNames.delete(id));
+    }
+    return known?.names ?? null;
+  }
 
   function textValue(el: Element | null | undefined) {
     return (el?.textContent || "").replace(/\s+/g, " ").trim();
@@ -163,11 +206,12 @@ export function initHideNames() {
     return count > 0;
   }
 
-  /** The sender prefix and any @mentions in a preview line. Names with an
-   * element of their own are blurred; names inside the message's text node
-   * get a highlight range, which leaves React's text alone. */
-  function markPreviewNames(el: Element) {
-    const identity = previewIdentity(textValue(el));
+  /** The chat's participant names (else a "Name:" sender prefix) and any
+   * @mentions in a preview line. A prefix with an element of its own is
+   * blurred; names inside the message's text node get a highlight range,
+   * which leaves React's text alone. */
+  function markPreviewNames(el: Element, names: readonly string[] | null) {
+    const identity = names ? null : previewIdentity(textValue(el));
     let prefixDone = !identity;
     if (identity) {
       const candidate = [el, ...textSurfaces(el)]
@@ -194,6 +238,7 @@ export function initHideNames() {
     const texts = nodes.map((node) => node.data);
     const joined = texts.join("");
     const ranges = mentionRanges(joined);
+    if (names) ranges.push(...nameRanges(joined, names));
     if (identity && !prefixDone) {
       const prefix = prefixRange(joined, identity.prefix);
       if (prefix) ranges.push(prefix);
@@ -229,6 +274,8 @@ export function initHideNames() {
       const href = row.getAttribute("href") || "";
       if (!href || seen.has(href) || !visible(row)) continue;
       seen.add(href);
+      const id = namesHidden() ? threadIdFromHref(href) : null;
+      const names = id ? namesFor(id) : null;
 
       const rr = row.getBoundingClientRect();
       row.querySelectorAll(VISUAL_SEL).forEach((el) => {
@@ -257,7 +304,7 @@ export function initHideNames() {
       surfaces.forEach((el) => {
         const r = el.getBoundingClientRect();
         if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
-        else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewNames(el);
+        else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewNames(el, names);
       });
       markDeepest(firstLine);
     }
@@ -369,21 +416,23 @@ export function initHideNames() {
         });
     });
 
-    // "Kim replied to Tobias": find the phrase in text nodes, then blur the
-    // largest attribution-sized element around it, which holds both names.
-    // Walking text is far cheaper than measuring every element in the pane.
-    const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text;
-      if (!/\breplied to\b/i.test(node.data)) continue;
-      let target: Element | null = null;
-      for (let el = node.parentElement; el && el !== main; el = el.parentElement) {
-        if (el.closest('[contenteditable="true"]')) break;
-        const r = el.getBoundingClientRect();
-        if (r.height > 32 || r.width > 420) break;
-        target = el;
+    // "Kim replied to Tobias" above a message: Messenger's MWReplySnippet
+    // draws that line, starting with a reply (or, forwarded, a share) icon.
+    // Blur the outermost element the component rendered around the icon: the
+    // whole line, however long or wrapped.
+    const load = pageRequire();
+    const replySnippet = moduleExport(load, "MWReplySnippet.react");
+    if (replySnippet == null) return;
+    for (const icon of main.querySelectorAll("svg")) {
+      let line: Element | null = null;
+      for (
+        let el: Element | null = icon;
+        el && el !== main && isRenderedBy(el, replySnippet, load, 40);
+        el = el.parentElement
+      ) {
+        line = el;
       }
-      if (target && visible(target)) mark(target);
+      if (line && line !== icon && visible(line)) mark(line);
     }
   }
 

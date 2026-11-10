@@ -1,4 +1,4 @@
-import { buttonByLabel, firstShown, isShown } from "../features/conversation-actions";
+import { componentButton, firstShown, isShown } from "../features/conversation-actions";
 
 export const COMPOSER_SELECTOR = '[role="main"] [contenteditable="true"][role="textbox"]';
 export const findComposer = () => firstShown<HTMLElement>(COMPOSER_SELECTOR);
@@ -33,8 +33,14 @@ export function hasComposerMedia(box: HTMLElement): boolean {
       continue;
     return true;
   }
-  return !!buttonByLabel(
-    ["remove attachment", "remove photo", "remove video", "remove file"],
+  // A file attachment shows no image; its staged chip still holds a button.
+  return !!componentButton(
+    [
+      "MWV2ComposerMediaStagingItem.react",
+      ["MWXComposerAttachmentPreview.react", "MWXComposerFileAttachmentPreview"],
+      ["MWXComposerAttachmentPreview.react", "MWXComposerImageAttachmentPreview"],
+      ["MWXComposerAttachmentPreview.react", "MWXComposerVideoAttachmentPreview"],
+    ],
     region,
   );
 }
@@ -61,20 +67,26 @@ export function composerControls(box: HTMLElement): Map<HTMLElement, string> {
   return controls;
 }
 
+const enabled = (button: HTMLElement) =>
+  button.getAttribute("aria-disabled") !== "true" && !button.matches(":disabled");
+
 export function findSendButton(
   box: HTMLElement,
   before: Map<HTMLElement, string>,
 ): HTMLElement | null {
   const region = composerRegion(box);
   if (!region) return null;
+  // Messenger's send button, by its component: typing can also collapse the
+  // photo, sticker and GIF buttons into one, so more than it changes.
+  const send = componentButton(["MWV2ComposerSendButton.react"], region);
+  if (send) return enabled(send) ? send : null;
   const changed: HTMLElement[] = [];
   for (const button of region.querySelectorAll<HTMLElement>('button, [role="button"]')) {
     if (
       button.hasAttribute("data-chatpane-schedule") ||
       !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) ||
       !isShown(button) ||
-      button.getAttribute("aria-disabled") === "true" ||
-      button.matches(":disabled")
+      !enabled(button)
     )
       continue;
     if (before.get(button) !== `${button.getAttribute("aria-label") ?? ""}\n${button.innerHTML}`)

@@ -3,6 +3,8 @@
 import { t } from "../../i18n";
 import { diag, invoke, toast } from "../bridge";
 import { noteExplicitAction } from "../lib/composer-focus";
+import { pageRequire } from "../lib/facebook-loader";
+import { isRenderedBy, moduleExport } from "../lib/react-fiber";
 import { threadRestoreStep } from "../lib/thread-restore";
 import { advanceThreadViewed, initialThreadViewedState } from "../lib/thread-viewed";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
@@ -10,16 +12,14 @@ import { threadIdFromHref, threadPathId } from "../lib/threads";
 const RESTORED_THREAD_KEY = "chatpane-restored-thread";
 let cancelThreadRestore = () => {};
 
-/** The open thread's header "ⓘ" button that shows/hides the details sidebar. */
+/** The open thread's header "ⓘ" button that shows/hides the details sidebar,
+ * found by its icon component (MWChatRTCInfoButtonIcon renders the svg). */
 function conversationInfoButton(): HTMLElement | null {
-  const exact = document.querySelector<HTMLElement>(
-    '[role="button"][aria-label="Conversation information"]',
-  );
-  if (exact) return exact;
-  for (const el of document.querySelectorAll<HTMLElement>("[aria-label]")) {
-    const label = (el.getAttribute("aria-label") || "").toLowerCase();
-    if (label.includes("conversation information") || label.includes("conversation details"))
-      return (el.closest('[role="button"]') as HTMLElement | null) || el;
+  const load = pageRequire();
+  const icon = moduleExport(load, "MWChatRTCInfoButtonIcon.react");
+  if (icon == null) return null;
+  for (const svg of document.querySelectorAll('[role="button"] svg')) {
+    if (isRenderedBy(svg, icon, load, 2)) return svg.closest<HTMLElement>('[role="button"]');
   }
   return null;
 }
@@ -168,9 +168,8 @@ export function initThreadNav() {
   // header so the native details sidebar shows/hides. Invoked from the View menu
   // / Cmd+Shift+I: the Rust side can't run page JS through a plugin (Facebook's
   // CSP blocks evaluating arbitrary strings), but it can call this function we
-  // defined at document-start. Match the stable aria-label rather than FB's
-  // churning class names; the label is unchanged whether the panel is open or
-  // closed, so one click toggles it.
+  // defined at document-start. The button is the same whether the panel is
+  // open or closed, so one click toggles it.
   window.__chatpaneToggleInfo = () => {
     const btn = conversationInfoButton();
     if (btn) {

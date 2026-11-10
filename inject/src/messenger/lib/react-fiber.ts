@@ -55,6 +55,27 @@ export function renders(fiber: Fiber, component: unknown): boolean {
   );
 }
 
+/** How many fibers above `node` its nearest `component` sits, or null when
+ * none is within `limit`. */
+export function renderDepth(
+  node: Element,
+  component: unknown,
+  load: Load | null,
+  limit = 60,
+): number | null {
+  if (component == null) return null;
+  let depth = 0;
+  for (const fiber of ancestors(fiberOf(node, load), limit)) {
+    if (renders(fiber, component)) return depth;
+    depth++;
+  }
+  return null;
+}
+
+/** Whether `node` was rendered inside `component`, at most `limit` fibers up. */
+export const isRenderedBy = (node: Element, component: unknown, load: Load | null, limit = 60) =>
+  renderDepth(node, component, load, limit) !== null;
+
 /**
  * A module's export: its default unless `member` is named, or undefined.
  * Facebook's `require` already hands back a module's default export when it

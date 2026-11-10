@@ -31,8 +31,8 @@ import { fiberOf, moduleExport } from "../lib/react-fiber";
 import { accountId } from "../lib/threads";
 import { waitFor, withHiddenMenu } from "./hidden-menu";
 
-// The message cell. Its role description is translated; its message id is not.
-const MESSAGE = '[data-message-id], [aria-roledescription="message"]';
+// The message cell, by its message id: its role description is translated.
+const MESSAGE = "[data-message-id]";
 const TOOLBAR_WAIT_MS = 600;
 const MAX_REACTIONS = 12;
 

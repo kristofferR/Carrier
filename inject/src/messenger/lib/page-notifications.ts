@@ -67,11 +67,24 @@ export class PageMessageIndex {
   private readonly threads = new Map<string, string>();
   private readonly stale = new Set<string>();
   private readonly raised = new Set<string>();
+  private readonly textless = new Set<string>();
 
-  record(messageId: string, threadId: string): void {
+  record(messageId: string, threadId: string, textless = false): void {
     this.threads.delete(messageId);
     this.threads.set(messageId, threadId);
-    if (this.threads.size > MESSAGE_LIMIT) this.threads.delete(this.threads.keys().next().value!);
+    if (this.threads.size > MESSAGE_LIMIT) {
+      const oldest = this.threads.keys().next().value!;
+      this.threads.delete(oldest);
+      this.textless.delete(oldest);
+    }
+    if (textless) this.textless.add(messageId);
+    else this.textless.delete(messageId);
+  }
+
+  /** The message has no text of its own, only attachments: Messenger's
+   * notification body is its translated summary of them. */
+  isTextless(tag: unknown): boolean {
+    return typeof tag === "string" && this.textless.has(tag);
   }
 
   /** The conversation of the notification tagged with this message id. */
@@ -130,10 +143,11 @@ type Load = (name: string) => unknown;
 /** Record a message Messenger is about to notify about. Malformed rows are ignored. */
 export function recordNotifiedMessage(message: unknown, load: unknown): void {
   if (!message || typeof message !== "object") return;
-  const row = message as { messageId?: unknown };
+  const row = message as { messageId?: unknown; text?: unknown };
   if (typeof row.messageId !== "string" || !row.messageId) return;
   const threadId = messageThreadId(message, load);
-  if (threadId) pageMessages.record(row.messageId, threadId);
+  // A vaulted text is still a non-empty string.
+  if (threadId) pageMessages.record(row.messageId, threadId, row.text == null || row.text === "");
 }
 
 /** The conversation id of a Messenger message row, or null. */

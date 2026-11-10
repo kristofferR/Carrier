@@ -992,6 +992,54 @@
     return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
   }
 
+  // inject/src/messenger/lib/react-fiber.ts
+  function fiberOf(node, load) {
+    try {
+      const reactDOM = load?.("ReactDOM");
+      const events = reactDOM?.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?.Events;
+      if (!Array.isArray(events) || typeof events[0] !== "function") return null;
+      const fiber = events[0](node);
+      if (!fiber || typeof fiber !== "object") return null;
+      return fiber.stateNode === node ? fiber : null;
+    } catch {
+      return null;
+    }
+  }
+  function* ancestors(fiber, limit = 60) {
+    for (let depth = 0; fiber && depth < limit; depth++) {
+      yield fiber;
+      fiber = fiber.return ?? null;
+    }
+  }
+  function renders(fiber, component) {
+    if (component == null) return false;
+    if (fiber.type === component || fiber.elementType === component) return true;
+    if (typeof component !== "object") return false;
+    const inner = component;
+    return inner.type != null && fiber.type === inner.type || inner.render != null && fiber.type === inner.render;
+  }
+  function renderDepth(node, component, load, limit = 60) {
+    if (component == null) return null;
+    let depth = 0;
+    for (const fiber of ancestors(fiberOf(node, load), limit)) {
+      if (renders(fiber, component)) return depth;
+      depth++;
+    }
+    return null;
+  }
+  var isRenderedBy = (node, component, load, limit = 60) => renderDepth(node, component, load, limit) !== null;
+  function moduleExport(load, name, member) {
+    try {
+      const value = load?.(name);
+      if (value == null) return void 0;
+      if (member) return value[member];
+      return typeof value === "object" && "default" in value ? value.default : value;
+    } catch {
+      return void 0;
+    }
+  }
+  var propsOf = (fiber) => fiber.memoizedProps && typeof fiber.memoizedProps === "object" ? fiber.memoizedProps : {};
+
   // inject/src/messenger/features/conversation-actions.ts
   function isShown(el) {
     const r = el.getBoundingClientRect();
@@ -1001,15 +1049,22 @@
     for (const el of (root || document).querySelectorAll(sel)) if (isShown(el)) return el;
     return null;
   }
-  function buttonByLabel(needles, root) {
-    for (const el of (root || document).querySelectorAll(
-      '[role="button"][aria-label], button[aria-label]'
-    )) {
-      if (!isShown(el)) continue;
-      const label = (el.getAttribute("aria-label") || "").toLowerCase();
-      if (needles.some((n) => label.includes(n))) return el;
+  function componentButton(components, root) {
+    const load = pageRequire();
+    const rendered = components.map((ref) => typeof ref === "string" ? moduleExport(load, ref) : moduleExport(load, ...ref)).filter((c) => c != null);
+    if (!rendered.length) return null;
+    let best = null;
+    let bestDepth = Number.POSITIVE_INFINITY;
+    for (const el of root.querySelectorAll('[role="button"], button')) {
+      for (const component of rendered) {
+        const depth = renderDepth(el, component, load);
+        if (depth !== null && depth < bestDepth && isShown(el)) {
+          best = el;
+          bestDepth = depth;
+        }
+      }
     }
-    return null;
+    return best;
   }
   function textWithEmoji(el) {
     let text2 = "";
@@ -1068,12 +1123,17 @@
     return !!box;
   }
   function searchInConvoButton() {
-    const root = document.querySelector('[role="main"]');
-    if (!root) return null;
-    for (const el of root.querySelectorAll('[role="button"][aria-label]')) {
+    const load = pageRequire();
+    const glass = moduleExport(load, "FBNucleusMagnifyingGlassFilled16Icon.react");
+    const quickActions = moduleExport(load, "MWInboxInfoQuickActions.react");
+    if (glass == null || quickActions == null) return null;
+    for (const el of document.querySelectorAll('[role="button"][aria-label]')) {
       if (!isShown(el)) continue;
-      const label = (el.getAttribute("aria-label") || "").trim().toLowerCase();
-      if (label === "search" || label === "search in conversation") return el;
+      let searchIcon = false;
+      for (const fiber of ancestors(fiberOf(el, load), 40)) {
+        searchIcon || (searchIcon = propsOf(fiber).icon === glass);
+        if (searchIcon && renders(fiber, quickActions)) return el;
+      }
     }
     return null;
   }
@@ -1098,24 +1158,20 @@
     }, 50);
     return true;
   }
-  function clickComposerButton(needles) {
+  function clickComposerButton(components) {
     const root = document.querySelector('[role="main"]');
-    const btn = root && buttonByLabel(needles, root);
+    const btn = root && componentButton(components, root);
     btn?.click();
     return !!btn;
   }
-  var openEmojiPicker = () => clickComposerButton(["choose an emoji"]);
-  var openGifPicker = () => clickComposerButton(["choose a gif"]);
-  var attachFiles = () => clickComposerButton(["attach a photo or video", "attach a file"]);
+  var EMOJI_BUTTONS = ["MWV2ComposerEmojiButton.react", "MWXComposerEmojiButton.react"];
+  var openEmojiPicker = () => clickComposerButton(EMOJI_BUTTONS);
+  var openGifPicker = () => clickComposerButton(["MWV2ComposerGifButton.react", "MWXComposerGifButton.react"]);
+  var attachFiles = () => clickComposerButton(["MWV2ComposerFileButton.react", "MWXComposerAddFileButton.react"]);
   function newConversation() {
     const link = firstShown('a[href*="/messages/new"]');
     if (link) {
       link.click();
-      return true;
-    }
-    const btn = buttonByLabel(["new message"]);
-    if (btn) {
-      btn.click();
       return true;
     }
     location.assign("/messages/new/");
@@ -1144,8 +1200,13 @@
         continue;
       return true;
     }
-    return !!buttonByLabel(
-      ["remove attachment", "remove photo", "remove video", "remove file"],
+    return !!componentButton(
+      [
+        "MWV2ComposerMediaStagingItem.react",
+        ["MWXComposerAttachmentPreview.react", "MWXComposerFileAttachmentPreview"],
+        ["MWXComposerAttachmentPreview.react", "MWXComposerImageAttachmentPreview"],
+        ["MWXComposerAttachmentPreview.react", "MWXComposerVideoAttachmentPreview"]
+      ],
       region
     );
   }
@@ -1167,12 +1228,15 @@ ${button.innerHTML}`);
     }
     return controls;
   }
+  var enabled = (button) => button.getAttribute("aria-disabled") !== "true" && !button.matches(":disabled");
   function findSendButton(box, before) {
     const region = composerRegion(box);
     if (!region) return null;
+    const send = componentButton(["MWV2ComposerSendButton.react"], region);
+    if (send) return enabled(send) ? send : null;
     const changed = [];
     for (const button of region.querySelectorAll('button, [role="button"]')) {
-      if (button.hasAttribute("data-chatpane-schedule") || !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) || !isShown(button) || button.getAttribute("aria-disabled") === "true" || button.matches(":disabled"))
+      if (button.hasAttribute("data-chatpane-schedule") || !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) || !isShown(button) || !enabled(button))
         continue;
       if (before.get(button) !== `${button.getAttribute("aria-label") ?? ""}
 ${button.innerHTML}`)
@@ -3744,44 +3808,6 @@ ${button.innerHTML}`)
     document.addEventListener("keydown", onVoiceClipEscape, true);
   }
 
-  // inject/src/messenger/lib/react-fiber.ts
-  function fiberOf(node, load) {
-    try {
-      const reactDOM = load?.("ReactDOM");
-      const events = reactDOM?.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?.Events;
-      if (!Array.isArray(events) || typeof events[0] !== "function") return null;
-      const fiber = events[0](node);
-      if (!fiber || typeof fiber !== "object") return null;
-      return fiber.stateNode === node ? fiber : null;
-    } catch {
-      return null;
-    }
-  }
-  function* ancestors(fiber, limit = 60) {
-    for (let depth = 0; fiber && depth < limit; depth++) {
-      yield fiber;
-      fiber = fiber.return ?? null;
-    }
-  }
-  function renders(fiber, component) {
-    if (component == null) return false;
-    if (fiber.type === component || fiber.elementType === component) return true;
-    if (typeof component !== "object") return false;
-    const inner = component;
-    return inner.type != null && fiber.type === inner.type || inner.render != null && fiber.type === inner.render;
-  }
-  function moduleExport(load, name, member) {
-    try {
-      const value = load?.(name);
-      if (value == null) return void 0;
-      if (member) return value[member];
-      return typeof value === "object" && "default" in value ? value.default : value;
-    } catch {
-      return void 0;
-    }
-  }
-  var propsOf = (fiber) => fiber.memoizedProps && typeof fiber.memoizedProps === "object" ? fiber.memoizedProps : {};
-
   // inject/src/messenger/lib/chat-row-menu.ts
   var CHAT_ROW_CONTEXT_MENU_KEYS = [
     "shared.context.mark_as_read",
@@ -4627,7 +4653,7 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/message-menu.ts
-  var MESSAGE = '[data-message-id], [aria-roledescription="message"]';
+  var MESSAGE = "[data-message-id]";
   var TOOLBAR_WAIT_MS = 600;
   var MAX_REACTIONS = 12;
   var messageFor = (target) => target.closest(MESSAGE);
@@ -4952,11 +4978,23 @@ ${button.innerHTML}`)
       __publicField(this, "threads", /* @__PURE__ */ new Map());
       __publicField(this, "stale", /* @__PURE__ */ new Set());
       __publicField(this, "raised", /* @__PURE__ */ new Set());
+      __publicField(this, "textless", /* @__PURE__ */ new Set());
     }
-    record(messageId, threadId) {
+    record(messageId, threadId, textless = false) {
       this.threads.delete(messageId);
       this.threads.set(messageId, threadId);
-      if (this.threads.size > MESSAGE_LIMIT) this.threads.delete(this.threads.keys().next().value);
+      if (this.threads.size > MESSAGE_LIMIT) {
+        const oldest = this.threads.keys().next().value;
+        this.threads.delete(oldest);
+        this.textless.delete(oldest);
+      }
+      if (textless) this.textless.add(messageId);
+      else this.textless.delete(messageId);
+    }
+    /** The message has no text of its own, only attachments: Messenger's
+     * notification body is its translated summary of them. */
+    isTextless(tag) {
+      return typeof tag === "string" && this.textless.has(tag);
     }
     /** The conversation of the notification tagged with this message id. */
     threadFor(tag) {
@@ -5001,7 +5039,7 @@ ${button.innerHTML}`)
     const row = message;
     if (typeof row.messageId !== "string" || !row.messageId) return;
     const threadId = messageThreadId(message, load);
-    if (threadId) pageMessages.record(row.messageId, threadId);
+    if (threadId) pageMessages.record(row.messageId, threadId, row.text == null || row.text === "");
   }
   function messageThreadId(message, load) {
     if (!message || typeof message !== "object") return null;
@@ -6671,8 +6709,8 @@ ${button.innerHTML}`)
     const provider = function ChatpaneNicknameProvider(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const group = context2 && useContext ? useContext(context2) : void 0;
-      const enabled = showNicknames(mode, group);
-      if (!enabled && props && typeof props === "object") {
+      const enabled2 = showNicknames(mode, group);
+      if (!enabled2 && props && typeof props === "object") {
         const record4 = props;
         const contact = record4.contact;
         if (typeof record4.nickname === "string" && contact && typeof contact === "object" && typeof contact.name === "string") {
@@ -6694,6 +6732,7 @@ ${button.innerHTML}`)
   var SENDER_AVATAR_STORAGE_KEY = "__chatpane_sender_avatars__";
   var normalizeSenderName = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
   var entryKey = (threadId, name) => `${threadId}\0${normalizeSenderName(name)}`;
+  var isAvatarSize = (width2, height) => width2 > 0 && width2 === height && width2 <= 256;
   function avatarPhotoId(url) {
     try {
       return new URL(url, "https://www.facebook.com/").pathname;
@@ -7133,10 +7172,26 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/nickname-snippets.ts
+  function readDraftLabel(source) {
+    const labels = /* @__PURE__ */ new Set();
+    for (const [, literal = ""] of source.matchAll(
+      /[\w$]+\._\(\s*(?:\/\*BTDS\*\/\s*)?"((?:[^"\\\n]|\\.)*)"/g
+    )) {
+      try {
+        const label = String(JSON.parse(`"${literal}"`)).replace(/\s+/g, " ").trim();
+        if (label) labels.add(label);
+      } catch {
+      }
+    }
+    return labels.size === 1 ? [...labels][0] : null;
+  }
   var NativeSnippetPrefixes = class {
     constructor() {
       __publicField(this, "entries", /* @__PURE__ */ new Map());
       __publicField(this, "drafts", /* @__PURE__ */ new Map());
+      /** Messenger's translated label before a draft ("Draft:"), read from its
+       * snippet component (see {@link readDraftLabel}). */
+      __publicField(this, "draftLabel", null);
     }
     rememberDraft(thread2, owner, snippet, draft) {
       if (!/^\d+$/.test(thread2)) return;
@@ -7153,13 +7208,12 @@ ${button.innerHTML}`)
     isDraft(thread2, body) {
       const preview = body.replace(/\s+/g, " ").trim();
       const drafts = this.drafts.get(thread2);
-      if (!drafts?.size) return false;
-      const label = /^(?:Draft|Utkast):\s*/iu.exec(preview)?.[0];
-      if (!label) return false;
-      if (preview === label.trim()) return true;
+      const label = this.draftLabel;
+      if (!drafts?.size || !label || !preview.startsWith(label)) return false;
+      if (preview === label) return true;
       return [...drafts.values()].some((snippet) => {
         if (snippet.slice(0, 240) === preview) return true;
-        return `${label}${snippet}`.slice(0, 240) === preview;
+        return `${label} ${snippet}`.slice(0, 240) === preview;
       });
     }
     remember(thread2, original, displayed) {
@@ -7542,6 +7596,11 @@ ${button.innerHTML}`)
       const result = Reflect.apply(factory, this, factoryArgs);
       if ((moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react" || moduleName === "useMWReplySnippetContent") && nicknamePreference) {
         try {
+          if (moduleName === "MWThreadSnippetForDisplay.react") {
+            nativeSnippetPrefixes.draftLabel = readDraftLabel(
+              Function.prototype.toString.call(factory)
+            );
+          }
           const importModule = factoryArgs[3];
           if (typeof importModule === "function") {
             const react2 = importModule("react");
@@ -7706,13 +7765,6 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/mute.ts
-  var MUTE_LABEL_LIMIT = 60;
-  var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
-  var UNMUTE_ACTION_RE = /^(?:un(?:-)?mute(?: notifications?)?|turn on notifications|stummschaltung aufheben)$/i;
-  var MUTE_ACTION_RE = /^(?:mute(?: notifications?)?|turn off notifications)$/i;
-  var LABEL_ATTRS = ["aria-label", "title", "aria-description"];
-  var MUTE_ACTION_ROLES = /* @__PURE__ */ new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
-  var STATEFUL_MUTE_ROLES = /* @__PURE__ */ new Set(["menuitemcheckbox", "switch"]);
   var MUTED_ROW_ICON_SHAPE = 2001357332;
   var MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
   var MUTED_ROW_ICON_MAX_RIGHT_GAP = 64;
@@ -7739,65 +7791,6 @@ ${button.innerHTML}`)
   }
   function suppressNotificationDelivery(muted, settings) {
     return notificationsGloballyMuted(settings) || suppressMutedDelivery(muted, settings);
-  }
-  function conversationMuteFromLabel(value) {
-    const text2 = (value || "").replace(/\s+/g, " ").trim();
-    if (!text2 || text2.length > MUTE_LABEL_LIMIT) return null;
-    if (UNMUTE_ACTION_RE.test(text2) || MUTED_STATUS_RE.test(text2)) return true;
-    if (MUTE_ACTION_RE.test(text2) && !/\bmuted\b/i.test(text2)) return false;
-    return null;
-  }
-  function isExplicitUnmuteAction(value) {
-    return muteStateAfterExplicitAction(value) === false;
-  }
-  function muteStateAfterExplicitAction(value) {
-    const text2 = (value || "").replace(/\s+/g, " ").trim();
-    if (!text2 || text2.length > MUTE_LABEL_LIMIT) return void 0;
-    if (UNMUTE_ACTION_RE.test(text2)) return false;
-    if (MUTE_ACTION_RE.test(text2) && !/\bmuted\b/i.test(text2)) return true;
-    return void 0;
-  }
-  function muteStateAfterControlAction(value, role, ariaChecked) {
-    const text2 = (value || "").replace(/\s+/g, " ").trim();
-    const normalizedRole = (role || "").toLowerCase();
-    if (MUTE_ACTION_RE.test(text2) && STATEFUL_MUTE_ROLES.has(normalizedRole)) {
-      if (ariaChecked === "true") return false;
-      if (ariaChecked === "false") return true;
-      return void 0;
-    }
-    return muteStateAfterExplicitAction(text2);
-  }
-  function muteSignalFromSource(source) {
-    if (source.attribute === "alt") return null;
-    const text2 = (source.value || "").replace(/\s+/g, " ").trim();
-    const signal = conversationMuteFromLabel(text2);
-    if (signal === null) return null;
-    const tag = source.tagName.toLowerCase();
-    const role = (source.role || "").toLowerCase();
-    if (MUTE_ACTION_RE.test(text2) && STATEFUL_MUTE_ROLES.has(role)) {
-      if (source.ariaChecked === "true") return true;
-      if (source.ariaChecked === "false") return false;
-      return null;
-    }
-    if (UNMUTE_ACTION_RE.test(text2) || MUTE_ACTION_RE.test(text2)) {
-      return tag === "button" || MUTE_ACTION_ROLES.has(role) ? signal : null;
-    }
-    if (tag === "a" || tag === "img" || role === "link" || role === "row" || role === "gridcell") {
-      return null;
-    }
-    return tag === "svg" || role === "img" || source.containsSvg === true ? signal : null;
-  }
-  function muteSignalFromLabels(labels) {
-    let muted = false;
-    let unmuted = false;
-    for (const label of labels) {
-      const signal = conversationMuteFromLabel(label);
-      if (signal === true) muted = true;
-      else if (signal === false) unmuted = true;
-    }
-    if (muted) return true;
-    if (unmuted) return false;
-    return null;
   }
   function isMutedRowIconShape(shape) {
     return shape.width >= 14 && shape.width <= 18 && shape.height >= 14 && shape.height <= 18 && shape.rightGap >= 8 && shape.rightGap <= MUTED_ROW_ICON_MAX_RIGHT_GAP && !shape.interactive && shape.ariaHidden && shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" && shape.pathCount === 1 && (shape.shapeHash === MUTED_ROW_ICON_SHAPE || shape.pathPrefixMatched);
@@ -7836,46 +7829,6 @@ ${button.innerHTML}`)
       }
     }
     return false;
-  }
-  function resolveMuteObservation(labels) {
-    const signal = muteSignalFromLabels(labels);
-    if (signal !== null) return signal;
-    return void 0;
-  }
-  function collectMuteLabels(root, includeActions = true) {
-    const labels = [];
-    const seen = /* @__PURE__ */ new Set();
-    const push = (value) => {
-      const text2 = (value || "").replace(/\s+/g, " ").trim();
-      if (!text2 || seen.has(text2)) return;
-      seen.add(text2);
-      labels.push(text2);
-    };
-    const inspect2 = (el) => {
-      for (const attr of LABEL_ATTRS) {
-        const value = el.getAttribute(attr);
-        if (!includeActions && value && (isExplicitUnmuteAction(value) || MUTE_ACTION_RE.test(value.replace(/\s+/g, " ").trim()))) {
-          continue;
-        }
-        if (value) {
-          const signal = muteSignalFromSource({
-            value,
-            tagName: el.tagName,
-            role: el.getAttribute("role"),
-            attribute: attr,
-            containsSvg: [...el.children].some((child) => child.tagName.toLowerCase() === "svg"),
-            ariaChecked: el.getAttribute("aria-checked")
-          });
-          if (signal !== null) push(signal ? "Muted" : "Mute");
-        }
-      }
-    };
-    if (root instanceof Element) inspect2(root);
-    for (const el of root.querySelectorAll("[aria-label], [title], [aria-description]")) {
-      inspect2(el);
-    }
-    for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
-    return labels;
   }
   var MutedThreadStore = class {
     constructor() {
@@ -7927,86 +7880,13 @@ ${button.innerHTML}`)
     }
   };
   var mutedThreads = new MutedThreadStore();
-  var actionInvalidationStarted = false;
-  var threadIdFromActionTarget = (target) => {
-    const row = target.closest('[role="row"]');
-    const href = row?.querySelector('a[href*="/t/"]')?.getAttribute("href") || "";
-    return threadIdFromHref(href) || "";
-  };
-  function resolveMuteActionThreadId(rowId, openId, recentRowId, actionIsInOpenSurface) {
-    if (rowId) return rowId;
-    if (actionIsInOpenSurface && openId) return openId;
-    return recentRowId || openId;
-  }
-  function initMuteActionTracking() {
-    if (actionInvalidationStarted) return;
-    actionInvalidationStarted = true;
-    let recentRow = null;
-    const rememberRow = (target) => {
-      if (!(target instanceof Element)) return;
-      if (target.closest('[role="menu"], [role="menuitem"], [role="menuitemcheckbox"]')) return;
-      const id = threadIdFromActionTarget(target);
-      recentRow = id ? { id, at: Date.now() } : null;
-    };
-    document.addEventListener("pointerdown", (event) => rememberRow(event.target), true);
-    document.addEventListener("contextmenu", (event) => rememberRow(event.target), true);
-    document.addEventListener("focusin", (event) => rememberRow(event.target), true);
-    document.addEventListener(
-      "click",
-      (event) => {
-        if (!event.isTrusted) return;
-        if (!(event.target instanceof Element)) return;
-        rememberRow(event.target);
-        const action2 = event.target.closest(
-          'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
-        );
-        if (!action2) return;
-        const label = action2.getAttribute("aria-label") || action2.getAttribute("title") || action2.textContent || "";
-        const nextMuted = muteStateAfterControlAction(
-          label,
-          action2.getAttribute("role"),
-          action2.getAttribute("aria-checked")
-        );
-        if (nextMuted === void 0) return;
-        const rowId = threadIdFromActionTarget(action2);
-        const openId = threadIdFromHref(location.pathname) || "";
-        const recentId = recentRow && Date.now() - recentRow.at <= 15e3 ? recentRow.id : "";
-        const id = resolveMuteActionThreadId(
-          rowId,
-          openId,
-          recentId,
-          !!action2.closest('[role="main"], [role="complementary"], [role="dialog"]')
-        );
-        if (id) {
-          mutedThreads.observe(id, nextMuted);
-          window.dispatchEvent(
-            new CustomEvent("chatpane:thread-mute", { detail: { id, muted: nextMuted } })
-          );
-        }
-      },
-      true
-    );
-  }
   function observeConversationMute(id, root) {
-    mutedThreads.observeMountedRow(
-      id,
-      hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false))
-    );
+    mutedThreads.observeMountedRow(id, hasMutedRowIcon(root) ? true : void 0);
     return mutedThreads.isMuted(id);
   }
   function observeDatabaseMute(id, muted) {
     mutedThreads.observe(id, muted);
     return muted;
-  }
-  function observeOpenThreadMute(id, roots) {
-    const labels = [];
-    for (const root of roots) {
-      for (const label of collectMuteLabels(root)) {
-        if (conversationMuteFromLabel(label) !== null) labels.push(label);
-      }
-    }
-    mutedThreads.observe(id, muteSignalFromLabels(labels) ?? void 0);
-    return mutedThreads.isMuted(id);
   }
 
   // inject/src/messenger/features/messenger-sounds.ts
@@ -8506,19 +8386,36 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/lib/privacy.ts
   var PREVIEW_NAME_RE = /^([^:]{1,40}):(?=\s|$)/;
-  var PREVIEW_EVENT_RE = /^(.{1,40}?)(?=\s+(?:sent|replied|reacted|liked|laughed|loved|mentioned|shared|left|joined|added|removed|changed|created|named|started)\b)/i;
   function isMetaText(value) {
-    return !value || /^(\d+\s*(?:s|m|h|d|w|mo|y)|now|just now)$/i.test(value) || /^(sun|mon|tue|wed|thu|fri|sat)$/i.test(value) || /^[·•.,\s\d]+$/.test(value);
+    return !value || /^[·•.,\s\d]+$/.test(value) || /^\d+\s*\p{L}{1,4}\.?$/u.test(value);
   }
   function previewIdentity(value) {
-    const colon = value.match(PREVIEW_NAME_RE);
-    const event = colon ? null : value.match(PREVIEW_EVENT_RE);
-    const match = colon || event;
+    const match = value.match(PREVIEW_NAME_RE);
     if (!match) return null;
     const prefix = match[1].trim();
-    if (!prefix || prefix.length < 2 || /^(you|du|me|meg)$/i.test(prefix)) return null;
+    if (prefix.length < 2) return null;
     if (/[:;!?]/.test(prefix) || /^\d+(?:[ .-]\d+)*$/.test(prefix)) return null;
-    return { prefix, colon: !!colon };
+    return { prefix, colon: true };
+  }
+  var WORD_CHAR = /[\p{L}\p{M}\p{N}]/u;
+  var UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}]/u;
+  var nameEdge = (beside, edge) => beside === void 0 || !WORD_CHAR.test(beside) || UNSPACED.test(beside) || UNSPACED.test(edge);
+  function nameRanges(text2, names) {
+    const sorted = [...new Set([...names].map((name) => name.trim()))].filter((name) => name.length >= 2).sort((a, b) => b.length - a.length);
+    const ranges = [];
+    for (const name of sorted) {
+      for (let from = text2.indexOf(name); from !== -1; from = text2.indexOf(name, from + 1)) {
+        const to = from + name.length;
+        const before = [...text2.slice(Math.max(0, from - 2), from)].pop();
+        const after = [...text2.slice(to, to + 2)][0];
+        const letters = [...name];
+        if (!nameEdge(before, letters[0]) || !nameEdge(after, letters[letters.length - 1]))
+          continue;
+        if (ranges.some(([start, end]) => from < end && to > start)) continue;
+        ranges.push([from, to]);
+      }
+    }
+    return ranges.sort((a, b) => a[0] - b[0]);
   }
   function locateSpan(texts, from, to) {
     const locate = (index, atEnd) => {
@@ -8564,6 +8461,9 @@ ${button.innerHTML}`)
   var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
   var PREFIX_HIGHLIGHT = "chatpane-private-identity";
   var PREFIX_HOST_ATTR = "data-chatpane-private-prefix";
+  var NAMES_TTL_MS = 5 * 6e4;
+  var NAMES_RETRY_MS = 1e4;
+  var NAMES_LIMIT = 300;
   function initHideNames() {
     const html = document.documentElement;
     let observer = null;
@@ -8572,6 +8472,30 @@ ${button.innerHTML}`)
     const namesHidden = () => hidesNames(window.__CHATPANE_SETTINGS__);
     const avatarsHidden = () => hidesAvatars(window.__CHATPANE_SETTINGS__);
     const on2 = () => namesHidden() || avatarsHidden();
+    const chatNames = /* @__PURE__ */ new Map();
+    const loadingNames = /* @__PURE__ */ new Set();
+    function namesFor(id) {
+      const known = chatNames.get(id);
+      const ttl = known?.names ? NAMES_TTL_MS : NAMES_RETRY_MS;
+      if ((!known || Date.now() - known.at > ttl) && !loadingNames.has(id)) {
+        loadingNames.add(id);
+        readConversationNotificationNames(id, pageRequire()).then((info) => {
+          const names = info ? info.participants.flatMap((person) => [
+            person.name,
+            participantFirstName(person),
+            person.nickname
+          ]) : null;
+          chatNames.delete(id);
+          chatNames.set(id, { names, at: Date.now() });
+          if (chatNames.size > NAMES_LIMIT) chatNames.delete(chatNames.keys().next().value);
+          if (names && String(names) !== String(known?.names)) schedule();
+        }).catch(() => {
+          chatNames.delete(id);
+          chatNames.set(id, { names: null, at: Date.now() });
+        }).finally(() => loadingNames.delete(id));
+      }
+      return known?.names ?? null;
+    }
     function textValue(el) {
       return (el?.textContent || "").replace(/\s+/g, " ").trim();
     }
@@ -8666,8 +8590,8 @@ ${button.innerHTML}`)
       });
       return count > 0;
     }
-    function markPreviewNames(el) {
-      const identity = previewIdentity(textValue(el));
+    function markPreviewNames(el, names) {
+      const identity = names ? null : previewIdentity(textValue(el));
       let prefixDone = !identity;
       if (identity) {
         const candidate = [el, ...textSurfaces(el)].filter((candidate2) => {
@@ -8686,6 +8610,7 @@ ${button.innerHTML}`)
       const texts = nodes.map((node) => node.data);
       const joined = texts.join("");
       const ranges = mentionRanges(joined);
+      if (names) ranges.push(...nameRanges(joined, names));
       if (identity && !prefixDone) {
         const prefix = prefixRange(joined, identity.prefix);
         if (prefix) ranges.push(prefix);
@@ -8717,6 +8642,8 @@ ${button.innerHTML}`)
         const href = row.getAttribute("href") || "";
         if (!href || seen.has(href) || !visible(row)) continue;
         seen.add(href);
+        const id = namesHidden() ? threadIdFromHref(href) : null;
+        const names = id ? namesFor(id) : null;
         const rr = row.getBoundingClientRect();
         row.querySelectorAll(VISUAL_SEL).forEach((el) => {
           if (!visible(el)) return;
@@ -8737,7 +8664,7 @@ ${button.innerHTML}`)
         surfaces.forEach((el) => {
           const r = el.getBoundingClientRect();
           if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
-          else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewNames(el);
+          else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewNames(el, names);
         });
         markDeepest(firstLine);
       }
@@ -8810,18 +8737,15 @@ ${button.innerHTML}`)
           markAvatar(el);
         });
       });
-      const walker = document.createTreeWalker(main2, NodeFilter.SHOW_TEXT);
-      while (walker.nextNode()) {
-        const node = walker.currentNode;
-        if (!/\breplied to\b/i.test(node.data)) continue;
-        let target = null;
-        for (let el = node.parentElement; el && el !== main2; el = el.parentElement) {
-          if (el.closest('[contenteditable="true"]')) break;
-          const r = el.getBoundingClientRect();
-          if (r.height > 32 || r.width > 420) break;
-          target = el;
+      const load = pageRequire();
+      const replySnippet = moduleExport(load, "MWReplySnippet.react");
+      if (replySnippet == null) return;
+      for (const icon3 of main2.querySelectorAll("svg")) {
+        let line = null;
+        for (let el = icon3; el && el !== main2 && isRenderedBy(el, replySnippet, load, 40); el = el.parentElement) {
+          line = el;
         }
-        if (target && visible(target)) mark(target);
+        if (line && line !== icon3 && visible(line)) mark(line);
       }
     }
     function scan() {
@@ -9054,15 +8978,16 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/linux-call-notice.ts
-  var CALL_BUTTON_LABELS = [
-    "Start a voice call",
-    "Start a video call",
-    "Voice calling is not supported on this browser",
-    "Video calling is not supported on this browser"
+  var CALL_BUTTON_COMPONENTS = [
+    "MWV2ChatRTCButtonsBaseButton.react",
+    "MWV2ChatRTCButtonsJoinExistingChat.react"
   ];
-  var CALL_BUTTONS = CALL_BUTTON_LABELS.map(
-    (label) => `[role="button"][aria-label="${label}"]`
-  ).join(", ");
+  function isCallButton(button) {
+    const load = pageRequire();
+    return CALL_BUTTON_COMPONENTS.some(
+      (name) => isRenderedBy(button, moduleExport(load, name), load)
+    );
+  }
   var ISSUE_URL = "https://github.com/kristofferR/Chatpane/issues/345";
   var WIDTH = 280;
   var GAP = 8;
@@ -9133,9 +9058,15 @@ ${button.innerHTML}`)
       "pointerover",
       (event) => {
         if (!(event.target instanceof Element) || event.target === host) return;
-        const button = event.target.closest(CALL_BUTTONS) ?? event.target.querySelector(CALL_BUTTONS);
-        if (button && inside(button.getBoundingClientRect(), event.clientX, event.clientY))
-          show(button);
+        const { clientX: x, clientY: y } = event;
+        const own = event.target.closest('[role="button"]');
+        const candidates = own ? [own] : event.target.querySelectorAll('[role="button"]');
+        for (const button of candidates) {
+          if (inside(button.getBoundingClientRect(), x, y) && isCallButton(button)) {
+            show(button);
+            return;
+          }
+        }
       },
       true
     );
@@ -9471,8 +9402,8 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/lib/media-autoplay.ts
   var MEDIA_ACTIVATION_GRACE_MS = 1500;
-  function shouldSuppressMediaPlay(enabled, lastActivationAt, now, graceMs = MEDIA_ACTIVATION_GRACE_MS) {
-    if (!enabled) return false;
+  function shouldSuppressMediaPlay(enabled2, lastActivationAt, now, graceMs = MEDIA_ACTIVATION_GRACE_MS) {
+    if (!enabled2) return false;
     if (!Number.isFinite(lastActivationAt) || !Number.isFinite(now) || !Number.isFinite(graceMs) || graceMs < 0 || lastActivationAt > now) {
       return true;
     }
@@ -9535,15 +9466,15 @@ ${button.innerHTML}`)
       observer?.disconnect();
       observer = null;
     };
-    let enabled = false;
+    let enabled2 = false;
     const apply2 = () => {
       if (on2()) {
         start();
-        if (!enabled) scan(document, true);
+        if (!enabled2) scan(document, true);
       } else {
         stop();
       }
-      enabled = on2();
+      enabled2 = on2();
     };
     apply2();
     window.addEventListener("chatpane:settings", apply2);
@@ -11346,11 +11277,6 @@ ${button.innerHTML}`)
     }
     return { title, subtitle: "", body, icon: photos.thread };
   }
-  function isOwnMessagePreview(value) {
-    return /^(?:you|du|me|meg):|^(?:you|du|me|meg)\s+(?:sent|replied|forwarded|reacted|sendte|svarte|videresendte|reagerte)\b/i.test(
-      value.trim().replace(/\s+/g, " ")
-    );
-  }
   function notificationTextMatches(pageTitle, pageBody, rowTitle, rowBody) {
     const normalizedPageTitle = normalizeNotificationText(pageTitle);
     const normalizedRowTitle = normalizeNotificationText(rowTitle);
@@ -11381,16 +11307,52 @@ ${button.innerHTML}`)
     return match;
   }
 
-  // inject/src/messenger/lib/notification-images.ts
-  var photoSummary = /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
-  function isPhotoSummary(body) {
-    return !body.trim() || photoSummary.test(body.trim());
+  // inject/src/messenger/lib/messenger-db.ts
+  async function readMessengerDatabase(load, read, timeoutMs = 750) {
+    if (typeof load !== "function") return null;
+    const run = async () => {
+      const singleton = load("LSDatabaseSingleton");
+      const db = await singleton.LSDatabaseSingleton;
+      const i64 = load("I64");
+      if (typeof db?.tables?.threads?.get !== "function" || typeof i64?.of_string !== "function") {
+        throw new Error("Messenger database APIs changed");
+      }
+      return read({ db, i64, load });
+    };
+    let timer;
+    try {
+      return await Promise.race([
+        run().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
-  function notificationPhotoText(title, body, hasThumbnail) {
-    if (hasThumbnail && isPhotoSummary(body)) {
+
+  // inject/src/messenger/lib/notification-images.ts
+  function notificationPhotoText(title, body, hasThumbnail, photo) {
+    if (hasThumbnail && (photo || !body.trim())) {
       return { title: t("page.notification.sent_image", { name: title }), body: "" };
     }
     return { title, body };
+  }
+  async function readSinglePhoto(load, threadId, messageId) {
+    const photo = await readMessengerDatabase(load, async ({ db, i64, load: load2 }) => {
+      const q = load2("ReQL");
+      const { unwrapIntEnum } = load2("LSIntEnum");
+      const types = load2("MessagingAttachmentType");
+      const attachments = db.tables.attachments;
+      const rows = await q.toArrayAsync(
+        q.fromTableAscending(attachments).getKeyRange(i64.of_string(threadId), messageId)
+      );
+      if (!Array.isArray(rows) || rows.length !== 1) return false;
+      const kind = unwrapIntEnum(rows[0].attachmentType);
+      return kind === types.IMAGE || kind === types.EPHEMERAL_IMAGE;
+    });
+    return photo === true;
   }
   function notificationThumbnailSize(width2, height) {
     if (!Number.isFinite(width2) || !Number.isFinite(height) || width2 <= 0 || height <= 0) return null;
@@ -11656,6 +11618,51 @@ ${button.innerHTML}`)
   };
   function suppressGroupChat(settings, isGroup) {
     return settings?.notify_group_chats === false && isGroup === true;
+  }
+
+  // inject/src/messenger/lib/thread-state.ts
+  function muteIsActive(raw, now, i64ToString) {
+    let value;
+    try {
+      if (typeof raw === "bigint") value = raw;
+      else if (typeof raw === "number" && Number.isFinite(raw)) value = BigInt(Math.trunc(raw));
+      else if (typeof raw === "string" && /^-?\d+$/.test(raw)) value = BigInt(raw);
+      else if (raw != null && i64ToString) {
+        const text2 = i64ToString(raw);
+        if (typeof text2 !== "string" || !/^-?\d+$/.test(text2)) return null;
+        value = BigInt(text2);
+      } else return null;
+    } catch {
+      return null;
+    }
+    return value === -1n || value > BigInt(Math.floor(now));
+  }
+  function readThreadStates(ids, load, now, timeoutMs = 750) {
+    return readMessengerDatabase(
+      load,
+      async ({ db, i64, load: load2 }) => {
+        const { isThreadUnreadForViewer } = load2("MWPIsThreadUnread");
+        if (typeof isThreadUnreadForViewer !== "function") {
+          throw new Error("Messenger thread APIs changed");
+        }
+        const states = /* @__PURE__ */ new Map();
+        for (const id of ids) {
+          if (!/^\d+$/.test(id)) continue;
+          const thread2 = await db.tables.threads.get(i64.of_string(id));
+          if (!thread2 || typeof thread2 !== "object") continue;
+          const unread = isThreadUnreadForViewer(thread2);
+          const muted = muteIsActive(
+            thread2.muteExpireTimeMs,
+            now,
+            i64.to_string?.bind(i64)
+          );
+          if (typeof unread !== "boolean" || muted === null) continue;
+          states.set(id, { unread, muted });
+        }
+        return states;
+      },
+      timeoutMs
+    );
   }
 
   // inject/src/messenger/lib/unread.ts
@@ -11984,8 +11991,6 @@ ${button.innerHTML}`)
           image,
           dedupe_key: dedupeKey,
           thread_path: threadPath || "",
-          // Like/Mute match English control labels; native offers them only then.
-          english_ui: /^en\b/i.test(document.documentElement.lang),
           message_id: messageId,
           account: accountId(document.cookie) || "",
           row,
@@ -12188,14 +12193,16 @@ ${button.innerHTML}`)
           const person = addressedGroupSender(originalTitle, group, groupTitleTemplates);
           return person && { person, photo: await avatarToDataUrl(person.avatar) };
         });
+        const photo = taggedThread && typeof opts.tag === "string" && pageMessages.isTextless(opts.tag) ? readSinglePhoto(pageRequire(), taggedThread, opts.tag) : false;
         Promise.all([
           avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
           kindWait,
           thumbnail,
           names,
           groupPicture2(names),
-          addressedSender
-        ]).then(([icon3, , image, group, picture, addressed]) => {
+          addressedSender,
+          photo
+        ]).then(([icon3, , image, group, picture, addressed, singlePhoto]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
           const deliverySettings = window.__CHATPANE_SETTINGS__ || {};
@@ -12263,7 +12270,8 @@ ${button.innerHTML}`)
           const text2 = notificationPhotoText(
             displayTitle || named.title,
             richMessageBody(named.body, threadPath),
-            Boolean(image)
+            Boolean(image),
+            singlePhoto
           );
           const sender = hidePreview ? void 0 : withGroupPicture(
             communicationSender(
@@ -12354,7 +12362,8 @@ ${button.innerHTML}`)
     const SETTLE_ATTEMPT_LIMIT = 6;
     let settleAttempts = 0;
     const normalizedText = (value) => (value || "").replace(/\s+/g, " ").trim();
-    const isPersonName = (value) => value.length > 0 && value.length <= 60 && value.split(" ").length <= 5 && /\p{Letter}/u.test(value) && !/profile|picture|photo|image|avatar|bilde/i.test(value);
+    const isPersonName = (value) => value.length > 0 && value.length <= 60 && value.split(" ").length <= 5 && /\p{Letter}/u.test(value);
+    const isAvatarImage = (image) => isAvatarSize(image.naturalWidth, image.naturalHeight);
     const paneShowsThread = (title, leaving = []) => {
       const needle = title.replace(/[…\s]+$/, "").toLowerCase();
       if (needle.length < 3) return "unknown";
@@ -12418,7 +12427,7 @@ ${button.innerHTML}`)
           const source = image.currentSrc || image.src || "";
           if (!source || EMOJI_SOURCE_RE.test(source)) continue;
           const name = normalizedText(image.getAttribute("alt"));
-          if (!isPersonName(name)) continue;
+          if (!isPersonName(name) || !isAvatarImage(image)) continue;
           note2(name, source, name);
           const heading = normalizedText(
             image.closest('[role="article"]')?.querySelector("h3, h4")?.textContent
@@ -12685,9 +12694,13 @@ ${button.innerHTML}`)
       );
       const timer = setTimeout(async () => {
         await learnThreadKind(conversation.key);
+        const fresh = (await readThreadStates([conversation.key], pageRequire(), Date.now()))?.get(
+          conversation.key
+        );
+        if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const settings = window.__CHATPANE_SETTINGS__ || {};
-        if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
+        if (fresh?.unread === false || suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
             notificationCorrelations.removeRow(conversation.key);
@@ -12751,7 +12764,7 @@ ${button.innerHTML}`)
           showNicknames(nicknameMode(deliverySettings), group?.isGroup),
           visiblePresentation.subtitle ? "sender" : "group"
         );
-        const text2 = notificationPhotoText(named.title, named.body, Boolean(image));
+        const text2 = notificationPhotoText(named.title, named.body, Boolean(image), false);
         emitNotification(
           ++notifySeq,
           hidePreview ? "Messenger" : text2.title,
@@ -12824,19 +12837,12 @@ ${button.innerHTML}`)
       scanRunning = true;
       try {
         harvestSenderAvatars(Date.now());
-        const openId = threadIdFromHref(location.pathname);
-        if (openId) {
-          observeOpenThreadMute(openId, [
-            ...document.querySelectorAll('[role="main"]'),
-            ...document.querySelectorAll('[role="complementary"], [role="dialog"]')
-          ]);
-        }
         const links = chatRows();
         if (!links.length) return;
         const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
         for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
         const conversations = observed.filter(
-          (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body) && !conversation.draft
+          (conversation) => conversation.unread && !conversation.draft
         );
         for (const conversation of conversations) void learnThreadKind(conversation.key);
         const ignoreMuted = ignoresMutedConversations(window.__CHATPANE_SETTINGS__);
@@ -12950,7 +12956,7 @@ ${button.innerHTML}`)
         }
         for (const key of pendingArrivalKeys) {
           const row = observed.find((conversation) => conversation.key === key);
-          if (row && (!row.unread || isOwnMessagePreview(row.body))) {
+          if (row && !row.unread) {
             pendingArrivalKeys.delete(key);
           }
         }
@@ -14128,31 +14134,6 @@ ${text2}`)) {
     }, 1e3);
   }
 
-  // inject/src/messenger/lib/messenger-db.ts
-  async function readMessengerDatabase(load, read, timeoutMs = 750) {
-    if (typeof load !== "function") return null;
-    const run = async () => {
-      const singleton = load("LSDatabaseSingleton");
-      const db = await singleton.LSDatabaseSingleton;
-      const i64 = load("I64");
-      if (typeof db?.tables?.threads?.get !== "function" || typeof i64?.of_string !== "function") {
-        throw new Error("Messenger database APIs changed");
-      }
-      return read({ db, i64, load });
-    };
-    let timer;
-    try {
-      return await Promise.race([
-        run().catch(() => null),
-        new Promise((resolve) => {
-          timer = setTimeout(() => resolve(null), timeoutMs);
-        })
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
   // inject/src/messenger/lib/recent-threads.ts
   var MAX_NAME_CHARS = 60;
   function conversationTitle2(names, viewer, mode) {
@@ -14884,7 +14865,7 @@ ${text2}`)) {
         button?.remove();
         return;
       }
-      const nextEmoji = emoji?.isConnected && region.contains(emoji) ? emoji : buttonByLabel(["choose an emoji", "emoji"], region) ?? [
+      const nextEmoji = emoji?.isConnected && region.contains(emoji) ? emoji : componentButton(EMOJI_BUTTONS, region) ?? [
         ...box.parentElement?.querySelectorAll('button, [role="button"]') ?? []
       ].find(
         (candidate) => (box.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && isShown(candidate) && !!candidate.querySelector("svg")
@@ -15470,14 +15451,11 @@ ${text2}`)) {
   var cancelThreadRestore = () => {
   };
   function conversationInfoButton() {
-    const exact = document.querySelector(
-      '[role="button"][aria-label="Conversation information"]'
-    );
-    if (exact) return exact;
-    for (const el of document.querySelectorAll("[aria-label]")) {
-      const label = (el.getAttribute("aria-label") || "").toLowerCase();
-      if (label.includes("conversation information") || label.includes("conversation details"))
-        return el.closest('[role="button"]') || el;
+    const load = pageRequire();
+    const icon3 = moduleExport(load, "MWChatRTCInfoButtonIcon.react");
+    if (icon3 == null) return null;
+    for (const svg of document.querySelectorAll('[role="button"] svg')) {
+      if (isRenderedBy(svg, icon3, load, 2)) return svg.closest('[role="button"]');
     }
     return null;
   }
@@ -16592,51 +16570,6 @@ ${text2}`)) {
     };
   }
 
-  // inject/src/messenger/lib/thread-state.ts
-  function muteIsActive(raw, now, i64ToString) {
-    let value;
-    try {
-      if (typeof raw === "bigint") value = raw;
-      else if (typeof raw === "number" && Number.isFinite(raw)) value = BigInt(Math.trunc(raw));
-      else if (typeof raw === "string" && /^-?\d+$/.test(raw)) value = BigInt(raw);
-      else if (raw != null && i64ToString) {
-        const text2 = i64ToString(raw);
-        if (typeof text2 !== "string" || !/^-?\d+$/.test(text2)) return null;
-        value = BigInt(text2);
-      } else return null;
-    } catch {
-      return null;
-    }
-    return value === -1n || value > BigInt(Math.floor(now));
-  }
-  function readThreadStates(ids, load, now, timeoutMs = 750) {
-    return readMessengerDatabase(
-      load,
-      async ({ db, i64, load: load2 }) => {
-        const { isThreadUnreadForViewer } = load2("MWPIsThreadUnread");
-        if (typeof isThreadUnreadForViewer !== "function") {
-          throw new Error("Messenger thread APIs changed");
-        }
-        const states = /* @__PURE__ */ new Map();
-        for (const id of ids) {
-          if (!/^\d+$/.test(id)) continue;
-          const thread2 = await db.tables.threads.get(i64.of_string(id));
-          if (!thread2 || typeof thread2 !== "object") continue;
-          const unread = isThreadUnreadForViewer(thread2);
-          const muted = muteIsActive(
-            thread2.muteExpireTimeMs,
-            now,
-            i64.to_string?.bind(i64)
-          );
-          if (typeof unread !== "boolean" || muted === null) continue;
-          states.set(id, { unread, muted });
-        }
-        return states;
-      },
-      timeoutMs
-    );
-  }
-
   // inject/src/messenger/features/unread-badge.ts
   function initUnreadBadge() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -16692,10 +16625,8 @@ ${text2}`)) {
       const ignoreMuted = badgeIgnoresMutedConversations(window.__CHATPANE_SETTINGS__);
       const openId = threadIdFromHref(location.pathname);
       if (openId) {
-        observeOpenThreadMute(openId, [
-          ...document.querySelectorAll('[role="main"]'),
-          ...document.querySelectorAll('[role="complementary"], [role="dialog"]')
-        ]);
+        const known = threadStates.get(openId);
+        if (known) observeDatabaseMute(openId, known.muted);
       }
       const links = chatRows();
       const listedIds = [];
@@ -16748,7 +16679,7 @@ ${text2}`)) {
         scrolledFromTop = el.scrollTop > 8;
         break;
       }
-      refreshThreadStates(listedIds);
+      refreshThreadStates(openId && !seen.has(openId) ? [...listedIds, openId] : listedIds);
       const listHydrated = rowObservations.length > 0 && rowObservations.every(({ hydrated }) => hydrated === true);
       const ready2 = listReadiness.observe(rowObservations);
       return {
@@ -17149,7 +17080,6 @@ ${text2}`)) {
     initFeature("spellcheck", initSpellcheck);
     initFeature("telemetry", initTelemetryBlocking);
     initFeature("media-autoplay", initMediaAutoplay);
-    initFeature("mute-action-tracking", initMuteActionTracking);
     initFeature("messenger-dnd", initMessengerDnd);
     initFeature("account-requests", initAccountRequests);
     initFeature("notifications", initNotificationBridge);
