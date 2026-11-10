@@ -8,7 +8,6 @@ import {
   menuRowAction,
   messageActions,
   messageNodeText,
-  morePerforms,
   pinAction,
   REPLY_ICON_PATH,
   reactionLabel,
@@ -208,10 +207,5 @@ describe("message menu components", () => {
   test("Pin rows perform Pin or Unpin, whichever their state shows", () => {
     expect(pinAction(true)).toBe("shared.context.unpin");
     expect(pinAction(false)).toBe("shared.context.pin");
-    const pin = { pinMessage: {} };
-    expect(morePerforms(pin, "shared.context.unpin")).toBe(true);
-    expect(morePerforms(pin, "shared.context.reply")).toBe(false);
-    expect(morePerforms("shared.context.edit", "shared.context.edit")).toBe(true);
-    expect(morePerforms(null, "shared.context.edit")).toBe(false);
   });
 });

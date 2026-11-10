@@ -21,7 +21,6 @@ import {
   type MoreRowKind,
   menuRowAction,
   messageNodeText,
-  morePerforms,
   pinAction,
   type Reaction,
   type ToolbarKind,
@@ -152,6 +151,14 @@ async function isPinned(message: unknown): Promise<boolean | null> {
   }
 }
 
+/** The action a More row offers; a Pin row's follows the message's current
+ * pinned state, and is null while that is unknown. */
+async function offeredMoreAction(kind: MoreRowKind | null): Promise<DrivenAction | null> {
+  if (kind === null || typeof kind !== "object") return kind;
+  const pinned = await isPinned(kind.pinMessage);
+  return pinned === null ? null : pinAction(pinned);
+}
+
 /** The message's own text block. A reply's quoted message renders first, so
  * the last block is the message itself. */
 export function messageTextBlock(message: HTMLElement): HTMLElement | null {
@@ -193,10 +200,8 @@ export async function readMessageOffer(message: HTMLElement): Promise<MessageOff
     const kinds =
       (await withHiddenMenu(more, (menu) => moreRowKinds(menu).map(([, kind]) => kind))) ?? [];
     for (const kind of kinds) {
-      if (kind !== null && typeof kind === "object") {
-        const pinned = await isPinned(kind.pinMessage);
-        if (pinned !== null) actions.push(pinAction(pinned));
-      } else if (kind !== null) actions.push(kind);
+      const action = await offeredMoreAction(kind);
+      if (action !== null) actions.push(action);
     }
   }
   return { reactions: uniqueReactions(reactions).slice(0, MAX_REACTIONS), text, actions };
@@ -249,10 +254,15 @@ export async function pressMessageAction(
   if (!more) return false;
   const picked = await withHiddenMenu(
     more,
-    (menu) => {
-      const row = moreRowKinds(menu).find(([, kind]) => morePerforms(kind, action))?.[0];
-      row?.click();
-      return row !== undefined;
+    // A Pin row is checked again here: someone may have pinned or unpinned
+    // the message since the menu was read.
+    async (menu) => {
+      for (const [row, kind] of moreRowKinds(menu))
+        if ((await offeredMoreAction(kind)) === action) {
+          row.click();
+          return true;
+        }
+      return false;
     },
     true,
   );

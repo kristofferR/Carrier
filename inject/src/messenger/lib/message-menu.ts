@@ -136,14 +136,6 @@ export function classifyMoreRow(
 export const pinAction = (pinned: boolean): DrivenAction =>
   pinned ? "shared.context.unpin" : "shared.context.pin";
 
-/** Whether a More row of `kind` performs `action`. */
-export function morePerforms(kind: MoreRowKind | null, action: DrivenAction): boolean {
-  if (kind === null) return false;
-  if (typeof kind === "object")
-    return action === "shared.context.pin" || action === "shared.context.unpin";
-  return kind === action;
-}
-
 export interface Reaction {
   emoji: string;
   /** Already the user's reaction to this message. */

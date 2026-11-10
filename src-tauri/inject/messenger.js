@@ -3897,12 +3897,6 @@ ${button.innerHTML}`)
     return null;
   }
   var pinAction = (pinned) => pinned ? "shared.context.unpin" : "shared.context.pin";
-  function morePerforms(kind, action2) {
-    if (kind === null) return false;
-    if (typeof kind === "object")
-      return action2 === "shared.context.pin" || action2 === "shared.context.unpin";
-    return kind === action2;
-  }
   function messageActions(offer) {
     return MESSAGE_CONTEXT_MENU_KEYS.filter(
       (action2) => action2 === COPY_TEXT ? offer.text.length > 0 : offer.actions.includes(action2)
@@ -4594,6 +4588,11 @@ ${button.innerHTML}`)
       return null;
     }
   }
+  async function offeredMoreAction(kind) {
+    if (kind === null || typeof kind !== "object") return kind;
+    const pinned = await isPinned(kind.pinMessage);
+    return pinned === null ? null : pinAction(pinned);
+  }
   function messageTextBlock(message) {
     const blocks = [
       ...message.querySelectorAll('span[dir="auto"] > div[dir="auto"]')
@@ -4626,10 +4625,8 @@ ${button.innerHTML}`)
     if (more) {
       const kinds = await withHiddenMenu(more, (menu) => moreRowKinds(menu).map(([, kind]) => kind)) ?? [];
       for (const kind of kinds) {
-        if (kind !== null && typeof kind === "object") {
-          const pinned = await isPinned(kind.pinMessage);
-          if (pinned !== null) actions.push(pinAction(pinned));
-        } else if (kind !== null) actions.push(kind);
+        const action2 = await offeredMoreAction(kind);
+        if (action2 !== null) actions.push(action2);
       }
     }
     return { reactions: uniqueReactions(reactions).slice(0, MAX_REACTIONS), text: text2, actions };
@@ -4672,10 +4669,15 @@ ${button.innerHTML}`)
     if (!more) return false;
     const picked = await withHiddenMenu(
       more,
-      (menu) => {
-        const row = moreRowKinds(menu).find(([, kind]) => morePerforms(kind, action2))?.[0];
-        row?.click();
-        return row !== void 0;
+      // A Pin row is checked again here: someone may have pinned or unpinned
+      // the message since the menu was read.
+      async (menu) => {
+        for (const [row, kind] of moreRowKinds(menu))
+          if (await offeredMoreAction(kind) === action2) {
+            row.click();
+            return true;
+          }
+        return false;
       },
       true
     );
