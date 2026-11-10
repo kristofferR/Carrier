@@ -13891,6 +13891,7 @@ ${button.innerHTML}`)
               return false;
             }
             insertedReplies.set(id, { path, text: text2 });
+            await pause();
             break;
           }
           case "send":

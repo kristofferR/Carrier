@@ -125,6 +125,10 @@ async function deliver(
             return false;
           }
           insertedReplies.set(id, { path, text });
+          // Lexical shows the text a moment later while the window isn't
+          // focused, as when replying from a notification. Checking at once
+          // read an empty composer and gave the reply up.
+          await pause();
           break;
         }
         case "send":
