@@ -9151,6 +9151,19 @@ ${button.innerHTML}`)
     location.replace("https://www.facebook.com/messages");
     return "settled";
   }
+  function pageFonts() {
+    const fonts = /* @__PURE__ */ new Set();
+    for (const el of document.body?.querySelectorAll("*") ?? []) {
+      if (fonts.size >= 8) break;
+      if (![...el.childNodes].some(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()
+      ))
+        continue;
+      const style = getComputedStyle(el);
+      fonts.add(`${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`);
+    }
+    return fonts;
+  }
   function showLoaderUntilLoginRenders() {
     if (!onFacebookHost() || /(?:^|;\s*)c_user=/.test(document.cookie)) return;
     if (!/^\/(?:login(?:\.php)?\/?)?$/i.test(location.pathname)) return;
@@ -9175,7 +9188,7 @@ ${button.innerHTML}`)
         requestAnimationFrame(whenRendered);
         return;
       }
-      document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(finish)));
+      Promise.all([...pageFonts()].map((font) => document.fonts.load(font).catch(() => []))).then(() => document.fonts.ready).then(() => requestAnimationFrame(() => requestAnimationFrame(finish)));
     };
     requestAnimationFrame(whenRendered);
   }
