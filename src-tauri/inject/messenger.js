@@ -6275,6 +6275,7 @@ ${button.innerHTML}`)
   };
   var onFacebookHost = () => /(^|\.)facebook\.com$/i.test(location.hostname);
   var onFacebookLoginSurface = () => onFacebookHost() && (/\/login(?:\.php)?$/i.test(location.pathname) || location.pathname === "/" || !!document.querySelector('input[name="email"], input[name="pass"], input[type="password"]'));
+  var beforeLogin = () => onFacebookLoginSurface() || onFacebookHost() && !/(?:^|;\s*)c_user=/.test(document.cookie);
   var visibleBox = (el) => {
     if (el?.nodeType !== 1) return null;
     const r = el.getBoundingClientRect();
@@ -6353,7 +6354,7 @@ ${button.innerHTML}`)
     ).sort((a, b) => b.bottom - a.bottom)[0]?.items;
   };
   function findOptionalCookieDeclineButton(root = document) {
-    if (!onFacebookLoginSurface()) return null;
+    if (!beforeLogin()) return null;
     const roots = /* @__PURE__ */ new Set();
     for (const button of actionButtonsIn(root)) {
       let node = button.parentElement;

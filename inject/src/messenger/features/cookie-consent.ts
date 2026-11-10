@@ -17,6 +17,12 @@ export const onFacebookLoginSurface = () =>
     location.pathname === "/" ||
     !!document.querySelector('input[name="email"], input[name="pass"], input[type="password"]'));
 
+/** The login page, or any page before login completes (a captcha, a
+ * two-factor check): Facebook asks about cookies on whichever page a new
+ * browser reaches first. */
+const beforeLogin = () =>
+  onFacebookLoginSurface() || (onFacebookHost() && !/(?:^|;\s*)c_user=/.test(document.cookie));
+
 const visibleBox = (el: Element | null | undefined) => {
   if (el?.nodeType !== 1) return null;
   const r = el.getBoundingClientRect();
@@ -126,7 +132,7 @@ const bottomActionRow = (root: Element) => {
 export function findOptionalCookieDeclineButton(
   root: Element | Document = document,
 ): HTMLElement | null {
-  if (!onFacebookLoginSurface()) return null;
+  if (!beforeLogin()) return null;
   const roots = new Set<Element>();
   for (const button of actionButtonsIn(root)) {
     let node = button.parentElement;
