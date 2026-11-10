@@ -5,7 +5,7 @@
    preview: #000000 #050805 #050805 #3dff6e #0c1a0e
 */
 
-/* Black with phosphor green, and messages in a monospace font. */
+/* Black with phosphor green, in a monospace font. */
 :root {
   --chatpane-wash: #000000;
   --chatpane-page: #050805;
@@ -26,9 +26,16 @@
   --chatpane-selection: rgba(61, 255, 110, 0.25);
 }
 
-/* The same text the message font setting styles, so a chosen font still wins. */
-[role="main"] :is([role="log"], [contenteditable="true"][role="textbox"]) :is(div, span, a, p, li),
-[role="main"] [contenteditable="true"][role="textbox"] {
+/* Monospace across the chats: the list, headers, details, menus and messages.
+   Facebook sets fonts with !important utility classes, which this outranks.
+   The message font setting's selector is more specific, so a chosen message
+   font still wins in the chat; system emoji glyphs keep their emoji font.
+   Scoped to the chats so the login page keeps Facebook's type.
+   Monospace fonts have taller lowercase letters than Facebook's sans-serif
+   (JetBrains Mono 0.55 of the size, Arial and Helvetica about 0.52), so
+   font-size-adjust scales them to the same x-height and the text keeps its size. */
+html[data-chatpane-chats] :is(body, body *):not([data-chatpane-system-emoji-glyph]) {
   font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas,
     "DejaVu Sans Mono", monospace !important;
+  font-size-adjust: 0.52 !important;
 }

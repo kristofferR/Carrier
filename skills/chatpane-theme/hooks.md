@@ -21,8 +21,10 @@ grep -rhoE 'data-chatpane-[a-z-]+|--chatpane-[a-z0-9-]+' inject/src src-tauri/in
   `--chatpane-out-text` after the theme, so a user's accent beats the theme's.
 - The message font is set with `!important` on
   `[role="main"] :is([role="log"], [contenteditable="true"][role="textbox"]) :is(div, span, a, p, li)`
-  and the message box. A theme that sets its font with that same selector (as
-  `terminal.css` does) is overridden by a chosen font, which is what users expect.
+  and the message box. A theme font on a less specific selector is overridden
+  by a chosen font in the chat, which is what users expect. `terminal.css`
+  sets its font on every element under `html[data-chatpane-chats]`, which
+  beats Facebook's `!important` font classes but stays below that selector.
 - Call windows (`popup-*`) and the Settings window get no theme.
 - Validation (`parse_header`, `check_css`): see `themes/README.md`, "The rules".
   It uses a real CSS tokenizer, so escapes and comments can't get around it.
