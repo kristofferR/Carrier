@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Прибирати відстеження з посилань Facebook",
   "settings.privacy.strip_link_tracking.hint": "Видаляти ідентифікатори відстеження Facebook із посилань, які ви копіюєте або відкриваєте в браузері.",
   "settings.account.title": "Акаунт Messenger",
+  "settings.account.profile.unknown": "Ваш акаунт Facebook",
+  "settings.account.log_out": "Вийти…",
   "settings.account.intro": "Власні налаштування Messenger вашого акаунта Facebook. Зміни діють усюди, де ви користуєтеся Messenger, зокрема на телефоні. Налаштування сповіщень самого {app} — на вкладці «Сповіщення».",
   "settings.account.loading": "Зчитування налаштувань Messenger…",
   "settings.account.retry": "Спробувати ще раз",

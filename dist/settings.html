@@ -188,6 +188,15 @@
       .icon-tile[aria-checked="true"] { border-color: #0866ff; background: #e7f0ff; }
       .icon-tile:focus-visible { outline: 2px solid #0866ff; outline-offset: 2px; }
       .section-hint { color: #65676b; font-size: 12px; padding: 0 0 12px; }
+      /* Account: the signed-in account's picture and name, and Log Out. */
+      .profile { display: flex; align-items: center; gap: 12px; padding-block: 14px; }
+      .profile .avatar {
+        flex: none; width: 44px; height: 44px; border-radius: 50%; object-fit: cover;
+        display: grid; place-items: center; background: #e4e6eb; color: #65676b;
+      }
+      .profile .avatar svg { width: 24px; height: 24px; }
+      .profile .name { flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+      .profile > button { flex: none; }
       #update-notes { margin: 4px 0; font-size: 12px; max-width: 420px; }
       #update-notes summary { cursor: pointer; }
       .update-notes-text { white-space: pre-wrap; max-height: 160px; overflow: auto; margin-top: 4px; }
@@ -233,6 +242,7 @@
         .icon-tile { border-color: #3a3b3c; }
         .icon-tile[aria-checked="true"] { border-color: #5b9bff; background: #263a59; }
         .icon-rows .mode { color: #b0b3b8; }
+        .profile .avatar { background: #3a3b3c; color: #b0b3b8; }
       }
     </style>
   </head>

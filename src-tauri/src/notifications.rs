@@ -981,25 +981,7 @@ const MAX_AVATAR_BYTES: usize = 1 << 20; // 1 MiB decoded
 /// Decode an avatar or media thumbnail into a private PNG for native delivery.
 /// Images are best-effort: invalid input returns `None`.
 fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
-    // `chatpane:notify` crosses from the remote page, so validate the shape
-    // before decoding or writing. Our injected bridge always builds the image
-    // with `canvas.toDataURL("image/png")`, so require exactly a base64 PNG data
-    // URL rather than trusting an arbitrary `image/*` type from the page.
-    let b64 = data_url.strip_prefix("data:image/png;base64,")?.trim();
-    // Avatars and aspect-preserving media thumbnails are at most 256×256.
-    // Reject before decoding so an oversized payload
-    // can't force a large allocation (base64 inflates the byte count by ~4/3).
-    if b64.len() > MAX_AVATAR_BYTES / 3 * 4 + 4 {
-        return None;
-    }
-    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
-    // The decoded bytes are untrusted (remote page) and we name the file `.png`,
-    // so confirm they actually begin with the PNG magic header and stay in
-    // bounds before writing anything to disk.
-    const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
-    if bytes.len() > MAX_AVATAR_BYTES || !bytes.starts_with(PNG_MAGIC) {
-        return None;
-    }
+    let bytes = decode_png_data_url(data_url)?;
     // A private per-process directory keeps `multi_instance` runs from colliding
     // on temp-file names or deleting each other's in-flight avatars.
     let dir = avatar_cache_dir()?;
@@ -1010,6 +992,31 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     let path = dir.join(format!("{seq}.png"));
     std::fs::write(&path, &bytes).ok()?;
     Some(path)
+}
+
+/// The PNG in a picture the remote page drew: `None` unless it is a bounded
+/// base64 PNG data URL whose bytes really are a PNG.
+pub(crate) fn decode_png_data_url(data_url: &str) -> Option<Vec<u8>> {
+    // Pictures cross from the remote page, so validate the shape before
+    // decoding. Our injected scripts always build them with
+    // `canvas.toDataURL("image/png")`, so require exactly a base64 PNG data
+    // URL rather than trusting an arbitrary `image/*` type from the page.
+    let b64 = data_url.strip_prefix("data:image/png;base64,")?.trim();
+    // Avatars and aspect-preserving media thumbnails are at most 256×256.
+    // Reject before decoding so an oversized payload
+    // can't force a large allocation (base64 inflates the byte count by ~4/3).
+    if b64.len() > MAX_AVATAR_BYTES / 3 * 4 + 4 {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    // The decoded bytes are untrusted (remote page) and get written as `.png`,
+    // so confirm they actually begin with the PNG magic header and stay in
+    // bounds.
+    const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.len() > MAX_AVATAR_BYTES || !bytes.starts_with(PNG_MAGIC) {
+        return None;
+    }
+    Some(bytes)
 }
 
 /// Best-effort sweep of stale avatars from this process's own directory. On

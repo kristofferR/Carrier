@@ -278,6 +278,12 @@ readReceipts: boolean | null, };
 
 export type MessengerAccountChange = { "setting": "activeStatus", "value": boolean } | { "setting": "sounds", "value": boolean } | { "setting": "doNotDisturb", "value": number } | { "setting": "readReceipts", "value": boolean };
 
+export type MessengerProfile = { name: string | null, 
+/**
+ * A PNG data URL.
+ */
+picture: string | null, };
+
 export type UpdateInstallKind = "built-in" | "manual" | "debug";
 
 export type UpdateInstallMode = { kind: UpdateInstallKind, buttonLabel: string | null, instructions: string | null, };

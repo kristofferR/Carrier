@@ -26,6 +26,8 @@
     "allow-open-github",
     "allow-messenger-account",
     "allow-set-messenger-account",
+    "allow-messenger-profile",
+    "allow-log-out",
     "allow-open-facebook-language",
     "allow-list-themes",
     "allow-add-theme",

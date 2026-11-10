@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Ta bort Facebooks länkspårning",
   "settings.privacy.strip_link_tracking.hint": "Ta bort Facebooks spårnings-id:n från länkar som du kopierar eller öppnar i webbläsaren.",
   "settings.account.title": "Messenger-konto",
+  "settings.account.profile.unknown": "Ditt Facebook-konto",
+  "settings.account.log_out": "Logga ut…",
   "settings.account.intro": "Ditt Facebook-kontos egna Messenger-inställningar. Ändringar gäller överallt där du använder Messenger, även på telefonen. Aviseringsinställningarna i {app} finns på fliken Aviseringar.",
   "settings.account.loading": "Läser inställningarna från Messenger…",
   "settings.account.retry": "Försök igen",

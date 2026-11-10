@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Facebook සබැඳි ලුහුබැඳීම ඉවත් කරන්න",
   "settings.privacy.strip_link_tracking.hint": "ඔබ පිටපත් කරන හෝ බ්‍රවුසරයේ විවෘත කරන සබැඳිවලින් Facebook ලුහුබැඳීමේ ID ඉවත් කරන්න.",
   "settings.account.title": "Messenger ගිණුම",
+  "settings.account.profile.unknown": "ඔබේ Facebook ගිණුම",
+  "settings.account.log_out": "ඉවත් වන්න…",
   "settings.account.intro": "ඔබේ Facebook ගිණුමේම Messenger සැකසුම්. වෙනස්කම් ඔබේ දුරකථනය ඇතුළුව ඔබ Messenger භාවිත කරන සෑම තැනකම අදාළ වේ. {app} හිම දැනුම්දීම් සැකසුම් ඇත්තේ දැනුම්දීම් ටැබයේ ය.",
   "settings.account.loading": "Messenger හි සැකසුම් කියවමින්…",
   "settings.account.retry": "නැවත උත්සාහ කරන්න",

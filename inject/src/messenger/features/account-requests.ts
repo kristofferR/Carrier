@@ -1,13 +1,16 @@
 /* ----------------------- Account requests ------------------------------ */
 // Native asks through `window.__chatpaneAccount(request, action, value)` and
 // reads the answer on `chatpane:account-result`: Messenger's own account
-// settings for Settings → Account (Ref #358), and Log Out (Ref #356).
+// settings and the account's name and picture for Settings → Account
+// (Ref #358), and Log Out (Ref #356).
 import { t } from "../../i18n";
 import { diag, invoke } from "../bridge";
 import { pageRequire } from "../lib/facebook-loader";
 import { logOutOfFacebook } from "../lib/log-out";
 import { changeMessengerAccount, readMessengerAccount } from "../lib/messenger-account";
 import { setMessengerDndUntil } from "../lib/messenger-dnd";
+import { readMessengerProfile } from "../lib/messenger-profile";
+import { notificationThumbnail } from "../lib/notification-images";
 import { accountId } from "../lib/threads";
 
 type Action = (value: unknown) => Promise<unknown>;
@@ -28,6 +31,7 @@ export function initAccountRequests() {
         post: (url, body) => fetch(url, { method: "POST", body, credentials: "include" }),
       }).then(() => null),
     read: () => readMessengerAccount(pageRequire(), signedIn()),
+    profile: () => readMessengerProfile(pageRequire(), signedIn(), notificationThumbnail),
     "set-active-status": (value) =>
       changeMessengerAccount(pageRequire(), signedIn(), {
         setting: "activeStatus",

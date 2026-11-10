@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "إزالة تتبّع الروابط من Facebook",
   "settings.privacy.strip_link_tracking.hint": "حذف معرّفات التتبّع الخاصة بـ Facebook من الروابط التي تنسخها أو تفتحها في متصفحك.",
   "settings.account.title": "حساب Messenger",
+  "settings.account.profile.unknown": "حسابك على Facebook",
+  "settings.account.log_out": "تسجيل الخروج…",
   "settings.account.intro": "إعدادات Messenger الخاصة بحسابك على Facebook. تسري التغييرات أينما تستخدم Messenger، بما في ذلك هاتفك. أما إعدادات الإشعارات الخاصة بـ {app} فموجودة في تبويب «الإشعارات».",
   "settings.account.loading": "جارٍ قراءة إعدادات Messenger…",
   "settings.account.retry": "إعادة المحاولة",

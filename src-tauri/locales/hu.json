@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Facebook-linkkövetés eltávolítása",
   "settings.privacy.strip_link_tracking.hint": "Eltávolítja a Facebook követőazonosítóit a linkekből, amelyeket másolsz vagy a böngésződben nyitsz meg.",
   "settings.account.title": "Messenger-fiók",
+  "settings.account.profile.unknown": "A Facebook-fiókod",
+  "settings.account.log_out": "Kijelentkezés…",
   "settings.account.intro": "A Facebook-fiókod saját Messenger-beállításai. A módosítások mindenhol érvényesek, ahol a Messengert használod, a telefonodon is. A {app} saját értesítési beállításait az Értesítések lapon találod.",
   "settings.account.loading": "A Messenger beállításainak beolvasása…",
   "settings.account.retry": "Újra",

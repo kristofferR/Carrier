@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Retirer le pistage des liens Facebook",
   "settings.privacy.strip_link_tracking.hint": "Retire les identifiants de pistage de Facebook des liens que tu copies ou ouvres dans ton navigateur.",
   "settings.account.title": "Compte Messenger",
+  "settings.account.profile.unknown": "Ton compte Facebook",
+  "settings.account.log_out": "Se déconnecter…",
   "settings.account.intro": "Les réglages Messenger de ton compte Facebook. Les modifications s'appliquent partout où tu utilises Messenger, y compris sur ton téléphone. Les réglages de notification propres à {app} se trouvent dans l'onglet Notifications.",
   "settings.account.loading": "Lecture des réglages de Messenger…",
   "settings.account.retry": "Réessayer",

@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Alisin ang link tracking ng Facebook",
   "settings.privacy.strip_link_tracking.hint": "Tanggalin ang mga tracking ID ng Facebook sa mga link na kinokopya mo o binubuksan sa browser mo.",
   "settings.account.title": "Messenger account",
+  "settings.account.profile.unknown": "Ang Facebook account mo",
+  "settings.account.log_out": "Mag-log Out…",
   "settings.account.intro": "Ang sariling mga setting ng Messenger ng Facebook account mo. Nalalapat ang mga pagbabago saanman mo ginagamit ang Messenger, kasama ang phone mo. Nasa tab na Mga Notification ang sariling mga setting ng notification ng {app}.",
   "settings.account.loading": "Binabasa ang mga setting ng Messenger…",
   "settings.account.retry": "Subukan ulit",

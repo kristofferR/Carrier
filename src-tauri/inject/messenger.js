@@ -601,6 +601,116 @@
     await Promise.all([saved, reported]);
   }
 
+  // inject/src/messenger/lib/messenger-db.ts
+  async function readMessengerDatabase(load, read, timeoutMs = 750) {
+    if (typeof load !== "function") return null;
+    const run = async () => {
+      const singleton = load("LSDatabaseSingleton");
+      const db = await singleton.LSDatabaseSingleton;
+      const i64 = load("I64");
+      if (typeof db?.tables?.threads?.get !== "function" || typeof i64?.of_string !== "function") {
+        throw new Error("Messenger database APIs changed");
+      }
+      return read({ db, i64, load });
+    };
+    let timer;
+    try {
+      return await Promise.race([
+        run().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // inject/src/messenger/lib/messenger-profile.ts
+  var VAULTED = /\d{10}##\d{10}/;
+  function nameOf(value) {
+    if (typeof value !== "string") return null;
+    const name = value.trim();
+    return name && !VAULTED.test(name) ? name : null;
+  }
+  async function readMessengerProfile(load, account3, toPicture) {
+    const contact = await readMessengerDatabase(
+      load,
+      ({ db, i64 }) => db.tables.contacts.get(i64.of_string(account3)),
+      3e3
+    );
+    const row = contact && typeof contact === "object" ? contact : null;
+    let name = null;
+    try {
+      name = nameOf(load?.("CurrentUser")?.getName?.());
+    } catch {
+    }
+    name ?? (name = nameOf(row?.name));
+    let url;
+    try {
+      const pictureOf = defaultExport(load?.("getLSMediaContactProfilePictureUrl"));
+      if (row && typeof pictureOf === "function") url = pictureOf(row);
+    } catch {
+    }
+    const picture = typeof url === "string" && url.startsWith("https://") ? await toPicture(url) : "";
+    return { name, picture: picture || null };
+  }
+
+  // inject/src/messenger/lib/notification-images.ts
+  var photoSummary = /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
+  function isPhotoSummary(body) {
+    return !body.trim() || photoSummary.test(body.trim());
+  }
+  function notificationPhotoText(title, body, hasThumbnail) {
+    if (hasThumbnail && isPhotoSummary(body)) {
+      return { title: t("page.notification.sent_image", { name: title }), body: "" };
+    }
+    return { title, body };
+  }
+  function notificationThumbnailSize(width2, height) {
+    if (!Number.isFinite(width2) || !Number.isFinite(height) || width2 <= 0 || height <= 0) return null;
+    const scale = Math.min(1, 256 / Math.max(width2, height));
+    return {
+      width: Math.max(1, Math.round(width2 * scale)),
+      height: Math.max(1, Math.round(height * scale))
+    };
+  }
+  function notificationThumbnail(source, timeoutMs = 2500) {
+    if (!source || timeoutMs <= 0) return Promise.resolve("");
+    return new Promise((resolve) => {
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        image.onload = null;
+        image.onerror = null;
+        image.removeAttribute("src");
+        resolve(result);
+      };
+      const timer = setTimeout(() => finish(""), Math.min(timeoutMs, 2500));
+      image.onerror = () => finish("");
+      image.onload = () => {
+        try {
+          const size = notificationThumbnailSize(image.naturalWidth, image.naturalHeight);
+          if (!size) return finish("");
+          const canvas = document.createElement("canvas");
+          canvas.width = size.width;
+          canvas.height = size.height;
+          const context2 = canvas.getContext("2d");
+          if (!context2) return finish("");
+          context2.drawImage(image, 0, 0, size.width, size.height);
+          finish(canvas.toDataURL("image/png"));
+        } catch {
+          finish("");
+        }
+      };
+      image.src = source;
+    });
+  }
+
   // inject/src/messenger/features/account-requests.ts
   function initAccountRequests() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -617,6 +727,7 @@
         post: (url, body) => fetch(url, { method: "POST", body, credentials: "include" })
       }).then(() => null),
       read: () => readMessengerAccount(pageRequire(), signedIn()),
+      profile: () => readMessengerProfile(pageRequire(), signedIn(), notificationThumbnail),
       "set-active-status": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
         setting: "activeStatus",
         value: value === true
@@ -4307,7 +4418,7 @@ ${button.innerHTML}`)
         people.set(personId, { id: personId, name, nickname: null });
       }
     }
-    const nameOf = (personId) => personId && people.get(personId)?.name || null;
+    const nameOf2 = (personId) => personId && people.get(personId)?.name || null;
     const reactionsByMessage = /* @__PURE__ */ new Map();
     for (const row of rows.reactions) {
       if (!isRow(row) || typeof row.messageId !== "string") continue;
@@ -4318,7 +4429,7 @@ ${button.innerHTML}`)
       const list = reactionsByMessage.get(row.messageId) ?? [];
       list.push({
         actorId,
-        actorName: nameOf(actorId),
+        actorName: nameOf2(actorId),
         reaction,
         timestampMs: timestamp === null ? null : Number(timestamp)
       });
@@ -4368,7 +4479,7 @@ ${button.innerHTML}`)
       messages.push({
         id: row.messageId,
         senderId,
-        senderName: nameOf(senderId),
+        senderName: nameOf2(senderId),
         timestampMs,
         utcOffsetMinutes: rows.utcOffsetMinutes(timestampMs),
         text: body.text,
@@ -4382,7 +4493,7 @@ ${button.innerHTML}`)
         replyTo: replySource ? {
           messageId: replySource,
           senderId: replySenderId,
-          senderName: nameOf(replySenderId),
+          senderName: nameOf2(replySenderId),
           text: plain(row.replyMessageText) ?? plain(row.replySnippet)
         } : null,
         reactions: reactionsByMessage.get(row.messageId) ?? [],
@@ -11381,61 +11492,6 @@ ${button.innerHTML}`)
     return match;
   }
 
-  // inject/src/messenger/lib/notification-images.ts
-  var photoSummary = /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
-  function isPhotoSummary(body) {
-    return !body.trim() || photoSummary.test(body.trim());
-  }
-  function notificationPhotoText(title, body, hasThumbnail) {
-    if (hasThumbnail && isPhotoSummary(body)) {
-      return { title: t("page.notification.sent_image", { name: title }), body: "" };
-    }
-    return { title, body };
-  }
-  function notificationThumbnailSize(width2, height) {
-    if (!Number.isFinite(width2) || !Number.isFinite(height) || width2 <= 0 || height <= 0) return null;
-    const scale = Math.min(1, 256 / Math.max(width2, height));
-    return {
-      width: Math.max(1, Math.round(width2 * scale)),
-      height: Math.max(1, Math.round(height * scale))
-    };
-  }
-  function notificationThumbnail(source, timeoutMs = 2500) {
-    if (!source || timeoutMs <= 0) return Promise.resolve("");
-    return new Promise((resolve) => {
-      const image = new Image();
-      image.crossOrigin = "anonymous";
-      let settled = false;
-      const finish = (result) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        image.onload = null;
-        image.onerror = null;
-        image.removeAttribute("src");
-        resolve(result);
-      };
-      const timer = setTimeout(() => finish(""), Math.min(timeoutMs, 2500));
-      image.onerror = () => finish("");
-      image.onload = () => {
-        try {
-          const size = notificationThumbnailSize(image.naturalWidth, image.naturalHeight);
-          if (!size) return finish("");
-          const canvas = document.createElement("canvas");
-          canvas.width = size.width;
-          canvas.height = size.height;
-          const context2 = canvas.getContext("2d");
-          if (!context2) return finish("");
-          context2.drawImage(image, 0, 0, size.width, size.height);
-          finish(canvas.toDataURL("image/png"));
-        } catch {
-          finish("");
-        }
-      };
-      image.src = source;
-    });
-  }
-
   // inject/src/messenger/lib/notification-links.ts
   function linkTarget(value) {
     if (!/^https?:\/\/\S+$/i.test(value)) return null;
@@ -14126,31 +14182,6 @@ ${text2}`)) {
       }).catch(() => {
       });
     }, 1e3);
-  }
-
-  // inject/src/messenger/lib/messenger-db.ts
-  async function readMessengerDatabase(load, read, timeoutMs = 750) {
-    if (typeof load !== "function") return null;
-    const run = async () => {
-      const singleton = load("LSDatabaseSingleton");
-      const db = await singleton.LSDatabaseSingleton;
-      const i64 = load("I64");
-      if (typeof db?.tables?.threads?.get !== "function" || typeof i64?.of_string !== "function") {
-        throw new Error("Messenger database APIs changed");
-      }
-      return read({ db, i64, load });
-    };
-    let timer;
-    try {
-      return await Promise.race([
-        run().catch(() => null),
-        new Promise((resolve) => {
-          timer = setTimeout(() => resolve(null), timeoutMs);
-        })
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   // inject/src/messenger/lib/recent-threads.ts

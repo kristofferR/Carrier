@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Facebook লিংক ট্র্যাকিং সরান",
   "settings.privacy.strip_link_tracking.hint": "আপনি যেসব লিংক কপি করেন বা ব্রাউজারে খোলেন, সেগুলো থেকে Facebook-এর ট্র্যাকিং আইডি সরিয়ে দিন।",
   "settings.account.title": "Messenger অ্যাকাউন্ট",
+  "settings.account.profile.unknown": "আপনার Facebook অ্যাকাউন্ট",
+  "settings.account.log_out": "লগ আউট করুন…",
   "settings.account.intro": "আপনার Facebook অ্যাকাউন্টের নিজস্ব Messenger সেটিংস। পরিবর্তনগুলো আপনার ফোনসহ যেখানেই Messenger ব্যবহার করেন, সেখানেই প্রযোজ্য হয়। {app}-এর নিজস্ব নোটিফিকেশন সেটিংস “নোটিফিকেশন” ট্যাবে আছে।",
   "settings.account.loading": "Messenger-এর সেটিংস পড়া হচ্ছে…",
   "settings.account.retry": "আবার চেষ্টা করুন",

@@ -250,7 +250,7 @@ impl ksni::Tray for LinuxTray {
         menu.push(
             StandardItem {
                 label: t("menu.log_out").into(),
-                activate: Box::new(|tray: &mut Self| crate::log_out::log_out(&tray.app)),
+                activate: Box::new(|tray: &mut Self| crate::log_out::confirm(&tray.app, None)),
                 ..Default::default()
             }
             .into(),

@@ -24,6 +24,8 @@ const COMMANDS: &[&str] = &[
     "open_github",
     "messenger_account",
     "set_messenger_account",
+    "messenger_profile",
+    "log_out",
     "open_facebook_language",
     "list_themes",
     "add_theme",

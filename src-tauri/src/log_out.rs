@@ -8,8 +8,15 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use crate::i18n::{t, tf};
 use crate::settings::AppState;
 
-/// File/app menu and tray: Log Out…, after confirmation.
-pub(crate) fn log_out(app: &tauri::AppHandle) {
+/// Settings → Account: Log Out…, confirmed over the Settings window.
+#[tauri::command]
+pub(crate) fn log_out(window: tauri::WebviewWindow) {
+    confirm(window.app_handle(), Some(window.clone()));
+}
+
+/// Log Out… after confirmation, asked over `parent` (the File/app menu and
+/// tray pass none: the Messenger window).
+pub(crate) fn confirm(app: &tauri::AppHandle, parent: Option<tauri::WebviewWindow>) {
     let handle = app.clone();
     let mut dialog = app
         .dialog()
@@ -20,7 +27,7 @@ pub(crate) fn log_out(app: &tauri::AppHandle) {
             t("dialog.log_out.confirm").into(),
             t("dialog.cancel").into(),
         ));
-    if let Some(window) = crate::menu::dialog_parent(app) {
+    if let Some(window) = parent.or_else(|| crate::menu::dialog_parent(app)) {
         dialog = dialog.parent(&window);
     }
     dialog.show(move |confirmed| {

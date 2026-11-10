@@ -1,8 +1,8 @@
 //! Requests that Messenger's own page answers for Chatpane: reading and
 //! changing the account's Messenger settings (Active Status, message sounds,
-//! Do Not Disturb; Ref #358). Native asks the main Messenger window through
-//! `window.__chatpaneAccount`, and the page reports back on
-//! `chatpane:account-result`.
+//! Do Not Disturb; Ref #358), and the account's name and picture. Native asks
+//! the main Messenger window through `window.__chatpaneAccount`, and the page
+//! reports back on `chatpane:account-result`.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -43,13 +43,28 @@ pub(crate) fn install(app: &tauri::AppHandle) {
         log::info!(
             "account request answered: ok={} state={} error={:?}",
             reply.ok,
-            reply.state,
+            loggable(&reply.state),
             reply.error
         );
         if let Some(sender) = pending().lock().unwrap().remove(&reply.request) {
             let _ = sender.send(reply);
         }
     });
+}
+
+/// A reply's state for the log: setting values as they are, and page text
+/// (the profile's name and picture) only as its length.
+fn loggable(state: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match state {
+        Value::String(text) => format!("<{} chars>", text.chars().count()).into(),
+        Value::Array(items) => items.iter().map(loggable).collect(),
+        Value::Object(fields) => fields
+            .iter()
+            .map(|(key, value)| (key.clone(), loggable(value)))
+            .collect(),
+        other => other.clone(),
+    }
 }
 
 /// Runs `action` in the main Messenger page and returns what it reports.
@@ -156,9 +171,52 @@ pub(crate) async fn set_messenger_account(
     parse_state(page_request(&app, action, value).await?)
 }
 
+/// The signed-in account as Messenger shows it, for the top of Settings →
+/// Account. Each is null when Messenger did not report it.
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct MessengerProfile {
+    name: Option<String>,
+    /// A PNG data URL.
+    picture: Option<String>,
+}
+
+/// Longest name Settings shows; Facebook's own limit is far below it.
+const MAX_NAME_CHARS: usize = 200;
+
+impl MessengerProfile {
+    /// The page's answer is untrusted: keep a bounded, printable name and a
+    /// picture only when it is a real PNG data URL.
+    fn checked(self) -> Self {
+        let name = self.name.and_then(|name| {
+            let name: String = name
+                .trim()
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(MAX_NAME_CHARS)
+                .collect();
+            (!name.is_empty()).then_some(name)
+        });
+        let picture = self
+            .picture
+            .filter(|url| crate::notifications::decode_png_data_url(url).is_some());
+        Self { name, picture }
+    }
+}
+
+/// Settings → Account: the signed-in account's name and picture.
+#[tauri::command]
+pub(crate) async fn messenger_profile(app: tauri::AppHandle) -> Result<MessengerProfile, String> {
+    let state = page_request(&app, "profile", serde_json::Value::Null).await?;
+    serde_json::from_value::<MessengerProfile>(state)
+        .map(MessengerProfile::checked)
+        .map_err(|_| crate::i18n::t("account.error.unexpected_answer").into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
 
     #[test]
     fn changes_parse_from_settings_and_bound_dnd() {
@@ -185,6 +243,44 @@ mod tests {
         assert!(
             serde_json::from_str::<MessengerAccountChange>(r#"{"setting":"sounds","value":"on"}"#)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn profile_keeps_only_a_clean_name_and_a_png() {
+        let png = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nrest")
+        );
+        let profile = |name: &str, picture: &str| {
+            MessengerProfile {
+                name: Some(name.into()),
+                picture: Some(picture.into()),
+            }
+            .checked()
+        };
+        assert_eq!(
+            profile("  Ada\u{0}\nLovelace ", &png),
+            MessengerProfile {
+                name: Some("AdaLovelace".into()),
+                picture: Some(png.clone()),
+            }
+        );
+        let rejected = profile(" \t", "https://scontent.xx.fbcdn.net/a.jpg");
+        assert_eq!(rejected, MessengerProfile::default());
+        assert_eq!(
+            profile(&"x".repeat(500), "").name.unwrap().len(),
+            MAX_NAME_CHARS
+        );
+    }
+
+    #[test]
+    fn logs_page_text_only_by_length() {
+        let state =
+            serde_json::json!({"name": "Ada", "picture": null, "sounds": true, "dndUntil": -1});
+        assert_eq!(
+            loggable(&state),
+            serde_json::json!({"name": "<3 chars>", "picture": null, "sounds": true, "dndUntil": -1})
         );
     }
 }

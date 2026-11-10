@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Rimuovi il tracciamento dai link di Facebook",
   "settings.privacy.strip_link_tracking.hint": "Rimuove gli ID di tracciamento di Facebook dai link che copi o apri nel browser.",
   "settings.account.title": "Account Messenger",
+  "settings.account.profile.unknown": "Il tuo account Facebook",
+  "settings.account.log_out": "Esci dall'account…",
   "settings.account.intro": "Le impostazioni di Messenger del tuo account Facebook. Le modifiche valgono ovunque usi Messenger, anche sul telefono. Le impostazioni di notifica di {app} si trovano nella scheda Notifiche.",
   "settings.account.loading": "Lettura delle impostazioni di Messenger…",
   "settings.account.retry": "Riprova",

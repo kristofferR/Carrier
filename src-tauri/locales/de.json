@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Facebook-Link-Tracking entfernen",
   "settings.privacy.strip_link_tracking.hint": "Facebook-Tracking-IDs aus Links entfernen, die du kopierst oder im Browser öffnest.",
   "settings.account.title": "Messenger-Konto",
+  "settings.account.profile.unknown": "Dein Facebook-Konto",
+  "settings.account.log_out": "Abmelden …",
   "settings.account.intro": "Die Messenger-Einstellungen deines Facebook-Kontos. Änderungen gelten überall, wo du Messenger nutzt, auch auf deinem Handy. Die Benachrichtigungseinstellungen von {app} findest du im Bereich „Benachrichtigungen“.",
   "settings.account.loading": "Messenger-Einstellungen werden gelesen …",
   "settings.account.retry": "Erneut versuchen",

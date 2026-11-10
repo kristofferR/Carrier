@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Hapus pelacakan tautan Facebook",
   "settings.privacy.strip_link_tracking.hint": "Buang ID pelacakan Facebook dari tautan yang kamu salin atau buka di browser.",
   "settings.account.title": "Akun Messenger",
+  "settings.account.profile.unknown": "Akun Facebook-mu",
+  "settings.account.log_out": "Keluar dari Akun…",
   "settings.account.intro": "Pengaturan Messenger milik akun Facebook-mu sendiri. Perubahan berlaku di mana pun kamu memakai Messenger, termasuk di ponselmu. Pengaturan notifikasi {app} sendiri ada di tab Notifikasi.",
   "settings.account.loading": "Membaca pengaturan Messenger…",
   "settings.account.retry": "Coba lagi",

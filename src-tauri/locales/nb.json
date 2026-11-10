@@ -535,6 +535,8 @@
   "settings.privacy.strip_link_tracking.label": "Fjern Facebooks lenkesporing",
   "settings.privacy.strip_link_tracking.hint": "Fjern Facebooks sporings-ID-er fra lenker du kopierer eller åpner i nettleseren.",
   "settings.account.title": "Messenger-konto",
+  "settings.account.profile.unknown": "Facebook-kontoen din",
+  "settings.account.log_out": "Logg ut…",
   "settings.account.intro": "Messenger-innstillingene i Facebook-kontoen din. Endringer gjelder overalt der du bruker Messenger, også på telefonen. Varselinnstillingene i {app} finner du i fanen Varsler.",
   "settings.account.loading": "Leser innstillingene fra Messenger…",
   "settings.account.retry": "Prøv igjen",
