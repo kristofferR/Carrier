@@ -5008,6 +5008,10 @@ ${button.innerHTML}`)
     isStale(tag) {
       return typeof tag === "string" && this.stale.has(tag);
     }
+    /** Messenger raised a Notification for this message. */
+    wasRaised(tag) {
+      return typeof tag === "string" && this.raised.has(tag);
+    }
     /**
      * Whether a Notification with this tag was already raised; records it if
      * not. Messenger can notify twice about one message, and a web notification
@@ -8475,10 +8479,12 @@ ${button.innerHTML}`)
     const on2 = () => namesHidden() || avatarsHidden();
     const chatNames = /* @__PURE__ */ new Map();
     const loadingNames = /* @__PURE__ */ new Set();
-    function namesFor(id) {
+    function namesFor(id, rowText) {
+      const row = rowText.replace(/\d+/g, "");
       const known = chatNames.get(id);
       const ttl = known?.names ? NAMES_TTL_MS : NAMES_RETRY_MS;
-      if ((!known || Date.now() - known.at > ttl) && !loadingNames.has(id)) {
+      const due = !known || Date.now() - known.at > ttl || known.row !== row;
+      if (due && !loadingNames.has(id)) {
         loadingNames.add(id);
         readConversationNotificationNames(id, pageRequire()).then((info) => {
           const names = info ? info.participants.flatMap((person) => [
@@ -8487,12 +8493,12 @@ ${button.innerHTML}`)
             person.nickname
           ]) : null;
           chatNames.delete(id);
-          chatNames.set(id, { names, at: Date.now() });
+          chatNames.set(id, { names, at: Date.now(), row });
           if (chatNames.size > NAMES_LIMIT) chatNames.delete(chatNames.keys().next().value);
           if (names && String(names) !== String(known?.names)) schedule();
         }).catch(() => {
           chatNames.delete(id);
-          chatNames.set(id, { names: null, at: Date.now() });
+          chatNames.set(id, { names: null, at: Date.now(), row });
         }).finally(() => loadingNames.delete(id));
       }
       return known?.names ?? null;
@@ -8644,7 +8650,7 @@ ${button.innerHTML}`)
         if (!href || seen.has(href) || !visible(row)) continue;
         seen.add(href);
         const id = namesHidden() ? threadIdFromHref(href) : null;
-        const names = id ? namesFor(id) : null;
+        const names = id ? namesFor(id, textValue(row)) : null;
         const rr = row.getBoundingClientRect();
         row.querySelectorAll(VISUAL_SEL).forEach((el) => {
           if (!visible(el)) return;
@@ -8752,8 +8758,6 @@ ${button.innerHTML}`)
     function markEventLines(main2, load) {
       const eventRow = moduleExport(load, "MWMessageRowAdminMessage.react");
       if (eventRow == null) return;
-      const id = threadIdFromHref(location.pathname);
-      const names = id ? namesFor(id) : null;
       const rows = /* @__PURE__ */ new Map();
       const walker = document.createTreeWalker(main2, NodeFilter.SHOW_TEXT);
       while (walker.nextNode()) {
@@ -8766,13 +8770,7 @@ ${button.innerHTML}`)
           isEvent = isRenderedBy(host, eventRow, load);
           rows.set(row, isEvent);
         }
-        if (!isEvent || !visible(host)) continue;
-        if (!names) {
-          mark(host);
-          continue;
-        }
-        const ranges = nameRanges(node.data, names);
-        if (ranges.length && !highlightRanges([node], [node.data], ranges)) mark(host);
+        if (isEvent && visible(host)) mark(host);
       }
     }
     function scan() {
@@ -12757,7 +12755,7 @@ ${button.innerHTML}`)
         ]);
         const fresh = states?.get(conversation.key);
         if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
-        const announced = newest !== null && pageMessages.threadFor(newest) === conversation.key;
+        const announced = newest !== null && (pageMessages.wasRaised(newest) || pageMessages.isStale(newest));
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const settings = window.__CHATPANE_SETTINGS__ || {};
         if (fresh?.unread === false || announced || suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {

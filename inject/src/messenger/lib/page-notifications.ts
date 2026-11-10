@@ -102,6 +102,11 @@ export class PageMessageIndex {
     return typeof tag === "string" && this.stale.has(tag);
   }
 
+  /** Messenger raised a Notification for this message. */
+  wasRaised(tag: unknown): boolean {
+    return typeof tag === "string" && this.raised.has(tag);
+  }
+
   /**
    * Whether a Notification with this tag was already raised; records it if
    * not. Messenger can notify twice about one message, and a web notification

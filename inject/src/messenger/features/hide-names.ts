@@ -49,14 +49,18 @@ export function initHideNames() {
   const avatarsHidden = () => hidesAvatars(window.__CHATPANE_SETTINGS__);
   const on = () => namesHidden() || avatarsHidden();
 
-  const chatNames = new Map<string, { names: string[] | null; at: number }>();
+  const chatNames = new Map<string, { names: string[] | null; at: number; row: string }>();
   const loadingNames = new Set<string>();
   /** The chat's participant names, once read; null until then or when
-   * Messenger can't say (the "Name:" prefix stands in). */
-  function namesFor(id: string): string[] | null {
+   * Messenger can't say (the "Name:" prefix stands in). `row` is the row's
+   * text: a new preview can name someone just added, so it reads them again. */
+  function namesFor(id: string, rowText: string): string[] | null {
+    // Digits dropped: the preview's time ("5 min") changes on its own.
+    const row = rowText.replace(/\d+/g, "");
     const known = chatNames.get(id);
     const ttl = known?.names ? NAMES_TTL_MS : NAMES_RETRY_MS;
-    if ((!known || Date.now() - known.at > ttl) && !loadingNames.has(id)) {
+    const due = !known || Date.now() - known.at > ttl || known.row !== row;
+    if (due && !loadingNames.has(id)) {
       loadingNames.add(id);
       readConversationNotificationNames(id, pageRequire())
         .then((info) => {
@@ -68,13 +72,13 @@ export function initHideNames() {
               ])
             : null;
           chatNames.delete(id);
-          chatNames.set(id, { names, at: Date.now() });
+          chatNames.set(id, { names, at: Date.now(), row });
           if (chatNames.size > NAMES_LIMIT) chatNames.delete(chatNames.keys().next().value!);
           if (names && String(names) !== String(known?.names)) schedule();
         })
         .catch(() => {
           chatNames.delete(id);
-          chatNames.set(id, { names: null, at: Date.now() });
+          chatNames.set(id, { names: null, at: Date.now(), row });
         })
         .finally(() => loadingNames.delete(id));
     }
@@ -275,7 +279,7 @@ export function initHideNames() {
       if (!href || seen.has(href) || !visible(row)) continue;
       seen.add(href);
       const id = namesHidden() ? threadIdFromHref(href) : null;
-      const names = id ? namesFor(id) : null;
+      const names = id ? namesFor(id, textValue(row)) : null;
 
       const rr = row.getBoundingClientRect();
       row.querySelectorAll(VISUAL_SEL).forEach((el) => {
@@ -438,14 +442,11 @@ export function initHideNames() {
   }
 
   /** Messenger's event lines in a conversation ("Kim voted for …", "Kim added
-   * Tobias"), drawn by MWMessageRowAdminMessage, name people in running text.
-   * The chat's participant names in them get a highlight range; while the
-   * names are unknown, the whole line is blurred. */
+   * Tobias"), drawn by MWMessageRowAdminMessage, name people in running text,
+   * including ones who have since left. The whole line is blurred. */
   function markEventLines(main: Element, load: ReturnType<typeof pageRequire>) {
     const eventRow = moduleExport(load, "MWMessageRowAdminMessage.react");
     if (eventRow == null) return;
-    const id = threadIdFromHref(location.pathname);
-    const names = id ? namesFor(id) : null;
     // One component check per row: the rest of its text shares the answer.
     const rows = new Map<Element, boolean>();
     const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
@@ -459,13 +460,7 @@ export function initHideNames() {
         isEvent = isRenderedBy(host, eventRow, load);
         rows.set(row, isEvent);
       }
-      if (!isEvent || !visible(host)) continue;
-      if (!names) {
-        mark(host);
-        continue;
-      }
-      const ranges = nameRanges(node.data, names);
-      if (ranges.length && !highlightRanges([node], [node.data], ranges)) mark(host);
+      if (isEvent && visible(host)) mark(host);
     }
   }
 

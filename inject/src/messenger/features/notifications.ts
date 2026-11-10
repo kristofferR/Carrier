@@ -1413,9 +1413,11 @@ export function initNotificationBridge() {
       ]);
       const fresh = states?.get(conversation.key);
       if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
-      // Messenger already notified about this chat's newest message: the row
-      // only caught up with it, as a photo's preview does a moment later.
-      const announced = newest !== null && pageMessages.threadFor(newest) === conversation.key;
+      // Messenger already notified about this chat's newest message (or left
+      // it out as old news): the row only caught up with it, as a photo's
+      // preview does a moment later.
+      const announced =
+        newest !== null && (pageMessages.wasRaised(newest) || pageMessages.isStale(newest));
       // A newer preview may own this conversation now; it decides, not us.
       if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
       const settings = window.__CHATPANE_SETTINGS__ || {};
