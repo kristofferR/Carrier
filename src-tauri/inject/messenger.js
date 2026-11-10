@@ -8739,13 +8739,39 @@ ${button.innerHTML}`)
       });
       const load = pageRequire();
       const replySnippet = moduleExport(load, "MWReplySnippet.react");
-      if (replySnippet == null) return;
-      for (const icon3 of main2.querySelectorAll("svg")) {
+      for (const icon3 of replySnippet == null ? [] : main2.querySelectorAll("svg")) {
         let line = null;
         for (let el = icon3; el && el !== main2 && isRenderedBy(el, replySnippet, load, 40); el = el.parentElement) {
           line = el;
         }
         if (line && line !== icon3 && visible(line)) mark(line);
+      }
+      markEventLines(main2, load);
+    }
+    function markEventLines(main2, load) {
+      const eventRow = moduleExport(load, "MWMessageRowAdminMessage.react");
+      if (eventRow == null) return;
+      const id = threadIdFromHref(location.pathname);
+      const names = id ? namesFor(id) : null;
+      const rows = /* @__PURE__ */ new Map();
+      const walker = document.createTreeWalker(main2, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const host = node.parentElement;
+        if (!host || !node.data.trim() || host.closest('[contenteditable="true"]')) continue;
+        const row = host.closest('[role="row"]') ?? host;
+        let isEvent = rows.get(row);
+        if (isEvent === void 0) {
+          isEvent = isRenderedBy(host, eventRow, load);
+          rows.set(row, isEvent);
+        }
+        if (!isEvent || !visible(host)) continue;
+        if (!names) {
+          mark(host);
+          continue;
+        }
+        const ranges = nameRanges(node.data, names);
+        if (ranges.length && !highlightRanges([node], [node.data], ranges)) mark(host);
       }
     }
     function scan() {

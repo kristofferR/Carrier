@@ -422,8 +422,7 @@ export function initHideNames() {
     // whole line, however long or wrapped.
     const load = pageRequire();
     const replySnippet = moduleExport(load, "MWReplySnippet.react");
-    if (replySnippet == null) return;
-    for (const icon of main.querySelectorAll("svg")) {
+    for (const icon of replySnippet == null ? [] : main.querySelectorAll("svg")) {
       let line: Element | null = null;
       for (
         let el: Element | null = icon;
@@ -433,6 +432,40 @@ export function initHideNames() {
         line = el;
       }
       if (line && line !== icon && visible(line)) mark(line);
+    }
+
+    markEventLines(main, load);
+  }
+
+  /** Messenger's event lines in a conversation ("Kim voted for …", "Kim added
+   * Tobias"), drawn by MWMessageRowAdminMessage, name people in running text.
+   * The chat's participant names in them get a highlight range; while the
+   * names are unknown, the whole line is blurred. */
+  function markEventLines(main: Element, load: ReturnType<typeof pageRequire>) {
+    const eventRow = moduleExport(load, "MWMessageRowAdminMessage.react");
+    if (eventRow == null) return;
+    const id = threadIdFromHref(location.pathname);
+    const names = id ? namesFor(id) : null;
+    // One component check per row: the rest of its text shares the answer.
+    const rows = new Map<Element, boolean>();
+    const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      const host = node.parentElement;
+      if (!host || !node.data.trim() || host.closest('[contenteditable="true"]')) continue;
+      const row = host.closest('[role="row"]') ?? host;
+      let isEvent = rows.get(row);
+      if (isEvent === undefined) {
+        isEvent = isRenderedBy(host, eventRow, load);
+        rows.set(row, isEvent);
+      }
+      if (!isEvent || !visible(host)) continue;
+      if (!names) {
+        mark(host);
+        continue;
+      }
+      const ranges = nameRanges(node.data, names);
+      if (ranges.length && !highlightRanges([node], [node.data], ranges)) mark(host);
     }
   }
 
