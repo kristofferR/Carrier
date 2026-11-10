@@ -103,5 +103,6 @@ test("reads data: URLs without fetch", async () => {
   expect(svg?.type).toBe("image/svg+xml");
   expect(await svg!.text()).toBe("<svg/>");
   expect(dataUrlBlob("data:image/png;base64,***")).toBeNull();
+  expect(dataUrlBlob("data:text/plain,%E0%A4%A")).toBeNull();
   expect(dataUrlBlob("https://example.com/a.png")).toBeNull();
 });

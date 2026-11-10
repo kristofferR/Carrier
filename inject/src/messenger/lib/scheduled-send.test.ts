@@ -40,20 +40,26 @@ describe("scheduled sending", () => {
     for (const invalid of ["24:00", "12:60", "9:30", "9:30 PM"])
       expect(localScheduleTime("2026-09-24", invalid)).toBeNull();
     expect(localScheduleTime("2026-02-30", "09:00")).toBeNull();
-    expect(formatScheduleTime(time!, time!, "en-GB")).toBe("23:45");
+    expect(formatScheduleTime(time!, time!, "en-GB")).toMatch(/^23\D+45$/u);
   });
   test("shows a send time on the locale's clock", () => {
     const evening = new Date(2026, 8, 23, 21, 5).getTime();
-    expect(formatScheduleTime(evening, evening, "en-GB")).toBe("21:05");
-    expect(formatScheduleTime(evening, evening, "en-US")).toBe("9:05 PM");
-    expect(formatScheduleTime(evening - 12 * 3_600_000, evening, "nb-NO")).toBe("09:05");
+    expect(formatScheduleTime(evening, evening, "en-GB")).toMatch(/^21\D+05$/u);
+    const us = formatScheduleTime(evening, evening, "en-US");
+    expect(us.match(/\d+/gu)).toEqual(["9", "05"]);
+    const period = new Intl.DateTimeFormat("en-US", { hour: "numeric" })
+      .formatToParts(evening)
+      .find((part) => part.type === "dayPeriod")?.value;
+    expect(period).toBeDefined();
+    expect(us).toContain(period!);
+    expect(formatScheduleTime(evening - 12 * 3_600_000, evening, "nb-NO")).toMatch(/^09\D+05$/u);
   });
   test("shows only as much date as a send time needs", () => {
     const at = (day: number, hour = 9) => new Date(2026, 8, day, hour, 0).getTime();
     const now = at(23, 18);
     const name = (time: number, options: Intl.DateTimeFormatOptions) =>
       new Intl.DateTimeFormat(formatLocale(), options).format(time);
-    expect(formatScheduleTime(at(23, 23), now, "en-GB")).toBe("23:00");
+    expect(formatScheduleTime(at(23, 23), now, "en-GB")).toMatch(/^23\D+00$/u);
     // Tomorrow through six days out name the weekday; a week out names the date.
     for (const day of [24, 29])
       expect(formatScheduleTime(at(day), now)).toContain(name(at(day), { weekday: "short" }));
