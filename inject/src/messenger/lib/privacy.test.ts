@@ -5,6 +5,7 @@ import {
   isMetaText,
   locateSpan,
   mentionRanges,
+  nameRanges,
   prefixRange,
   previewIdentity,
 } from "./privacy";
@@ -21,30 +22,42 @@ describe("previewIdentity", () => {
     });
   });
 
-  test("finds the actor in event previews", () => {
-    expect(previewIdentity("Kari left the group")).toEqual({ prefix: "Kari", colon: false });
-    expect(previewIdentity("Ola reacted to your message")).toEqual({
-      prefix: "Ola",
-      colon: false,
-    });
-  });
-
-  test("skips first-person and non-name prefixes", () => {
-    expect(previewIdentity("You: sounds good")).toBeNull();
-    expect(previewIdentity("Du: den er grei")).toBeNull();
+  test("skips non-name prefixes and previews without one", () => {
     expect(previewIdentity("12:30: reminder")).toBeNull();
     expect(previewIdentity("123 456: reminder")).toBeNull();
+    expect(previewIdentity("Kari left the group")).toBeNull();
     expect(previewIdentity("no identity here")).toBeNull();
     expect(previewIdentity("")).toBeNull();
   });
 });
 
+describe("nameRanges", () => {
+  const names = ["Kim Andersen", "Kim", "Tobias"];
+  const words = (text: string) => nameRanges(text, names).map(([a, b]) => text.slice(a, b));
+
+  test("finds participants wherever the language puts them", () => {
+    expect(words("Kim sent a photo")).toEqual(["Kim"]);
+    expect(words("Kim hat ein Foto gesendet")).toEqual(["Kim"]);
+    expect(words("Tobias a réagi à votre message")).toEqual(["Tobias"]);
+    expect(words("Kim Andersen: see you, Tobias")).toEqual(["Kim Andersen", "Tobias"]);
+    expect(words("Kimさんが写真を送信しました")).toEqual(["Kim"]);
+    expect(nameRanges("민수님이 사진을 보냈습니다", ["민수"])).toEqual([[0, 2]]);
+  });
+
+  test("matches whole words only, and nothing without names", () => {
+    expect(words("Kimchi for dinner")).toEqual([]);
+    expect(words("Akim: hi")).toEqual([]);
+    expect(nameRanges("Kim: hi", [])).toEqual([]);
+    expect(nameRanges("A: hi", ["A"])).toEqual([]);
+  });
+});
+
 describe("isMetaText", () => {
-  test("timestamps, weekdays, and separators are metadata", () => {
+  test("relative times, numbers and separators are metadata", () => {
     expect(isMetaText("4h")).toBe(true);
     expect(isMetaText("12 m")).toBe(true);
-    expect(isMetaText("now")).toBe(true);
-    expect(isMetaText("Thu")).toBe(true);
+    expect(isMetaText("5 Min.")).toBe(true);
+    expect(isMetaText("3分")).toBe(true);
     expect(isMetaText("· 3")).toBe(true);
     expect(isMetaText("")).toBe(true);
   });
@@ -52,6 +65,7 @@ describe("isMetaText", () => {
   test("names are not metadata", () => {
     expect(isMetaText("Kari")).toBe(false);
     expect(isMetaText("Mo")).toBe(false);
+    expect(isMetaText("Thu")).toBe(false);
   });
 });
 

@@ -14,7 +14,6 @@ import {
   badgeIgnoresMutedConversations,
   observeConversationMute,
   observeDatabaseMute,
-  observeOpenThreadMute,
 } from "../lib/mute";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { readThreadStates, type ThreadState } from "../lib/thread-state";
@@ -103,12 +102,12 @@ export function initUnreadBadge() {
   // unrelated thread links elsewhere in the page.
   const unreadConversationState = () => {
     const ignoreMuted = badgeIgnoresMutedConversations(window.__CHATPANE_SETTINGS__);
+    // The open chat is read from the database even when its row is not
+    // mounted, so a mute changed there reaches the cache too.
     const openId = threadIdFromHref(location.pathname);
     if (openId) {
-      observeOpenThreadMute(openId, [
-        ...document.querySelectorAll('[role="main"]'),
-        ...document.querySelectorAll('[role="complementary"], [role="dialog"]'),
-      ]);
+      const known = threadStates.get(openId);
+      if (known) observeDatabaseMute(openId, known.muted);
     }
     const links = chatRows();
     const listedIds: string[] = [];
@@ -173,7 +172,7 @@ export function initUnreadBadge() {
       scrolledFromTop = el.scrollTop > 8;
       break;
     }
-    refreshThreadStates(listedIds);
+    refreshThreadStates(openId && !seen.has(openId) ? [...listedIds, openId] : listedIds);
     const listHydrated =
       rowObservations.length > 0 && rowObservations.every(({ hydrated }) => hydrated === true);
     const ready = listReadiness.observe(rowObservations);

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { conversationTextParts } from "./conversation-row";
-import { NativeSnippetPrefixes, patchNicknameSnippets } from "./nickname-snippets";
+import { NativeSnippetPrefixes, patchNicknameSnippets, readDraftLabel } from "./nickname-snippets";
 import type { NicknameMode } from "./nicknames";
 import { ConversationNotificationTracker, notificationDedupeKey } from "./notification-fallback";
 import type { ConversationNotificationNames } from "./notification-names";
@@ -105,15 +105,15 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
 
 test("draft state follows the mounted preview when a thread has duplicate rows", () => {
   const prefixes = new NativeSnippetPrefixes();
+  prefixes.draftLabel = "Draft:";
   const draft = {};
   const real = {};
   prefixes.rememberDraft("123", draft, "Draft: reply", true);
   prefixes.rememberDraft("123", real, "Incoming message", false);
   expect(prefixes.isDraft("123", "Draft: reply")).toBe(true);
   prefixes.rememberDraft("123", draft, "ready for review", true);
-  expect(prefixes.isDraft("123", "Utkast: ready for review")).toBe(true);
+  expect(prefixes.isDraft("123", "Draft: ready for review")).toBe(true);
   expect(prefixes.isDraft("123", "Draft:")).toBe(true);
-  expect(prefixes.isDraft("123", "Utkast:")).toBe(true);
   prefixes.rememberDraft("123", draft, "hello", true);
   expect(prefixes.isDraft("123", "hello")).toBe(false);
   expect(prefixes.isDraft("123", "Alice: hello")).toBe(false);
@@ -122,6 +122,26 @@ test("draft state follows the mounted preview when a thread has duplicate rows",
   prefixes.rememberDraft("123", draft, "Incoming message", false);
   expect(prefixes.isDraft("123", "Draft: reply")).toBe(false);
   expect(prefixes.isDraft("123", "Draft:")).toBe(false);
+});
+
+test("drafts are recognised by Messenger's own label, in any language", () => {
+  const prefixes = new NativeSnippetPrefixes();
+  prefixes.rememberDraft("123", {}, "bis morgen", true);
+  // Unknown label: nothing passes for a draft.
+  expect(prefixes.isDraft("123", "Entwurf: bis morgen")).toBe(false);
+  prefixes.draftLabel = readDraftLabel(
+    'function p(e){l=i&&c.jsxs("span",{style:{color:"#1763CF"},children:[s._(/*BTDS*/"Entwurf:")," "]})}',
+  );
+  expect(prefixes.draftLabel).toBe("Entwurf:");
+  expect(prefixes.isDraft("123", "Entwurf: bis morgen")).toBe(true);
+  expect(prefixes.isDraft("123", "Entwurf:")).toBe(true);
+  expect(prefixes.isDraft("123", "Draft: bis morgen")).toBe(false);
+});
+
+test("the draft label is read only when the source holds exactly one", () => {
+  expect(readDraftLabel('s._(/*BTDS*/"\\u00c9bauche :")')).toBe("\u00c9bauche :");
+  expect(readDraftLabel('s._("A:");s._("B:")')).toBeNull();
+  expect(readDraftLabel("function p(){}")).toBeNull();
 });
 
 test("sidebar settings preserve notification identity before preview truncation and emoji rendering", () => {

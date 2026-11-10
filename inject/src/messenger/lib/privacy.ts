@@ -1,37 +1,59 @@
 /* Text heuristics for Hide Names & Avatars: which strings are identity
- * (blur) vs. metadata (leave readable). */
+ * (blur) vs. metadata (leave readable). None depends on the UI language. */
 
 const PREVIEW_NAME_RE = /^([^:]{1,40}):(?=\s|$)/;
-const PREVIEW_EVENT_RE =
-  /^(.{1,40}?)(?=\s+(?:sent|replied|reacted|liked|laughed|loved|mentioned|shared|left|joined|added|removed|changed|created|named|started)\b)/i;
 
-/** Timestamps, weekday abbreviations, and separator runs — never identity. */
+/** Separator runs, bare numbers and short relative times ("5m", "5 Min.")
+ * — never identity. */
 export function isMetaText(value: string): boolean {
-  return (
-    !value ||
-    /^(\d+\s*(?:s|m|h|d|w|mo|y)|now|just now)$/i.test(value) ||
-    /^(sun|mon|tue|wed|thu|fri|sat)$/i.test(value) ||
-    /^[·•.,\s\d]+$/.test(value)
-  );
+  return !value || /^[·•.,\s\d]+$/.test(value) || /^\d+\s*\p{L}{1,4}\.?$/u.test(value);
 }
 
 /**
- * The sender-name prefix of a message-preview string: "Name: message" or
- * "Name left the group"-style event lines. Null when the preview carries no
- * identifiable prefix (including "You:"/first-person previews).
+ * The sender-name prefix of a "Name: message" preview, for when the chat's
+ * participants are unknown. Null when the preview carries no such prefix.
  */
 export function previewIdentity(value: string): { prefix: string; colon: boolean } | null {
-  const colon = value.match(PREVIEW_NAME_RE);
-  const event = colon ? null : value.match(PREVIEW_EVENT_RE);
-  const match = colon || event;
+  const match = value.match(PREVIEW_NAME_RE);
   if (!match) return null;
-
   const prefix = match[1]!.trim();
-  if (!prefix || prefix.length < 2 || /^(you|du|me|meg)$/i.test(prefix)) return null;
+  if (prefix.length < 2) return null;
   // Digits are valid in names ("Anna 2", band/group names). Reject only
   // punctuation/time-shaped prefixes rather than every digit-bearing sender.
   if (/[:;!?]/.test(prefix) || /^\d+(?:[ .-]\d+)*$/.test(prefix)) return null;
-  return { prefix, colon: !!colon };
+  return { prefix, colon: true };
+}
+
+const WORD_CHAR = /[\p{L}\p{M}\p{N}]/u;
+// Scripts written without spaces between words, or that attach particles
+// straight to a name (Japanese さん, Korean 님): a name there may run into
+// the next letter.
+const UNSPACED =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}]/u;
+
+const nameEdge = (beside: string | undefined, edge: string) =>
+  beside === undefined || !WORD_CHAR.test(beside) || UNSPACED.test(beside) || UNSPACED.test(edge);
+
+/**
+ * Offsets of the chat's participant names wherever they stand in a preview,
+ * as whole words: "Kim sent a photo", "Kim hat ein Foto gesendet",
+ * "Kimさんが写真を送信しました". A longer name wins over a shorter one inside it.
+ */
+export function nameRanges(text: string, names: Iterable<string>): [number, number][] {
+  const sorted = [...new Set([...names].map((name) => name.trim()))]
+    .filter((name) => name.length >= 2)
+    .sort((a, b) => b.length - a.length);
+  const ranges: [number, number][] = [];
+  for (const name of sorted) {
+    for (let from = text.indexOf(name); from !== -1; from = text.indexOf(name, from + 1)) {
+      const to = from + name.length;
+      if (!nameEdge(text[from - 1], name[0]!) || !nameEdge(text[to], name[name.length - 1]!))
+        continue;
+      if (ranges.some(([start, end]) => from < end && to > start)) continue;
+      ranges.push([from, to]);
+    }
+  }
+  return ranges.sort((a, b) => a[0] - b[0]);
 }
 
 /** A position in a run of text nodes: [node index, offset within it]. */

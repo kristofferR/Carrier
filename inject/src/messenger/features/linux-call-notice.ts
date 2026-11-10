@@ -5,16 +5,23 @@
 import { language, t } from "../../i18n";
 import { openUrl } from "../bridge";
 import { engineSupportsCalls } from "../lib/calls";
+import { pageRequire } from "../lib/facebook-loader";
+import { isRenderedBy, moduleExport } from "../lib/react-fiber";
 
-const CALL_BUTTON_LABELS = [
-  "Start a voice call",
-  "Start a video call",
-  "Voice calling is not supported on this browser",
-  "Video calling is not supported on this browser",
+// Messenger's voice and video call buttons, and the pair shown to join a call
+// already under way.
+const CALL_BUTTON_COMPONENTS = [
+  "MWV2ChatRTCButtonsBaseButton.react",
+  "MWV2ChatRTCButtonsJoinExistingChat.react",
 ];
-const CALL_BUTTONS = CALL_BUTTON_LABELS.map(
-  (label) => `[role="button"][aria-label="${label}"]`,
-).join(", ");
+
+/** Whether Messenger's call buttons rendered this button. */
+function isCallButton(button: Element): boolean {
+  const load = pageRequire();
+  return CALL_BUTTON_COMPONENTS.some((name) =>
+    isRenderedBy(button, moduleExport(load, name), load),
+  );
+}
 const ISSUE_URL = "https://github.com/kristofferR/Chatpane/issues/345";
 const WIDTH = 280;
 const GAP = 8;
@@ -97,9 +104,15 @@ export function initLinuxCallNotice() {
     "pointerover",
     (event) => {
       if (!(event.target instanceof Element) || event.target === host) return;
-      const button = event.target.closest(CALL_BUTTONS) ?? event.target.querySelector(CALL_BUTTONS);
-      if (button && inside(button.getBoundingClientRect(), event.clientX, event.clientY))
-        show(button);
+      const { clientX: x, clientY: y } = event;
+      const own = event.target.closest('[role="button"]');
+      const candidates = own ? [own] : event.target.querySelectorAll('[role="button"]');
+      for (const button of candidates) {
+        if (inside(button.getBoundingClientRect(), x, y) && isCallButton(button)) {
+          show(button);
+          return;
+        }
+      }
     },
     true,
   );

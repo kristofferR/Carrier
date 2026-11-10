@@ -1,11 +1,20 @@
 /* ----------------- Conversation & composer shortcuts ------------------ */
 // Caprine-parity actions (Ref #18, #30). Messenger is a minified React SPA
 // with no callable API, so each action is either a plain DOM op
-// (focus/navigate) or a click on Messenger's own control, resolved by stable
-// roles and aria-labels. Every lookup bails quietly when the control is
-// missing — Facebook reshuffles its markup often, and none of these exist on
-// the login page.
+// (focus/navigate) or a click on Messenger's own control, found by the
+// component that rendered it, which is the same in every language. Every
+// lookup bails quietly when the control is missing — Facebook reshuffles its
+// markup often, and none of these exist on the login page.
 import { emojiGlyph, SYSTEM_EMOJI_GLYPH_ATTR } from "../lib/emoji";
+import { pageRequire } from "../lib/facebook-loader";
+import {
+  ancestors,
+  fiberOf,
+  moduleExport,
+  propsOf,
+  renderDepth,
+  renders,
+} from "../lib/react-fiber";
 import { SEPARATOR_RE } from "../lib/threads";
 
 export function isShown(el: Element): boolean {
@@ -21,16 +30,33 @@ export function firstShown<E extends Element = HTMLElement>(
   return null;
 }
 
-// The visible button whose aria-label contains any of `needles` (lowercase).
-export function buttonByLabel(needles: string[], root?: ParentNode): HTMLElement | null {
-  for (const el of (root || document).querySelectorAll<HTMLElement>(
-    '[role="button"][aria-label], button[aria-label]',
-  )) {
-    if (!isShown(el)) continue;
-    const label = (el.getAttribute("aria-label") || "").toLowerCase();
-    if (needles.some((n) => label.includes(n))) return el;
+/**
+ * The shown button in `root` that one of Messenger's `components` rendered:
+ * a module's default export, or `[module, export]` for a named one. The one
+ * closest to its component wins: an open popover's own buttons sit further
+ * down the same component.
+ */
+export function componentButton(
+  components: readonly (string | readonly [string, string])[],
+  root: ParentNode,
+): HTMLElement | null {
+  const load = pageRequire();
+  const rendered = components
+    .map((ref) => (typeof ref === "string" ? moduleExport(load, ref) : moduleExport(load, ...ref)))
+    .filter((c) => c != null);
+  if (!rendered.length) return null;
+  let best: HTMLElement | null = null;
+  let bestDepth = Number.POSITIVE_INFINITY;
+  for (const el of root.querySelectorAll<HTMLElement>('[role="button"], button')) {
+    for (const component of rendered) {
+      const depth = renderDepth(el, component, load);
+      if (depth !== null && depth < bestDepth && isShown(el)) {
+        best = el;
+        bestDepth = depth;
+      }
+    }
   }
-  return null;
+  return best;
 }
 
 /** An element's text, with Facebook's emoji images read back as emoji. A
@@ -109,17 +135,20 @@ export function focusComposer(): boolean {
   return !!box;
 }
 
-// The info sidebar's Search circle is labelled just "Search" (and lives
-// inside [role=main]; the sidebar is not a complementary landmark). A bare
-// "Search" button only exists in main while the sidebar is open, so an exact
-// label match doubles as the "is the sidebar open?" check.
+// The info sidebar's Search circle: MWInboxInfoQuickActions' circle button
+// with the magnifying-glass icon. It only exists while the sidebar is open.
 function searchInConvoButton(): HTMLElement | null {
-  const root = document.querySelector('[role="main"]');
-  if (!root) return null;
-  for (const el of root.querySelectorAll<HTMLElement>('[role="button"][aria-label]')) {
+  const load = pageRequire();
+  const glass = moduleExport(load, "FBNucleusMagnifyingGlassFilled16Icon.react");
+  const quickActions = moduleExport(load, "MWInboxInfoQuickActions.react");
+  if (glass == null || quickActions == null) return null;
+  for (const el of document.querySelectorAll<HTMLElement>('[role="button"][aria-label]')) {
     if (!isShown(el)) continue;
-    const label = (el.getAttribute("aria-label") || "").trim().toLowerCase();
-    if (label === "search" || label === "search in conversation") return el;
+    let searchIcon = false;
+    for (const fiber of ancestors(fiberOf(el, load), 40)) {
+      searchIcon ||= propsOf(fiber).icon === glass;
+      if (searchIcon && renders(fiber, quickActions)) return el;
+    }
   }
   return null;
 }
@@ -150,26 +179,25 @@ export function searchInConversation(): boolean {
 
 // Composer controls live in the open thread's footer; scope to [role=main]
 // so chat-list controls can't match.
-function clickComposerButton(needles: string[]): boolean {
+function clickComposerButton(components: readonly string[]): boolean {
   const root = document.querySelector('[role="main"]');
-  const btn = root && buttonByLabel(needles, root);
+  const btn = root && componentButton(components, root);
   btn?.click();
   return !!btn;
 }
-export const openEmojiPicker = () => clickComposerButton(["choose an emoji"]);
-export const openGifPicker = () => clickComposerButton(["choose a gif"]);
-export const attachFiles = () => clickComposerButton(["attach a photo or video", "attach a file"]);
+// Each control in Messenger's composer and in its newer MWX composer.
+export const EMOJI_BUTTONS = ["MWV2ComposerEmojiButton.react", "MWXComposerEmojiButton.react"];
+export const openEmojiPicker = () => clickComposerButton(EMOJI_BUTTONS);
+export const openGifPicker = () =>
+  clickComposerButton(["MWV2ComposerGifButton.react", "MWXComposerGifButton.react"]);
+export const attachFiles = () =>
+  clickComposerButton(["MWV2ComposerFileButton.react", "MWXComposerAddFileButton.react"]);
 
 export function newConversation(): boolean {
   // Prefer Messenger's own compose control (SPA navigation, no reload)…
   const link = firstShown<HTMLAnchorElement>('a[href*="/messages/new"]');
   if (link) {
     link.click();
-    return true;
-  }
-  const btn = buttonByLabel(["new message"]);
-  if (btn) {
-    btn.click();
     return true;
   }
   // …falling back to the compose route (full page load).

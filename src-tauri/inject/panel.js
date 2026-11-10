@@ -174,7 +174,7 @@
     const close = document.createElement("button");
     close.type = "button";
     close.textContent = "✕";
-    close.setAttribute("aria-label", "Close");
+    close.setAttribute("aria-label", t("page.window.close"));
     Object.assign(close.style, {
       border: "0",
       padding: "0 2px",

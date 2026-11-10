@@ -6,6 +6,26 @@ import {
   readConversationNotificationNames,
 } from "./notification-names";
 
+/**
+ * The label Messenger puts before a draft in its chat list ("Draft:" in
+ * English), in the page's language: the one translated string in
+ * MWThreadSnippetForDisplay.react's source. Null unless there is exactly one.
+ */
+export function readDraftLabel(source: string): string | null {
+  const labels = new Set<string>();
+  for (const [, literal = ""] of source.matchAll(
+    /[\w$]+\._\(\s*(?:\/\*BTDS\*\/\s*)?"((?:[^"\\\n]|\\.)*)"/g,
+  )) {
+    try {
+      const label = String(JSON.parse(`"${literal}"`))
+        .replace(/\s+/g, " ")
+        .trim();
+      if (label) labels.add(label);
+    } catch {}
+  }
+  return labels.size === 1 ? [...labels][0]! : null;
+}
+
 /** Undo only the sender prefix that Chatpane rendered, before notification truncation. */
 export class NativeSnippetPrefixes {
   private readonly entries = new Map<string, { original: string; displayed: string }>();
@@ -25,18 +45,21 @@ export class NativeSnippetPrefixes {
     if (entries?.size === 0) this.drafts.delete(thread);
   }
 
+  /** Messenger's translated label before a draft ("Draft:"), read from its
+   * snippet component (see {@link readDraftLabel}). */
+  draftLabel: string | null = null;
+
   isDraft(thread: string, body: string) {
     const preview = body.replace(/\s+/g, " ").trim();
     const drafts = this.drafts.get(thread);
-    if (!drafts?.size) return false;
-    const label = /^(?:Draft|Utkast):\s*/iu.exec(preview)?.[0];
-    if (!label) return false;
+    const label = this.draftLabel;
+    if (!drafts?.size || !label || !preview.startsWith(label)) return false;
     // The row scraper can see only Messenger's label while the composer still
     // holds the draft text. The mounted draft state disambiguates that label.
-    if (preview === label.trim()) return true;
+    if (preview === label) return true;
     return [...drafts.values()].some((snippet) => {
       if (snippet.slice(0, 240) === preview) return true;
-      return `${label}${snippet}`.slice(0, 240) === preview;
+      return `${label} ${snippet}`.slice(0, 240) === preview;
     });
   }
 

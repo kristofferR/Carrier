@@ -1,4 +1,4 @@
-import { buttonByLabel, firstShown, isShown } from "../features/conversation-actions";
+import { componentButton, firstShown, isShown } from "../features/conversation-actions";
 
 export const COMPOSER_SELECTOR = '[role="main"] [contenteditable="true"][role="textbox"]';
 export const findComposer = () => firstShown<HTMLElement>(COMPOSER_SELECTOR);
@@ -33,8 +33,14 @@ export function hasComposerMedia(box: HTMLElement): boolean {
       continue;
     return true;
   }
-  return !!buttonByLabel(
-    ["remove attachment", "remove photo", "remove video", "remove file"],
+  // A file attachment shows no image; its staged chip still holds a button.
+  return !!componentButton(
+    [
+      "MWV2ComposerMediaStagingItem.react",
+      ["MWXComposerAttachmentPreview.react", "MWXComposerFileAttachmentPreview"],
+      ["MWXComposerAttachmentPreview.react", "MWXComposerImageAttachmentPreview"],
+      ["MWXComposerAttachmentPreview.react", "MWXComposerVideoAttachmentPreview"],
+    ],
     region,
   );
 }
