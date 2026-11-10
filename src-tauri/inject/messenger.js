@@ -9118,7 +9118,9 @@ ${button.innerHTML}`)
         if (!target || !message) return;
         const control2 = target.closest(CONTROL);
         if (control2 && message.contains(control2)) return;
-        if (getSelection()?.isCollapsed === false) return;
+        const selection = getSelection();
+        if (selection && !selection.isCollapsed && selection.rangeCount > 0 && selection.getRangeAt(0).intersectsNode(message))
+          return;
         if (!besideInk(event.clientX, inkBoxes(message))) return;
         void pressMessageAction(message, "shared.context.reply").then((replied) => {
           if (!replied) return;
