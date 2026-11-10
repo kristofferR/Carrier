@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "ออกจากระบบ Facebook ไม่ได้",
   "dialog.log_out.facebook_failed_message": "Facebook ไม่ได้ยุติเซสชัน ({error}) {app} จะยังคงลบข้อมูลของบัญชีนี้ออกจากคอมพิวเตอร์เครื่องนี้และเริ่มใหม่ หากต้องการยุติเซสชันบน Facebook ด้วย ให้ออกจากระบบอุปกรณ์นี้ในการตั้งค่า “ตำแหน่งที่คุณเข้าสู่ระบบ” ของ Facebook",
   "dialog.log_out.restart": "เริ่มใหม่",
+  "dialog.clear_incomplete.title": "ข้อมูลบางส่วนไม่ถูกลบ",
+  "dialog.clear_incomplete.message": "{app} ลบข้อมูล Messenger ทั้งหมดออกจากคอมพิวเตอร์เครื่องนี้ไม่ได้ ({error}) หากต้องการลองอีกครั้ง ให้ใช้ \"ล้างแคชและเริ่มใหม่\"",
   "dialog.webview2_missing.message": "{app} ต้องใช้ Microsoft Edge WebView2 Runtime ซึ่งยังไม่ได้ติดตั้งบนคอมพิวเตอร์เครื่องนี้\n\nเลือก “ตกลง” เพื่อเปิดหน้าดาวน์โหลดของ Microsoft ติดตั้งรันไทม์แบบ Evergreen แล้วเปิด {app} อีกครั้ง",
   "download.dialog.title": "บันทึกไฟล์ดาวน์โหลดจาก Messenger",
   "error.config_folder": "ไม่พบโฟลเดอร์การกำหนดค่าของ {app}: {error}",

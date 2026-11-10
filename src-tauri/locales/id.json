@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Tidak Dapat Keluar dari Facebook",
   "dialog.log_out.facebook_failed_message": "Facebook tidak mengakhiri sesi ({error}). {app} tetap menghapus data akun ini dari komputer ini dan memulai ulang. Untuk mengakhiri sesi di Facebook juga, keluarkan perangkat ini lewat pengaturan “Tempat Anda login” di Facebook.",
   "dialog.log_out.restart": "Mulai Ulang",
+  "dialog.clear_incomplete.title": "Sebagian Data Tidak Terhapus",
+  "dialog.clear_incomplete.message": "{app} tidak dapat menghapus semua data Messenger-nya dari komputer ini ({error}). Untuk mencoba lagi, gunakan \"Hapus Cache dan Mulai Ulang\".",
   "dialog.webview2_missing.message": "{app} memerlukan Microsoft Edge WebView2 Runtime, yang belum terpasang di komputer ini.\n\nPilih OK untuk membuka halaman unduhan Microsoft. Pasang runtime Evergreen, lalu jalankan {app} lagi.",
   "download.dialog.title": "Simpan unduhan Messenger",
   "error.config_folder": "tidak dapat menemukan folder konfigurasi {app}: {error}",

@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Não foi possível sair do Facebook",
   "dialog.log_out.facebook_failed_message": "O Facebook não encerrou a sessão ({error}). Mesmo assim, o {app} apaga os dados desta conta deste computador e reinicia. Para encerrar a sessão no Facebook também, desconecte este dispositivo em “Onde você está conectado”, nas configurações do Facebook.",
   "dialog.log_out.restart": "Reiniciar",
+  "dialog.clear_incomplete.title": "Alguns dados não foram excluídos",
+  "dialog.clear_incomplete.message": "O {app} não conseguiu excluir todos os seus dados do Messenger deste computador ({error}). Para tentar de novo, use \"Limpar cache e reiniciar\".",
   "dialog.webview2_missing.message": "O {app} precisa do Microsoft Edge WebView2 Runtime, que não está instalado neste computador.\n\nEscolha OK para abrir a página de download da Microsoft. Instale o runtime Evergreen e abra o {app} de novo.",
   "download.dialog.title": "Salvar download do Messenger",
   "error.config_folder": "não foi possível localizar a pasta de configuração do {app}: {error}",

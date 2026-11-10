@@ -8,6 +8,7 @@
  */
 
 import { readMessengerDatabase } from "./messenger-db";
+import { pageId } from "./page-notifications";
 
 export interface ThreadState {
   unread: boolean;
@@ -84,15 +85,17 @@ interface NewestMessageQueries {
   toArrayAsync(query: unknown): Promise<unknown>;
 }
 
-/**
- * The id of the conversation's newest message in Messenger's database, or
- * null when it can't be read. Never writes to Messenger.
- */
-export async function readNewestMessageId(
+/** A conversation's newest message: its id, and who sent it when readable. */
+export interface NewestMessage {
+  id: string;
+  sender: string | null;
+}
+
+export async function readNewestMessage(
   id: string,
   load: unknown,
   timeoutMs = 750,
-): Promise<string | null> {
+): Promise<NewestMessage | null> {
   if (!/^\d+$/.test(id)) return null;
   const newest = await readMessengerDatabase(
     load,
@@ -102,10 +105,13 @@ export async function readNewestMessageId(
       const rows = await q.toArrayAsync(
         q.fromTableDescending(messages).getKeyRange(i64.of_string(id)).take(1),
       );
-      const messageId = Array.isArray(rows)
-        ? (rows[0] as { messageId?: unknown } | undefined)?.messageId
+      const row = Array.isArray(rows)
+        ? (rows[0] as { messageId?: unknown; senderId?: unknown } | undefined)
         : undefined;
-      return typeof messageId === "string" && messageId ? messageId : null;
+      const messageId = row?.messageId;
+      return typeof messageId === "string" && messageId
+        ? { id: messageId, sender: pageId(row?.senderId, load) }
+        : null;
     },
     timeoutMs,
   );

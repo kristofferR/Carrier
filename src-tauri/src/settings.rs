@@ -805,9 +805,13 @@ fn push_macos_webview_store_paths(paths: &mut Vec<PathBuf>, home: &Path, name: &
 
 fn webview_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
     let mut paths = Vec::new();
+    // Everything but the log folder: this run's log file is already open
+    // there, and deleting it would lose the log of the clear itself. On
+    // Windows the cache folder *is* the local data folder that holds `logs`.
+    let logs = app.path().app_log_dir().ok();
 
     if let Ok(cache) = app.path().app_cache_dir() {
-        paths.push(cache);
+        push_except_logs(&mut paths, cache, logs.as_deref());
     }
 
     #[cfg(target_os = "macos")]
@@ -821,26 +825,32 @@ fn webview_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
         }
     }
 
-    // Everything but the log folder: this run's log file is already open
-    // there, and deleting it would lose the log of the clear itself.
     #[cfg(not(target_os = "macos"))]
     if let Ok(local_data) = app.path().app_local_data_dir() {
-        let logs = app.path().app_log_dir().ok();
-        match std::fs::read_dir(&local_data) {
-            Ok(entries) => paths.extend(
-                entries
-                    .flatten()
-                    .map(|entry| entry.path())
-                    .filter(|path| Some(path) != logs.as_ref()),
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => paths.push(local_data),
-        }
+        push_except_logs(&mut paths, local_data, logs.as_deref());
     }
 
     paths.sort();
     paths.dedup();
     paths
+}
+
+/// `root`, or its entries but the one leading to `logs` when `logs` is inside it.
+fn push_except_logs(paths: &mut Vec<PathBuf>, root: PathBuf, logs: Option<&Path>) {
+    let Some(logs) = logs.filter(|logs| logs.starts_with(&root)) else {
+        paths.push(root);
+        return;
+    };
+    match std::fs::read_dir(&root) {
+        Ok(entries) => paths.extend(
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| !logs.starts_with(path)),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => paths.push(root),
+    }
 }
 
 /// What Chatpane itself derives from the signed-in account, beyond the webview.
@@ -858,6 +868,12 @@ fn account_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
     paths
 }
 
+/// How long a launch waits for files the previous instance still holds:
+/// WebView2's browser process outlives Chatpane's own exit (restart, Log Out)
+/// by a second or two, and its open files can't be deleted until it's gone.
+const CLEAR_RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+const CLEAR_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
 pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
     let Ok(marker) = clear_webview_data_marker(app) else {
         return;
@@ -871,20 +887,63 @@ pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
         paths.extend(account_data_paths(app));
     }
 
-    let mut all_removed = true;
-    for path in paths {
-        if let Err(e) = remove_path_if_exists(&path) {
-            all_removed = false;
-            log::error!("failed to remove webview data path {}: {e}", path.display());
-        }
-    }
+    let started = Instant::now();
+    let failures = remove_paths_until(paths, started + CLEAR_RETRY_WINDOW);
 
-    // Only clear the retry marker once every data path is actually gone. If any
-    // removal failed, keep the marker so the next launch retries — otherwise a
-    // single failure would silently abandon the "clear cache" request and leave
-    // cookies/cache behind.
-    if all_removed && let Err(e) = std::fs::remove_file(&marker) {
+    // The request is consumed on this launch even if something stayed behind.
+    // Retrying on a later launch would delete whatever account the user has
+    // signed in to since: a Log Out from earlier would log them out again.
+    if let Err(e) = std::fs::remove_file(&marker) {
         log::warn!("failed to remove clear-cache marker: {e}");
+    }
+    if failures.is_empty() {
+        if started.elapsed() > CLEAR_RETRY_INTERVAL {
+            log::info!(
+                "cleared Chatpane's data after waiting {} ms for files in use",
+                started.elapsed().as_millis()
+            );
+        }
+        return;
+    }
+    for (path, error) in &failures {
+        log::error!(
+            "failed to remove webview data path {}: {error}",
+            path.display()
+        );
+    }
+    let (path, error) = &failures[0];
+    let error = format!("{}: {error}", path.display());
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    app.dialog()
+        .message(crate::i18n::tf(
+            "dialog.clear_incomplete.message",
+            &[("error", &error)],
+        ))
+        .title(crate::i18n::t("dialog.clear_incomplete.title"))
+        .kind(MessageDialogKind::Warning)
+        .show(|_| {});
+}
+
+/// Removes `paths`, retrying the ones that fail (typically files still open in
+/// the previous instance's web process) until `deadline`. Returns what's left.
+fn remove_paths_until(
+    mut paths: Vec<PathBuf>,
+    deadline: Instant,
+) -> Vec<(PathBuf, std::io::Error)> {
+    loop {
+        let failures: Vec<_> = paths
+            .into_iter()
+            .filter_map(|path| {
+                remove_path_if_exists(&path)
+                    .err()
+                    .map(|error| (path, error))
+            })
+            .collect();
+        if failures.is_empty() || Instant::now() >= deadline {
+            return failures;
+        }
+        std::thread::sleep(CLEAR_RETRY_INTERVAL);
+        paths = failures.into_iter().map(|(path, _)| path).collect();
     }
 }
 
@@ -1541,6 +1600,35 @@ mod tests {
             (new.app_icon.as_str(), new.app_icon_dark.as_str())
         );
         assert_eq!(s.block_typing_indicator, new.block_typing_indicator);
+    }
+
+    #[test]
+    fn data_clear_keeps_a_log_folder_nested_in_the_cleared_folder() {
+        // Windows: the cache folder is the local data folder that holds `logs`.
+        let root = std::env::temp_dir().join(format!(
+            "chatpane-clear-logs-{}-{}",
+            std::process::id(),
+            SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("logs")).unwrap();
+        std::fs::create_dir_all(root.join("EBWebView")).unwrap();
+        std::fs::write(root.join("notification-icon.ico"), b"").unwrap();
+
+        let mut paths = Vec::new();
+        push_except_logs(&mut paths, root.clone(), Some(&root.join("logs")));
+        paths.sort();
+        assert_eq!(
+            paths,
+            [root.join("EBWebView"), root.join("notification-icon.ico")]
+        );
+
+        // A log folder elsewhere leaves the root to be removed whole.
+        let mut paths = Vec::new();
+        push_except_logs(&mut paths, root.clone(), Some(Path::new("/elsewhere/logs")));
+        assert_eq!(paths, std::slice::from_ref(&root));
+
+        assert!(remove_paths_until(paths, Instant::now()).is_empty());
+        assert!(!root.exists());
     }
 
     #[test]

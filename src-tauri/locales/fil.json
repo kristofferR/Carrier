@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Hindi Makapag-log Out sa Facebook",
   "dialog.log_out.facebook_failed_message": "Hindi tinapos ng Facebook ang session ({error}). Buburahin pa rin ng {app} ang data ng account na ito sa computer na ito at magre-restart. Para tapusin din ang session sa Facebook, i-log out ang device na ito sa setting na “Kung saan ka naka-log in” ng Facebook.",
   "dialog.log_out.restart": "I-restart",
+  "dialog.clear_incomplete.title": "May Data na Hindi Nabura",
+  "dialog.clear_incomplete.message": "Hindi nabura ng {app} ang lahat ng data nito sa Messenger mula sa computer na ito ({error}). Para subukan ulit, gamitin ang \"I-clear ang Cache at I-restart\".",
   "dialog.webview2_missing.message": "Kailangan ng {app} ang Microsoft Edge WebView2 Runtime, na hindi naka-install sa computer na ito.\n\nPiliin ang OK para buksan ang download page ng Microsoft. I-install ang Evergreen runtime, tapos buksan ulit ang {app}.",
   "download.dialog.title": "I-save ang download mula sa Messenger",
   "error.config_folder": "hindi mahanap ang config folder ng {app}: {error}",

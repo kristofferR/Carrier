@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "ອອກຈາກລະບົບ Facebook ບໍ່ໄດ້",
   "dialog.log_out.facebook_failed_message": "Facebook ບໍ່ໄດ້ສິ້ນສຸດເຊດຊັນ ({error}). {app} ຍັງຈະລຶບຂໍ້ມູນຂອງບັນຊີນີ້ອອກຈາກຄອມພິວເຕີເຄື່ອງນີ້ ແລ້ວເລີ່ມໃໝ່. ເພື່ອສິ້ນສຸດເຊດຊັນໃນ Facebook ນຳ, ໃຫ້ອອກຈາກລະບົບອຸປະກອນນີ້ໃນການຕັ້ງຄ່າ “Where you're logged in” ຂອງ Facebook.",
   "dialog.log_out.restart": "ເລີ່ມໃໝ່",
+  "dialog.clear_incomplete.title": "ຂໍ້ມູນບາງສ່ວນບໍ່ໄດ້ຖືກລຶບ",
+  "dialog.clear_incomplete.message": "{app} ລຶບຂໍ້ມູນ Messenger ທັງໝົດຂອງມັນອອກຈາກຄອມພິວເຕີນີ້ບໍ່ໄດ້ ({error}). ເພື່ອລອງໃໝ່, ໃຫ້ໃຊ້ \"ລ້າງແຄຊ ແລະ ເລີ່ມໃໝ່\".",
   "dialog.webview2_missing.message": "{app} ຕ້ອງໃຊ້ Microsoft Edge WebView2 Runtime ເຊິ່ງຍັງບໍ່ໄດ້ຕິດຕັ້ງໃນຄອມພິວເຕີເຄື່ອງນີ້.\n\nເລືອກ OK ເພື່ອເປີດໜ້າດາວໂຫຼດຂອງ Microsoft. ຕິດຕັ້ງ Evergreen runtime ແລ້ວເປີດ {app} ອີກຄັ້ງ.",
   "download.dialog.title": "ບັນທຶກໄຟລ໌ດາວໂຫຼດຈາກ Messenger",
   "error.config_folder": "ບໍ່ພົບໂຟນເດີການຕັ້ງຄ່າຂອງ {app}: {error}",

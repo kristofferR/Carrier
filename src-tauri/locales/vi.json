@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Không thể đăng xuất khỏi Facebook",
   "dialog.log_out.facebook_failed_message": "Facebook chưa kết thúc phiên ({error}). {app} vẫn xóa dữ liệu của tài khoản này khỏi máy tính này và khởi động lại. Để kết thúc cả phiên trên Facebook, hãy đăng xuất thiết bị này trong phần cài đặt “Nơi bạn đã đăng nhập” của Facebook.",
   "dialog.log_out.restart": "Khởi động lại",
+  "dialog.clear_incomplete.title": "Một số dữ liệu chưa được xóa",
+  "dialog.clear_incomplete.message": "{app} không thể xóa toàn bộ dữ liệu Messenger khỏi máy tính này ({error}). Để thử lại, hãy dùng \"Xóa bộ nhớ đệm và khởi động lại\".",
   "dialog.webview2_missing.message": "{app} cần Microsoft Edge WebView2 Runtime, nhưng thành phần này chưa được cài trên máy tính.\n\nChọn OK để mở trang tải xuống của Microsoft. Cài đặt bản runtime Evergreen, rồi mở lại {app}.",
   "download.dialog.title": "Lưu tệp tải xuống từ Messenger",
   "error.config_folder": "không tìm thấy thư mục cấu hình của {app}: {error}",

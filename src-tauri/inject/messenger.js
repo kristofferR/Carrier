@@ -8,6 +8,13 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+  // inject/src/native-timers.ts
+  var page = window;
+  var setTimeout = page.setTimeout.bind(page);
+  var clearTimeout = page.clearTimeout.bind(page);
+  var setInterval = page.setInterval.bind(page);
+  var clearInterval = page.clearInterval.bind(page);
+
   // inject/src/i18n.ts
   var ENGLISH = { lang: "en", dir: "ltr", strings: {} };
   function current() {
@@ -2358,8 +2365,8 @@ ${button.innerHTML}`)
   };
   var workerId = () => {
     try {
-      const page = window;
-      const state3 = page.require?.("MAWWaitForBackendSetup");
+      const page2 = window;
+      const state3 = page2.require?.("MAWWaitForBackendSetup");
       return state3?.getCurrentWorkerID?.();
     } catch (_) {
       return void 0;
@@ -2367,8 +2374,8 @@ ${button.innerHTML}`)
   };
   var workerSetupState = () => {
     try {
-      const page = window;
-      const state3 = page.require?.("MAWWaitForBackendSetup");
+      const page2 = window;
+      const state3 = page2.require?.("MAWWaitForBackendSetup");
       if (state3?.isBackendSetupSettled?.() !== true) {
         return state3?.isBackendSetupInProgress?.() === true ? "starting" : "unknown";
       }
@@ -2768,8 +2775,8 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/features/worker-recovery.ts
   var loadFacebookModule = (name) => {
-    const page = window;
-    return page.require?.(name);
+    const page2 = window;
+    return page2.require?.(name);
   };
   var workerReplacement = new DedicatedWorkerReplacement(loadFacebookModule);
   var workerRecovery = new FacebookWorkerRecovery(
@@ -2792,8 +2799,8 @@ ${button.innerHTML}`)
   var NETWORK_RESTORATION_GRACE_MS = 15e3;
   function createSilentRecovery(options) {
     const budget = new SilentRecoveryBudget();
-    const nativeSetTimeout5 = window.setTimeout.bind(window);
-    const nativeClearTimeout4 = window.clearTimeout.bind(window);
+    const nativeSetTimeout5 = setTimeout.bind(window);
+    const nativeClearTimeout4 = clearTimeout.bind(window);
     const now = performance.now.bind(performance);
     const nativeFetch = typeof window.fetch === "function" ? window.fetch.bind(window) : void 0;
     const stuckWorker = new StuckWorkerReload(
@@ -3155,7 +3162,7 @@ ${button.innerHTML}`)
       performance.now.bind(performance)
     );
     const documentEpochMs = Math.floor(performance.timeOrigin);
-    const nativeSetTimeout5 = window.setTimeout.bind(window);
+    const nativeSetTimeout5 = setTimeout.bind(window);
     const nativeNow2 = performance.now.bind(performance);
     let reloadRequestedAt;
     let unloadObserved = false;
@@ -3551,7 +3558,7 @@ ${button.innerHTML}`)
       }
     };
     let applied2 = 0;
-    window.setInterval(() => {
+    setInterval(() => {
       if (document.hidden) return;
       if (!document.querySelector(`[role="main"] [style*="${GRADIENT_VAR}"]`)) return;
       readSheets();
@@ -5327,9 +5334,9 @@ ${button.innerHTML}`)
         const notify = () => Reflect.apply(trigger, this, args);
         let check;
         try {
-          const page = load();
-          recordNotifiedMessage(args[1], page);
-          check = readOldNews(args[0], args[1], page);
+          const page2 = load();
+          recordNotifiedMessage(args[1], page2);
+          check = readOldNews(args[0], args[1], page2);
         } catch {
           return notify();
         }
@@ -5737,7 +5744,7 @@ ${button.innerHTML}`)
   var nativeObjectEntries = Object.entries;
   var nativeReflectApply3 = Reflect.apply;
   var nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
-  var nativeSetTimeout4 = window.setTimeout;
+  var nativeSetTimeout4 = setTimeout;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeContains = Node.prototype.contains;
@@ -6597,7 +6604,7 @@ ${button.innerHTML}`)
       if (button) {
         decline(button);
       } else if (Date.now() < deadline && !retryTimer) {
-        retryTimer = window.setTimeout(() => {
+        retryTimer = setTimeout(() => {
           retryTimer = 0;
           schedule();
         }, 250);
@@ -6788,7 +6795,7 @@ ${button.innerHTML}`)
     };
     const scheduleScan = () => {
       if (scanTimer !== void 0) return;
-      scanTimer = window.setTimeout(scan, SCAN_DELAY_MS);
+      scanTimer = setTimeout(scan, SCAN_DELAY_MS);
     };
     const defer = (image) => {
       image.loading = "lazy";
@@ -8322,7 +8329,7 @@ ${button.innerHTML}`)
   // inject/src/messenger/features/facebook-modules.ts
   var SEARCH_INDEX_WAKE_MS = 5 * 6e4;
   function initFacebookModuleInterception() {
-    const page = window;
+    const page2 = window;
     const shouldBlockTelemetry = () => window.__CHATPANE_SETTINGS__?.block_telemetry === true;
     const wrappedDefines = /* @__PURE__ */ new WeakSet();
     const interceptedFactories = /* @__PURE__ */ new WeakSet();
@@ -8338,8 +8345,8 @@ ${button.innerHTML}`)
     installMessengerSoundPlayback();
     const wakeSearchIndex = () => {
       searchIndex.wake();
-      if (pauseTimer !== void 0) window.clearTimeout(pauseTimer);
-      pauseTimer = window.setTimeout(() => {
+      if (pauseTimer !== void 0) clearTimeout(pauseTimer);
+      pauseTimer = setTimeout(() => {
         pauseTimer = void 0;
         searchIndex.pause();
       }, SEARCH_INDEX_WAKE_MS);
@@ -8401,7 +8408,7 @@ ${button.innerHTML}`)
         });
         return;
       }
-      let current2 = wrap(page.__d);
+      let current2 = wrap(page2.__d);
       Object.defineProperty(window, "__d", {
         configurable: true,
         enumerable: true,
@@ -11333,17 +11340,17 @@ ${button.innerHTML}`)
       return row;
     }
     consumeRowForPage(title, body, at, matchWindowMs, candidateRows, thread2) {
-      const page = { title, body, thread: thread2 };
+      const page2 = { title, body, thread: thread2 };
       const matches = [...this.rows.values()].filter((row) => {
         const age = at - row.at;
-        return (thread2 === void 0 || row.key === thread2) && age >= 0 && age <= matchWindowMs && pageNotificationMatchesRow(page, row);
+        return (thread2 === void 0 || row.key === thread2) && age >= 0 && age <= matchWindowMs && pageNotificationMatchesRow(page2, row);
       });
       if (matches.length !== 1) return null;
       if (candidateRows) {
         const candidateKeys = /* @__PURE__ */ new Set();
         for (const candidate of candidateRows) {
           if (thread2 !== void 0 && candidate.key !== thread2) continue;
-          if (pageNotificationMatchesRow(page, candidate)) candidateKeys.add(candidate.key);
+          if (pageNotificationMatchesRow(page2, candidate)) candidateKeys.add(candidate.key);
         }
         if (candidateKeys.size !== 1 || !candidateKeys.has(matches[0].key)) return null;
       }
@@ -11490,17 +11497,17 @@ ${button.innerHTML}`)
     const titlesMatch = matchesExactOrTruncated(normalizedPageTitle, normalizedRowTitle);
     const normalizedPageBody = normalizeNotificationText(pageBody);
     const normalizedRowBody = normalizeNotificationText(rowBody);
-    const page = splitGroupSender(normalizedPageBody);
+    const page2 = splitGroupSender(normalizedPageBody);
     const row = splitGroupSender(normalizedRowBody);
-    const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
-    return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
+    const sendersCompatible = page2.sender === null || row.sender === null || page2.sender === row.sender;
+    return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page2.message, row.message));
   }
-  function pageNotificationMatchesRow(page, row) {
-    if (page.thread === void 0 || page.thread !== row.key) {
-      return notificationTextMatches(page.title, page.body, row.title, row.body);
+  function pageNotificationMatchesRow(page2, row) {
+    if (page2.thread === void 0 || page2.thread !== row.key) {
+      return notificationTextMatches(page2.title, page2.body, row.title, row.body);
     }
-    return notificationTextMatches("", page.body, "", row.body) || matchesExactOrTruncated(
-      normalizeNotificationText(page.body),
+    return notificationTextMatches("", page2.body, "", row.body) || matchesExactOrTruncated(
+      normalizeNotificationText(page2.body),
       splitGroupSender(normalizeNotificationText(row.body)).message
     );
   }
@@ -11780,7 +11787,7 @@ ${button.innerHTML}`)
       timeoutMs
     );
   }
-  async function readNewestMessageId(id, load, timeoutMs = 750) {
+  async function readNewestMessage(id, load, timeoutMs = 750) {
     if (!/^\d+$/.test(id)) return null;
     const newest = await readMessengerDatabase(
       load,
@@ -11790,8 +11797,9 @@ ${button.innerHTML}`)
         const rows = await q.toArrayAsync(
           q.fromTableDescending(messages).getKeyRange(i64.of_string(id)).take(1)
         );
-        const messageId = Array.isArray(rows) ? rows[0]?.messageId : void 0;
-        return typeof messageId === "string" && messageId ? messageId : null;
+        const row = Array.isArray(rows) ? rows[0] : void 0;
+        const messageId = row?.messageId;
+        return typeof messageId === "string" && messageId ? { id: messageId, sender: pageId(row?.senderId, load2) } : null;
       },
       timeoutMs
     );
@@ -11928,9 +11936,9 @@ ${button.innerHTML}`)
   var TRACE2 = "ChatpaneReactionNotifications";
   function watchReactions(announce) {
     if (window.opener) return;
-    const start = window.setInterval(() => {
+    const start = setInterval(() => {
       if (!chatRows().length) return;
-      window.clearInterval(start);
+      clearInterval(start);
       loadFacebookModules(pageRequire(), ["ReQL", "LSDatabaseSingleton", "I64"]).then(async ([q, singleton]) => {
         const load = pageRequire();
         const db = await singleton?.LSDatabaseSingleton;
@@ -12829,11 +12837,11 @@ ${button.innerHTML}`)
         await learnThreadKind(conversation.key);
         const [states, newest] = await Promise.all([
           readThreadStates([conversation.key], pageRequire(), Date.now()),
-          readNewestMessageId(conversation.key, pageRequire())
+          readNewestMessage(conversation.key, pageRequire())
         ]);
         const fresh = states?.get(conversation.key);
         if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
-        const announced = newest !== null && (pageMessages.wasRaised(newest) || pageMessages.isStale(newest));
+        const announced = newest !== null && (pageMessages.wasRaised(newest.id) || pageMessages.isStale(newest.id) || newest.sender !== null && newest.sender === accountId(document.cookie));
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const settings = window.__CHATPANE_SETTINGS__ || {};
         if (fresh?.unread === false || announced || suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
@@ -14247,7 +14255,7 @@ ${text2}`)) {
     let lastRunAt = null;
     const schedule = (delay) => {
       if (timer) return;
-      timer = window.setTimeout(() => {
+      timer = setTimeout(() => {
         timer = 0;
         const wait = readAheadWait(lastRunAt, Date.now());
         if (wait > 0) return schedule(wait);
@@ -14255,12 +14263,12 @@ ${text2}`)) {
         void round();
       }, delay);
     };
-    const start = window.setInterval(() => {
+    const start = setInterval(() => {
       if (!chatRows().length) return;
-      window.clearInterval(start);
+      clearInterval(start);
       schedule(8e3);
       window.addEventListener("blur", () => schedule(2e3));
-      window.setInterval(() => schedule(0), 4 * 6e4);
+      setInterval(() => schedule(0), 4 * 6e4);
       loadFacebookModules(pageRequire(), ["ReQL", "LSDatabaseSingleton"]).then(async ([q, singleton]) => {
         const db = await singleton?.LSDatabaseSingleton;
         const threads = db && q.fromTableAscending(db.tables.threads);
@@ -14604,7 +14612,7 @@ ${text2}`)) {
     let busy2 = false;
     let panel = null;
     let panelThread = null;
-    let page = "main";
+    let page2 = "main";
     let editing = null;
     let sourceBox = null;
     let sourceText = "";
@@ -14772,7 +14780,7 @@ ${text2}`)) {
     };
     const hasDraft = () => sourceText.trim() !== "";
     const show = (next, item = null, returnTo) => {
-      page = next;
+      page2 = next;
       editing = item;
       render();
       if (!panel) return;
@@ -14781,7 +14789,7 @@ ${text2}`)) {
     };
     const back = () => {
       if (editing) show("list");
-      else if (page !== "main" && hasDraft()) show("main", null, page);
+      else if (page2 !== "main" && hasDraft()) show("main", null, page2);
       else return false;
       return true;
     };
@@ -14933,7 +14941,7 @@ ${text2}`)) {
           actions.append(
             action(t("page.schedule.cancel"), () => {
               void request2({ op: "cancel", id: row.id }).then(() => {
-                if (page === "list") show("list");
+                if (page2 === "list") show("list");
               }).catch(failed);
             })
           );
@@ -14944,16 +14952,16 @@ ${text2}`)) {
     };
     const render = () => {
       if (!panel) return;
-      if (page === "list" && !rows.length) {
+      if (page2 === "list" && !rows.length) {
         if (!hasDraft()) {
           close(true);
           return;
         }
-        page = "main";
+        page2 = "main";
       }
       panel.replaceChildren();
-      if (page === "custom") customPage(panel);
-      else if (page === "list") listPage(panel);
+      if (page2 === "custom") customPage(panel);
+      else if (page2 === "list") listPage(panel);
       else mainPage(panel);
       syncColors();
       positionPanel();
@@ -15221,7 +15229,7 @@ ${text2}`)) {
           }
         );
       }
-      window.clearTimeout(hideTimer);
+      clearTimeout(hideTimer);
       if (covered) return hide();
       if (place.height !== shownHeight) {
         shownHeight = place.height;
@@ -15229,7 +15237,7 @@ ${text2}`)) {
       }
       indicator.style.transform = `translate(${place.left}px, ${place.top}px)`;
       indicator.style.opacity = "1";
-      hideTimer = window.setTimeout(() => {
+      hideTimer = setTimeout(() => {
         hide();
         coverPane = null;
       }, HIDE_AFTER_MS);
@@ -15511,7 +15519,7 @@ ${text2}`)) {
     const poll = () => {
       if (tryDeliver()) return;
       if (pending) {
-        pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
+        pending.timer = setTimeout(poll, COMPOSER_POLL_MS);
       }
     };
     Object.defineProperty(window, "__chatpaneShareMedia", {
@@ -15545,7 +15553,7 @@ ${text2}`)) {
         if (!tryDeliver()) {
           diag("share.waiting-for-composer", `${pending.files.length}`);
           toast(t("page.share.open_conversation"));
-          pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
+          pending.timer = setTimeout(poll, COMPOSER_POLL_MS);
         }
       },
       writable: false,

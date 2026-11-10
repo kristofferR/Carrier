@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "无法退出 Facebook",
   "dialog.log_out.facebook_failed_message": "Facebook 没有结束会话（{error}）。{app} 仍会从这台电脑上删除此账号的数据并重新启动。若也要在 Facebook 上结束会话，请在 Facebook 的“你的登录位置”设置中退出此设备。",
   "dialog.log_out.restart": "重新启动",
+  "dialog.clear_incomplete.title": "部分数据未删除",
+  "dialog.clear_incomplete.message": "{app} 无法从这台电脑上删除它的全部 Messenger 数据（{error}）。如需重试，请使用“清除缓存并重新启动”。",
   "dialog.webview2_missing.message": "{app} 需要 Microsoft Edge WebView2 Runtime，但这台电脑上尚未安装。\n\n选择“确定”以打开 Microsoft 的下载页面。安装 Evergreen 版运行时后，再重新启动 {app}。",
   "download.dialog.title": "保存 Messenger 下载内容",
   "error.config_folder": "找不到 {app} 的配置文件夹：{error}",

@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Couldn't Log Out of Facebook",
   "dialog.log_out.facebook_failed_message": "Facebook didn't end the session ({error}). {app} still deletes this account's data from this computer and restarts. To end the session on Facebook too, log out of this device in Facebook's \"Where you're logged in\" settings.",
   "dialog.log_out.restart": "Restart",
+  "dialog.clear_incomplete.title": "Some Data Wasn't Deleted",
+  "dialog.clear_incomplete.message": "{app} couldn't delete all of its Messenger data from this computer ({error}). To try again, use Clear Cache and Restart.",
   "dialog.webview2_missing.message": "{app} needs the Microsoft Edge WebView2 Runtime, which is not installed on this computer.\n\nChoose OK to open Microsoft's download page. Install the Evergreen runtime, then start {app} again.",
   "download.dialog.title": "Save Messenger download",
   "error.config_folder": "could not locate {app}'s config folder: {error}",

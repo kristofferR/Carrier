@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Deconectarea de la Facebook nu a reușit",
   "dialog.log_out.facebook_failed_message": "Facebook nu a închis sesiunea ({error}). {app} șterge totuși datele acestui cont de pe acest computer și repornește. Ca să închizi sesiunea și pe Facebook, deconectează acest dispozitiv din secțiunea „Unde ești conectat” a setărilor Facebook.",
   "dialog.log_out.restart": "Repornește",
+  "dialog.clear_incomplete.title": "Unele date nu au fost șterse",
+  "dialog.clear_incomplete.message": "{app} nu a putut șterge toate datele Messenger de pe acest computer ({error}). Pentru a încerca din nou, folosește „Golește memoria cache și repornește”.",
   "dialog.webview2_missing.message": "{app} are nevoie de Microsoft Edge WebView2 Runtime, care nu este instalat pe acest computer.\n\nAlege OK ca să deschizi pagina de descărcare Microsoft. Instalează runtime-ul Evergreen, apoi pornește din nou {app}.",
   "download.dialog.title": "Salvează descărcarea din Messenger",
   "error.config_folder": "nu s-a găsit folderul de configurare al aplicației {app}: {error}",

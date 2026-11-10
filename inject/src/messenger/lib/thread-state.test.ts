@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { muteIsActive, readNewestMessageId, readThreadStates } from "./thread-state";
+import { muteIsActive, readNewestMessage, readThreadStates } from "./thread-state";
 
 const NOW = 1_800_000_000_000;
 
@@ -73,34 +73,42 @@ describe("readThreadStates", () => {
   });
 });
 
-describe("readNewestMessageId", () => {
+describe("readNewestMessage", () => {
   const messages = { name: "messages" };
-  const load = (byThread: Record<string, { messageId: unknown }[]>) => (name: string) =>
-    ({
-      LSDatabaseSingleton: {
-        LSDatabaseSingleton: Promise.resolve({ tables: { threads: { get() {} }, messages } }),
-      },
-      I64: { of_string: (value: string) => `i64:${value}` },
-      ReQL: {
-        fromTableDescending: (table: unknown) => ({
-          getKeyRange: (key: string) => ({
-            take: (limit: number) =>
-              table === messages ? (byThread[key.slice(4)] ?? []).slice(0, limit) : [],
+  const load =
+    (byThread: Record<string, { messageId: unknown; senderId?: unknown }[]>) => (name: string) =>
+      ({
+        LSDatabaseSingleton: {
+          LSDatabaseSingleton: Promise.resolve({ tables: { threads: { get() {} }, messages } }),
+        },
+        I64: { of_string: (value: string) => `i64:${value}` },
+        ReQL: {
+          fromTableDescending: (table: unknown) => ({
+            getKeyRange: (key: string) => ({
+              take: (limit: number) =>
+                table === messages ? (byThread[key.slice(4)] ?? []).slice(0, limit) : [],
+            }),
           }),
-        }),
-        toArrayAsync: async (query: unknown) => query,
-      },
-    })[name];
+          toArrayAsync: async (query: unknown) => query,
+        },
+      })[name];
 
-  test("reads the newest message's id, newest first as Messenger stores them", async () => {
-    const db = load({ "10": [{ messageId: "mid.new" }, { messageId: "mid.old" }] });
-    expect(await readNewestMessageId("10", db)).toBe("mid.new");
+  test("reads the newest message and its sender, newest first as Messenger stores them", async () => {
+    const db = load({
+      "10": [
+        { messageId: "mid.new", senderId: "42" },
+        { messageId: "mid.old", senderId: "7" },
+      ],
+    });
+    expect(await readNewestMessage("10", db)).toEqual({ id: "mid.new", sender: "42" });
+    const anonymous = load({ "10": [{ messageId: "mid.new" }] });
+    expect(await readNewestMessage("10", anonymous)).toEqual({ id: "mid.new", sender: null });
   });
 
   test("is null for an empty or unreadable conversation", async () => {
-    expect(await readNewestMessageId("10", load({}))).toBeNull();
-    expect(await readNewestMessageId("10", load({ "10": [{ messageId: 7 }] }))).toBeNull();
-    expect(await readNewestMessageId("x", load({}))).toBeNull();
-    expect(await readNewestMessageId("10", undefined)).toBeNull();
+    expect(await readNewestMessage("10", load({}))).toBeNull();
+    expect(await readNewestMessage("10", load({ "10": [{ messageId: 7 }] }))).toBeNull();
+    expect(await readNewestMessage("x", load({}))).toBeNull();
+    expect(await readNewestMessage("10", undefined)).toBeNull();
   });
 });

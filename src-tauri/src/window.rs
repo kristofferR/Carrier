@@ -834,6 +834,9 @@ fn build_app_window_with_render_budget(
         builder
     };
     let window = builder.build().inspect(|window| {
+        // After the window-state plugin restored the saved geometry.
+        #[cfg(not(target_os = "linux"))]
+        fit_to_work_area(window);
         crate::app_icon::apply_window_icon(window, settings);
         #[cfg(target_os = "linux")]
         {
@@ -1943,9 +1946,142 @@ fn init_script(
     )
 }
 
+/// Moves and shrinks a Messenger window into its monitor's work area. A size
+/// saved on a bigger screen, or the default on a 1280×800 one, would otherwise
+/// put the composer under the taskbar. (Linux window managers place windows.)
+#[cfg(not(target_os = "linux"))]
+fn fit_to_work_area(window: &tauri::WebviewWindow) {
+    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+        return;
+    }
+    let Some(monitor) = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+    else {
+        return;
+    };
+    let (Ok(position), Ok(outer), Ok(inner)) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.inner_size(),
+    ) else {
+        return;
+    };
+    let area = monitor.work_area();
+    let frame = Frame {
+        x: position.x,
+        y: position.y,
+        width: outer.width,
+        height: outer.height,
+    };
+    let bounds = Frame {
+        x: area.position.x,
+        y: area.position.y,
+        width: area.size.width,
+        height: area.size.height,
+    };
+    let Some(fitted) = fit_frame(frame, bounds) else {
+        return;
+    };
+    if (fitted.width, fitted.height) != (frame.width, frame.height) {
+        // The frame (title bar, borders) keeps its size; the content gives.
+        let size = tauri::PhysicalSize::new(
+            inner.width.saturating_sub(frame.width - fitted.width),
+            inner.height.saturating_sub(frame.height - fitted.height),
+        );
+        let _ = window.set_size(size);
+    }
+    let _ = window.set_position(tauri::PhysicalPosition::new(fitted.x, fitted.y));
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Frame {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+/// `frame` shrunk to fit `bounds` and moved inside them, or None if it fits.
+#[cfg(any(not(target_os = "linux"), test))]
+fn fit_frame(frame: Frame, bounds: Frame) -> Option<Frame> {
+    let width = frame.width.min(bounds.width);
+    let height = frame.height.min(bounds.height);
+    let right = bounds.x.saturating_add_unsigned(bounds.width - width);
+    let bottom = bounds.y.saturating_add_unsigned(bounds.height - height);
+    let fitted = Frame {
+        x: frame.x.clamp(bounds.x, right),
+        y: frame.y.clamp(bounds.y, bottom),
+        width,
+        height,
+    };
+    (fitted != frame).then_some(fitted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_taller_than_the_work_area_is_shrunk_into_it() {
+        // 1280×800 screen with a 48 px taskbar; the saved window is 849 px tall.
+        let bounds = Frame {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 752,
+        };
+        let frame = Frame {
+            x: 52,
+            y: 0,
+            width: 1216,
+            height: 849,
+        };
+        assert_eq!(
+            fit_frame(frame, bounds),
+            Some(Frame {
+                x: 52,
+                y: 0,
+                width: 1216,
+                height: 752
+            })
+        );
+    }
+
+    #[test]
+    fn a_window_hanging_off_the_work_area_is_moved_back_in() {
+        let bounds = Frame {
+            x: 1920,
+            y: 0,
+            width: 1280,
+            height: 752,
+        };
+        let frame = Frame {
+            x: 2800,
+            y: 500,
+            width: 800,
+            height: 600,
+        };
+        assert_eq!(
+            fit_frame(frame, bounds),
+            Some(Frame {
+                x: 2400,
+                y: 152,
+                width: 800,
+                height: 600
+            })
+        );
+        let fits = Frame {
+            x: 1930,
+            y: 10,
+            width: 800,
+            height: 600,
+        };
+        assert_eq!(fit_frame(fits, bounds), None);
+    }
 
     // -----------------------------------------------------------------------
     // theme_for / is_dark / splash_background  (new in this PR)

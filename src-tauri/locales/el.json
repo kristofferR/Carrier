@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Η αποσύνδεση από το Facebook απέτυχε",
   "dialog.log_out.facebook_failed_message": "Το Facebook δεν τερμάτισε τη συνεδρία ({error}). Το {app} θα διαγράψει παρ' όλα αυτά τα δεδομένα αυτού του λογαριασμού από αυτόν τον υπολογιστή και θα κάνει επανεκκίνηση. Για να τερματίσεις τη συνεδρία και στο Facebook, αποσυνδέσου από αυτήν τη συσκευή στη ρύθμιση «Πού είστε συνδεδεμένοι» του Facebook.",
   "dialog.log_out.restart": "Επανεκκίνηση",
+  "dialog.clear_incomplete.title": "Ορισμένα δεδομένα δεν διαγράφηκαν",
+  "dialog.clear_incomplete.message": "Το {app} δεν μπόρεσε να διαγράψει όλα τα δεδομένα Messenger από αυτόν τον υπολογιστή ({error}). Για να δοκιμάσεις ξανά, χρησιμοποίησε το «Εκκαθάριση προσωρινής μνήμης και επανεκκίνηση».",
   "dialog.webview2_missing.message": "Το {app} χρειάζεται το Microsoft Edge WebView2 Runtime, το οποίο δεν είναι εγκατεστημένο σε αυτόν τον υπολογιστή.\n\nΕπίλεξε OK για να ανοίξει η σελίδα λήψης της Microsoft. Εγκατάστησε το Evergreen Runtime και μετά άνοιξε ξανά το {app}.",
   "download.dialog.title": "Αποθήκευση λήψης από το Messenger",
   "error.config_folder": "δεν βρέθηκε ο φάκελος ρυθμίσεων του {app}: {error}",

@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Abmelden bei Facebook fehlgeschlagen",
   "dialog.log_out.facebook_failed_message": "Facebook hat die Sitzung nicht beendet ({error}). {app} löscht die Daten dieses Kontos trotzdem von diesem Computer und startet neu. Um die Sitzung auch bei Facebook zu beenden, melde dieses Gerät in den Facebook-Einstellungen unter „Wo du angemeldet bist“ ab.",
   "dialog.log_out.restart": "Neu starten",
+  "dialog.clear_incomplete.title": "Einige Daten wurden nicht gelöscht",
+  "dialog.clear_incomplete.message": "{app} konnte nicht alle seine Messenger-Daten von diesem Computer löschen ({error}). Um es erneut zu versuchen, verwende „Cache leeren und neu starten“.",
   "dialog.webview2_missing.message": "{app} benötigt die Microsoft Edge WebView2 Runtime, die auf diesem Computer nicht installiert ist.\n\nWähle „OK“, um die Downloadseite von Microsoft zu öffnen. Installiere die Evergreen-Runtime und starte {app} dann erneut.",
   "download.dialog.title": "Messenger-Download speichern",
   "error.config_folder": "Konfigurationsordner von {app} wurde nicht gefunden: {error}",

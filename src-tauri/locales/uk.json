@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Не вдалося вийти з Facebook",
   "dialog.log_out.facebook_failed_message": "Facebook не завершив сеанс ({error}). {app} все одно видалить дані цього акаунта з цього комп’ютера і перезапуститься. Щоб завершити сеанс і на Facebook, вийдіть на цьому пристрої в налаштуваннях Facebook «Де ви ввійшли в систему».",
   "dialog.log_out.restart": "Перезапустити",
+  "dialog.clear_incomplete.title": "Деякі дані не видалено",
+  "dialog.clear_incomplete.message": "{app} не вдалося видалити всі свої дані Messenger з цього комп’ютера ({error}). Щоб спробувати ще раз, скористайтеся «Очистити кеш і перезапустити».",
   "dialog.webview2_missing.message": "Для роботи {app} потрібне середовище Microsoft Edge WebView2 Runtime, яке не встановлено на цьому комп’ютері.\n\nНатисніть OK, щоб відкрити сторінку завантаження Microsoft. Установіть середовище Evergreen, а потім знову запустіть {app}.",
   "download.dialog.title": "Зберегти файл із Messenger",
   "error.config_folder": "не вдалося знайти теку конфігурації {app}: {error}",

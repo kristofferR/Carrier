@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "تعذّر تسجيل الخروج من Facebook",
   "dialog.log_out.facebook_failed_message": "لم يُنهِ Facebook الجلسة ({error}). مع ذلك يحذف {app} بيانات هذا الحساب من هذا الكمبيوتر ويعيد التشغيل. لإنهاء الجلسة على Facebook أيضًا، سجّل خروج هذا الجهاز من إعدادات «مكان تسجيل دخولك» في Facebook.",
   "dialog.log_out.restart": "إعادة التشغيل",
+  "dialog.clear_incomplete.title": "لم تُحذف بعض البيانات",
+  "dialog.clear_incomplete.message": "تعذّر على {app} حذف كل بيانات Messenger الخاصة به من هذا الكمبيوتر ({error}). للمحاولة مرة أخرى، استخدم «مسح ذاكرة التخزين المؤقت وإعادة التشغيل».",
   "dialog.webview2_missing.message": "يحتاج {app} إلى Microsoft Edge WebView2 Runtime، وهو غير مثبّت على هذا الكمبيوتر.\n\nاختر «موافق» لفتح صفحة التنزيل لدى Microsoft. ثبّت إصدار Evergreen من وقت التشغيل، ثم شغّل {app} مجددًا.",
   "download.dialog.title": "حفظ تنزيل Messenger",
   "error.config_folder": "تعذّر العثور على مجلد إعدادات {app}: {error}",

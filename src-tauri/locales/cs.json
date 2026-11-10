@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Odhlášení z Facebooku se nezdařilo",
   "dialog.log_out.facebook_failed_message": "Facebook neukončil relaci ({error}). Aplikace {app} přesto smaže data tohoto účtu z tohoto počítače a restartuje se. Pokud chceš relaci ukončit i na Facebooku, odhlas toto zařízení v nastavení Facebooku „Kde jste přihlášeni“.",
   "dialog.log_out.restart": "Restartovat",
+  "dialog.clear_incomplete.title": "Některá data nebyla smazána",
+  "dialog.clear_incomplete.message": "{app} nemohl z tohoto počítače smazat všechna svá data Messengeru ({error}). Chcete-li to zkusit znovu, použijte „Vymazat mezipaměť a restartovat“.",
   "dialog.webview2_missing.message": "Aplikace {app} potřebuje Microsoft Edge WebView2 Runtime, který v tomto počítači není nainstalovaný.\n\nZvol OK a otevře se stránka Microsoftu ke stažení. Nainstaluj Evergreen runtime a pak aplikaci {app} spusť znovu.",
   "download.dialog.title": "Uložit soubor stažený z Messengeru",
   "error.config_folder": "nelze najít konfigurační složku aplikace {app}: {error}",

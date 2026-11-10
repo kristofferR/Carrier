@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Kunne ikke logge ud af Facebook",
   "dialog.log_out.facebook_failed_message": "Facebook afsluttede ikke sessionen ({error}). {app} sletter stadig kontoens data fra denne computer og genstarter. Hvis du også vil afslutte sessionen på Facebook, skal du logge denne enhed ud under »Hvor du er logget ind« i Facebooks indstillinger.",
   "dialog.log_out.restart": "Genstart",
+  "dialog.clear_incomplete.title": "Nogle data blev ikke slettet",
+  "dialog.clear_incomplete.message": "{app} kunne ikke slette alle sine Messenger-data fra denne computer ({error}). Brug \"Ryd cache og genstart\" for at prøve igen.",
   "dialog.webview2_missing.message": "{app} kræver Microsoft Edge WebView2 Runtime, som ikke er installeret på denne computer.\n\nVælg OK for at åbne Microsofts downloadside. Installér Evergreen-versionen, og start derefter {app} igen.",
   "download.dialog.title": "Gem download fra Messenger",
   "error.config_folder": "kunne ikke finde konfigurationsmappen til {app}: {error}",

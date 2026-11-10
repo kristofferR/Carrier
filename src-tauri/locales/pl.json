@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Nie udało się wylogować z Facebooka",
   "dialog.log_out.facebook_failed_message": "Facebook nie zakończył sesji ({error}). {app} i tak usunie dane tego konta z tego komputera i uruchomi się ponownie. Aby zakończyć sesję także na Facebooku, wyloguj to urządzenie w ustawieniach Facebooka „Gdzie jesteś zalogowany”.",
   "dialog.log_out.restart": "Uruchom ponownie",
+  "dialog.clear_incomplete.title": "Nie usunięto części danych",
+  "dialog.clear_incomplete.message": "{app} nie może usunąć wszystkich swoich danych Messengera z tego komputera ({error}). Aby spróbować ponownie, użyj opcji „Wyczyść pamięć podręczną i uruchom ponownie”.",
   "dialog.webview2_missing.message": "{app} wymaga środowiska Microsoft Edge WebView2 Runtime, które nie jest zainstalowane na tym komputerze.\n\nWybierz OK, aby otworzyć stronę pobierania Microsoftu. Zainstaluj środowisko Evergreen, a potem ponownie uruchom aplikację {app}.",
   "download.dialog.title": "Zapisz plik pobrany z Messengera",
   "error.config_folder": "nie można znaleźć folderu konfiguracji aplikacji {app}: {error}",

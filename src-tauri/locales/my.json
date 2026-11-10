@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Facebook မှ ထွက်၍ မရပါ",
   "dialog.log_out.facebook_failed_message": "Facebook က session ကို မပိတ်ခဲ့ပါ ({error})။ {app} က ဒီအကောင့်ရဲ့ ဒေတာကို ဒီကွန်ပျူတာထဲကနေ ဖျက်ပြီး ပြန်စပါဦးမယ်။ Facebook ဘက်မှာပါ session ကို ပိတ်ဖို့ Facebook ရဲ့ “သင်ဝင်ရောက်ထားသည့်နေရာ” ဆက်တင်ထဲမှာ ဒီစက်ကနေ ထွက်ပါ။",
   "dialog.log_out.restart": "ပြန်စရန်",
+  "dialog.clear_incomplete.title": "ဒေတာအချို့ကို မဖျက်ရသေးပါ",
+  "dialog.clear_incomplete.message": "{app} သည် ဤကွန်ပျူတာမှ ၎င်း၏ Messenger ဒေတာအားလုံးကို ဖျက်၍မရပါ ({error})။ ထပ်စမ်းရန် \"ကက်ရှ်ရှင်းပြီး ပြန်စရန်\" ကို သုံးပါ။",
   "dialog.webview2_missing.message": "{app} အတွက် Microsoft Edge WebView2 Runtime လိုအပ်ပါတယ်၊ ဒါပေမဲ့ ဒီကွန်ပျူတာမှာ ထည့်သွင်းမထားပါ။\n\nMicrosoft ရဲ့ ဒေါင်းလုဒ်စာမျက်နှာကို ဖွင့်ဖို့ OK ကို ရွေးပါ။ Evergreen runtime ကို ထည့်သွင်းပြီးနောက် {app} ကို ပြန်ဖွင့်ပါ။",
   "download.dialog.title": "Messenger ဒေါင်းလုဒ်ကို သိမ်းရန်",
   "error.config_folder": "{app} ရဲ့ config ဖိုင်တွဲကို ရှာမတွေ့ပါ: {error}",
