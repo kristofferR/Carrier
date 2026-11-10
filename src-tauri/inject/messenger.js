@@ -4874,13 +4874,12 @@ ${button.innerHTML}`)
     };
   }
   function createPinnedChatsSync(store, request2) {
-    let revision = 0;
+    let latest = null;
     const unconfirmed = [];
     let sending = false;
     const show = (snapshot) => {
-      if (!snapshot || snapshot.revision < revision) return;
-      revision = snapshot.revision;
-      store.replace(unconfirmed.reduce(applyPinChange, snapshot.pins));
+      if (snapshot && (!latest || snapshot.revision >= latest.revision)) latest = snapshot;
+      if (latest) store.replace(unconfirmed.reduce(applyPinChange, latest.pins));
     };
     return {
       async refresh() {
@@ -4900,8 +4899,8 @@ ${button.innerHTML}`)
             if (unconfirmed[0]) {
               const snapshot = await request2(unconfirmed[0]);
               unconfirmed.shift();
-              if (snapshot) show(snapshot);
-              else resync = true;
+              if (!snapshot) resync = true;
+              show(snapshot);
             } else {
               resync = false;
               show(await request2());

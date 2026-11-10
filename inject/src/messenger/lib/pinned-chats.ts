@@ -125,21 +125,21 @@ export function createPinnedChatsStore(): PinnedChatsStore {
 
 /**
  * Keeps `store` in step with native code. A change shows at once and goes to
- * native code after the ones before it. An answer older than the one shown is
- * dropped, and every answer is shown with the changes still unconfirmed on top,
- * so a read that was under way during a change can't undo it.
+ * native code after the ones before it. The pins shown are always the newest
+ * answer with the changes still unconfirmed on top, so a read that was under
+ * way during a change can't undo it, and an answer older than the newest is
+ * ignored but still retires its change.
  */
 export function createPinnedChatsSync(
   store: PinnedChatsStore,
   request: (change?: PinChange) => Promise<PinnedSnapshot | null>,
 ) {
-  let revision = 0;
+  let latest: PinnedSnapshot | null = null;
   const unconfirmed: PinChange[] = [];
   let sending = false;
   const show = (snapshot: PinnedSnapshot | null) => {
-    if (!snapshot || snapshot.revision < revision) return;
-    revision = snapshot.revision;
-    store.replace(unconfirmed.reduce(applyPinChange, snapshot.pins));
+    if (snapshot && (!latest || snapshot.revision >= latest.revision)) latest = snapshot;
+    if (latest) store.replace(unconfirmed.reduce(applyPinChange, latest.pins));
   };
   return {
     async refresh() {
@@ -159,8 +159,8 @@ export function createPinnedChatsSync(
           if (unconfirmed[0]) {
             const snapshot = await request(unconfirmed[0]);
             unconfirmed.shift();
-            if (snapshot) show(snapshot);
-            else resync = true;
+            if (!snapshot) resync = true;
+            show(snapshot);
           } else {
             resync = false;
             show(await request());

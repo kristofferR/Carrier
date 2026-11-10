@@ -111,6 +111,28 @@ describe("pinned chats", () => {
     expect(store.getSnapshot()).toEqual([ada, bob]);
   });
 
+  test("a change answered after a newer read stops showing once it's retired", async () => {
+    const store = createPinnedChatsStore();
+    const answers: ((snapshot: PinnedSnapshot) => void)[] = [];
+    const sync = createPinnedChatsSync(
+      store,
+      () => new Promise((resolve) => answers.push(resolve)),
+    );
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const ada = { id: "1", name: "Ada" };
+
+    const pin = sync.change({ op: "pin", ...ada });
+    void sync.refresh();
+    // Another window unpinned Ada after this pin landed, and the read saw that
+    // before the pin's own answer arrived.
+    answers[1]?.({ revision: 3, pins: [] });
+    await settle();
+    expect(store.getSnapshot()).toEqual([ada]);
+    answers[0]?.({ revision: 2, pins: [ada] });
+    await pin;
+    expect(store.getSnapshot()).toEqual([]);
+  });
+
   test("a failed change re-reads native pins even when their revision hasn't changed", async () => {
     const store = createPinnedChatsStore();
     const ada = { id: "1", name: "Ada" };
