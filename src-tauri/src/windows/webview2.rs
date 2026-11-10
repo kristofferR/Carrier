@@ -132,9 +132,223 @@ pub(crate) fn enable_app_region(window: &tauri::WebviewWindow) {
     }
 }
 
+/// Resume Facebook's SharedWorkers when an in-place reload restarts them.
+///
+/// WebView2 keeps its own DevTools client attached to each SharedWorker. A
+/// reload (F5, Ctrl+R, the watchdog's) ends the worker with the old page, and
+/// the new page starts it again under the same URL and name. Chromium then
+/// reuses the old DevTools target, and a target with a client attached starts
+/// paused until a client sends `Runtime.runIfWaitingForDebugger`. WebView2
+/// never sends it. Messenger's encrypted backend runs in that worker, so
+/// encrypted chats stopped syncing after every reload until the watchdog
+/// rebuilt the webview.
+///
+/// Through the page's DevTools session, attach to every SharedWorker and resume
+/// it when Chromium reports the restart (`Inspector.targetReloadedAfterCrash`).
+#[cfg(target_os = "windows")]
+pub(crate) fn resume_restarted_shared_workers(window: &tauri::WebviewWindow) {
+    let label = window.label().to_string();
+    let result = window.with_webview(move |webview| {
+        // SAFETY: wry hands over the live controller on the main thread, where
+        // WebView2 also runs the DevTools callbacks.
+        let installed = unsafe { webview.controller().CoreWebView2() }
+            .and_then(|core| shared_worker_resume::install(&core));
+        if let Err(error) = installed {
+            log::warn!("could not watch Messenger's shared workers in {label}: {error}");
+        }
+    });
+    if let Err(error) = result {
+        log::warn!("could not reach WebView2 to watch shared workers: {error}");
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod shared_worker_resume {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2, ICoreWebView2_11, ICoreWebView2DevToolsProtocolEventReceivedEventArgs2,
+    };
+    use webview2_com::{
+        CallDevToolsProtocolMethodCompletedHandler, DevToolsProtocolEventReceivedEventHandler,
+        take_pwstr,
+    };
+    use windows::core::{HSTRING, Interface, PWSTR, Result};
+
+    /// Runs on the main thread that owns the webview, like every call below.
+    pub(super) fn install(core: &ICoreWebView2) -> Result<()> {
+        // Session calls need WebView2 1.0.1245 or newer.
+        core.cast::<ICoreWebView2_11>()?;
+        on_event(core, "Target.targetCreated", |core, _, params| {
+            if let Some(target) = super::shared_worker_target(&params) {
+                attach(core, &target);
+            }
+        })?;
+        on_event(
+            core,
+            "Inspector.targetReloadedAfterCrash",
+            |core, session, _| {
+                if let Some(session) = session {
+                    log::info!("resuming a restarted shared worker WebView2 left paused");
+                    call(
+                        core,
+                        Some(&session),
+                        "Runtime.runIfWaitingForDebugger",
+                        "{}",
+                        |_| {},
+                    );
+                }
+            },
+        )?;
+        // Reports the workers already running too, so none is missed.
+        call(
+            core,
+            None,
+            "Target.setDiscoverTargets",
+            r#"{"discover":true}"#,
+            |_| {},
+        );
+        Ok(())
+    }
+
+    fn attach(core: &ICoreWebView2, target: &str) {
+        let params = serde_json::json!({ "targetId": target, "flatten": true }).to_string();
+        let page = core.clone();
+        call(
+            core,
+            None,
+            "Target.attachToTarget",
+            &params,
+            move |result| {
+                let Some(session) = super::attached_session(&result) else {
+                    log::warn!("could not attach to a shared worker: {result}");
+                    return;
+                };
+                // Restarts are reported to sessions with the Inspector domain on.
+                call(&page, Some(&session), "Inspector.enable", "{}", |_| {});
+                call(
+                    &page,
+                    Some(&session),
+                    "Runtime.runIfWaitingForDebugger",
+                    "{}",
+                    |_| {},
+                );
+            },
+        );
+    }
+
+    /// Run a DevTools method on the page, or on a session attached through it.
+    fn call(
+        core: &ICoreWebView2,
+        session: Option<&str>,
+        method: &str,
+        params: &str,
+        done: impl FnOnce(String) + 'static,
+    ) {
+        let handler =
+            CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |status, result| {
+                match status {
+                    Ok(()) => done(result),
+                    Err(error) => log::warn!("WebView2 DevTools call failed: {error}"),
+                }
+                Ok(())
+            }));
+        let (method_name, params) = (HSTRING::from(method), HSTRING::from(params));
+        // SAFETY: called on the main thread that owns the webview.
+        let sent = unsafe {
+            match session {
+                Some(session) => core.cast::<ICoreWebView2_11>().and_then(|core| {
+                    core.CallDevToolsProtocolMethodForSession(
+                        &HSTRING::from(session),
+                        &method_name,
+                        &params,
+                        &handler,
+                    )
+                }),
+                None => core.CallDevToolsProtocolMethod(&method_name, &params, &handler),
+            }
+        };
+        if let Err(error) = sent {
+            log::warn!("could not send {method} to WebView2 DevTools: {error}");
+        }
+    }
+
+    /// Subscribe to a DevTools event from the page or any attached session.
+    /// The handler receives the session id (none for the page) and the
+    /// event's parameters as JSON.
+    fn on_event(
+        core: &ICoreWebView2,
+        event: &str,
+        mut handle: impl FnMut(&ICoreWebView2, Option<String>, String) + 'static,
+    ) -> Result<()> {
+        let receiver = unsafe { core.GetDevToolsProtocolEventReceiver(&HSTRING::from(event))? };
+        // WebView2 releases the handler, and with it the receiver, when the
+        // webview closes.
+        let keep = receiver.clone();
+        let handler =
+            DevToolsProtocolEventReceivedEventHandler::create(Box::new(move |sender, args| {
+                let _ = &keep;
+                let (Some(core), Some(args)) = (sender, args) else {
+                    return Ok(());
+                };
+                let mut params = PWSTR::null();
+                // SAFETY: WebView2 allocates both strings; take_pwstr frees them.
+                unsafe {
+                    args.ParameterObjectAsJson(&mut params)?;
+                    let params = take_pwstr(params);
+                    let mut session = PWSTR::null();
+                    let session = args
+                        .cast::<ICoreWebView2DevToolsProtocolEventReceivedEventArgs2>()
+                        .and_then(|args| args.SessionId(&mut session))
+                        .map(|()| take_pwstr(session))
+                        .ok()
+                        .filter(|session| !session.is_empty());
+                    handle(&core, session, params);
+                }
+                Ok(())
+            }));
+        let mut token = 0;
+        unsafe { receiver.add_DevToolsProtocolEventReceived(&handler, &mut token) }
+    }
+}
+
+/// The id of a SharedWorker from `Target.targetCreated` parameters.
+#[cfg(any(target_os = "windows", test))]
+fn shared_worker_target(params: &str) -> Option<String> {
+    let params: serde_json::Value = serde_json::from_str(params).ok()?;
+    let target = params.get("targetInfo")?;
+    if target.get("type")?.as_str()? != "shared_worker" {
+        return None;
+    }
+    target.get("targetId")?.as_str().map(str::to_string)
+}
+
+/// The session id from a `Target.attachToTarget` result.
+#[cfg(any(target_os = "windows", test))]
+fn attached_session(result: &str) -> Option<String> {
+    let result: serde_json::Value = serde_json::from_str(result).ok()?;
+    result.get("sessionId")?.as_str().map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_shared_workers_are_attached() {
+        let created = |kind: &str| {
+            format!(r#"{{"targetInfo":{{"targetId":"8410CF00","type":"{kind}","attached":true}}}}"#)
+        };
+        assert_eq!(
+            shared_worker_target(&created("shared_worker")).as_deref(),
+            Some("8410CF00")
+        );
+        assert_eq!(shared_worker_target(&created("worker")), None);
+        assert_eq!(shared_worker_target(&created("page")), None);
+        assert_eq!(
+            attached_session(r#"{"sessionId":"AC8266AA"}"#).as_deref(),
+            Some("AC8266AA")
+        );
+        assert_eq!(attached_session("{}"), None);
+    }
 
     #[test]
     fn only_a_real_version_counts_as_installed() {

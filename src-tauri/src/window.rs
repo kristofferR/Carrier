@@ -863,9 +863,13 @@ fn build_app_window_with_render_budget(
             crate::macos::title_bar::install(window);
         }
         crate::title_bar::watch(window);
-        // Lets the page's strip drag the window natively (app-region).
         #[cfg(target_os = "windows")]
-        crate::windows::webview2::enable_app_region(window);
+        {
+            // Lets the page's strip drag the window natively (app-region).
+            crate::windows::webview2::enable_app_region(window);
+            // Keeps Messenger's encrypted backend running across reloads.
+            crate::windows::webview2::resume_restarted_shared_workers(window);
+        }
     })?;
     let token_cleanup_value = download_reveal_token.clone();
     {
