@@ -447,30 +447,42 @@
       data.viewer,
       defaultExport(resolve),
       dndUntil,
-      await readReadReceipts(load, account2).catch(() => null)
+      await readReadReceipts(load, account2)
     );
   }
-  async function readReadReceipts(load, account2) {
-    const [i64, database2, intEnum] = await loadFacebookModules(load, [
-      "I64",
-      "LSDatabaseSingleton",
-      "LSIntEnum"
-    ]);
-    const db = await database2.LSDatabaseSingleton;
-    const table = db.tables?.messaging_privacy_settings;
-    if (typeof table?.get !== "function") return null;
-    const row = await table.get(i64.of_string(account2));
-    let pageDefault = null;
+  async function readReadReceipts(load, account2, timeoutMs = 3e3) {
+    let timer;
     try {
-      pageDefault = load?.("MessengerWebPrivacySettings")?.read_receipts_disabled;
-    } catch {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
-    return readReceiptsOn(
-      row && typeof row === "object" ? {
-        setting: row.readReceiptsDisabled == null ? null : intEnum.toNumber(row.readReceiptsDisabled)
-      } : null,
-      pageDefault
-    );
+    async function read() {
+      const [i64, database2, intEnum] = await loadFacebookModules(load, [
+        "I64",
+        "LSDatabaseSingleton",
+        "LSIntEnum"
+      ]);
+      const db = await database2.LSDatabaseSingleton;
+      const table = db.tables?.messaging_privacy_settings;
+      const row = typeof table?.get === "function" ? await table.get(i64.of_string(account2)) : null;
+      let pageDefault = null;
+      try {
+        pageDefault = load?.("MessengerWebPrivacySettings")?.read_receipts_disabled;
+      } catch {
+      }
+      return readReceiptsOn(
+        row && typeof row === "object" ? {
+          setting: row.readReceiptsDisabled == null ? null : intEnum.toNumber(row.readReceiptsDisabled)
+        } : null,
+        pageDefault
+      );
+    }
   }
   async function setReadReceipts(load, on2) {
     await loadFacebookModules(load, ["MWInboxSettingsMenu.react"]);

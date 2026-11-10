@@ -538,7 +538,7 @@
   "settings.account.not_reported": "Hindi iniulat ng Messenger ang setting na ito.",
   "settings.account.active_status.label": "Active Status",
   "settings.account.active_status.hint": "Ipakita sa mga tao kapag active ka o kamakailan lang na active.",
-  "settings.account.read_receipts.label": "Read receipts",
+  "settings.account.read_receipts.label": "Mga tanda ng pagkakabasa",
   "settings.account.read_receipts.hint": "Ipakita sa mga tao kapag nabasa mo na ang mga mensahe nila. Gumagana ito sa magkabilang panig: kapag pinatay mo ito, hindi mo rin makikita kapag nabasa na nila ang sa iyo.",
   "settings.account.sounds.label": "Mga tunog ng mensahe",
   "settings.account.sounds.hint": "Ang sariling mga tunog ng Messenger para sa mga bagong mensahe. Hiwalay ang tunog ng notification ng {app}.",

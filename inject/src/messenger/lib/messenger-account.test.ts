@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { applied, dndUntilFor, readReceiptsOn, stateFromViewer } from "./messenger-account";
+import {
+  applied,
+  dndUntilFor,
+  readReadReceipts,
+  readReceiptsOn,
+  stateFromViewer,
+} from "./messenger-account";
 
 describe("stateFromViewer", () => {
   test("resolves Active Status with Messenger's rule and keeps unknowns null", () => {
@@ -38,6 +44,56 @@ describe("readReceiptsOn", () => {
     expect(readReceiptsOn(null, 1)).toBe(false);
     expect(readReceiptsOn(null, 0)).toBe(true);
     expect(readReceiptsOn(null, undefined)).toBe(null);
+  });
+});
+
+describe("readReadReceipts", () => {
+  const harness = (database: Promise<unknown>, pageDefault: unknown = 1) => {
+    const modules: Record<string, unknown> = {
+      Bootloader: {
+        loadModules: (_names: string[], callback: () => void) => callback(),
+      },
+      I64: { of_string: (value: string) => `key:${value}` },
+      LSDatabaseSingleton: { LSDatabaseSingleton: database },
+      LSIntEnum: { toNumber: (value: unknown) => value },
+      MessengerWebPrivacySettings: { read_receipts_disabled: pageDefault },
+    };
+    return (name: string) => modules[name];
+  };
+
+  test("uses the page default without a privacy table, get method or row", async () => {
+    for (const database of [
+      {},
+      { tables: {} },
+      { tables: { messaging_privacy_settings: {} } },
+      { tables: { messaging_privacy_settings: { get: async () => null } } },
+    ]) {
+      expect(await readReadReceipts(harness(Promise.resolve(database)), "100")).toBe(false);
+      expect(await readReadReceipts(harness(Promise.resolve(database), 2), "100")).toBe(true);
+    }
+  });
+
+  test("keeps the account row ahead of the page default", async () => {
+    const keys: unknown[] = [];
+    const database = {
+      tables: {
+        messaging_privacy_settings: {
+          get: async (key: unknown) => {
+            keys.push(key);
+            return { readReceiptsDisabled: 2 };
+          },
+        },
+      },
+    };
+    expect(await readReadReceipts(harness(Promise.resolve(database)), "100")).toBe(true);
+    expect(keys).toEqual(["key:100"]);
+  });
+
+  test("returns null when the database or row lookup stalls", async () => {
+    const pending = new Promise(() => {});
+    expect(await readReadReceipts(harness(pending), "100", 1)).toBeNull();
+    const database = { tables: { messaging_privacy_settings: { get: () => pending } } };
+    expect(await readReadReceipts(harness(Promise.resolve(database)), "100", 1)).toBeNull();
   });
 });
 

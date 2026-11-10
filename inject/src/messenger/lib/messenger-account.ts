@@ -126,7 +126,7 @@ export async function readMessengerAccount(
     data.viewer,
     defaultExport(resolve) as (all: unknown, messenger: unknown, facebook: unknown) => unknown,
     dndUntil,
-    await readReadReceipts(load, account).catch(() => null),
+    await readReadReceipts(load, account),
   );
 }
 
@@ -149,33 +149,50 @@ interface Database {
 }
 
 /** The account's read receipts setting, read where Messenger's own switch reads it. */
-async function readReadReceipts(load: Load | null, account: string): Promise<boolean | null> {
-  const [i64, database, intEnum] = (await loadFacebookModules(load, [
-    "I64",
-    "LSDatabaseSingleton",
-    "LSIntEnum",
-  ])) as [I64Module, { LSDatabaseSingleton: Promise<Database> }, LSIntEnum];
-  const db = await database.LSDatabaseSingleton;
-  const table = db.tables?.messaging_privacy_settings;
-  if (typeof table?.get !== "function") return null;
-  const row = (await table.get(i64.of_string(account))) as {
-    readReceiptsDisabled?: unknown;
-  } | null;
-  let pageDefault: unknown = null;
+export async function readReadReceipts(
+  load: Load | null,
+  account: string,
+  timeoutMs = 3000,
+): Promise<boolean | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    // A server-sent configuration module; absent on some pages.
-    pageDefault = (load?.("MessengerWebPrivacySettings") as { read_receipts_disabled?: unknown })
-      ?.read_receipts_disabled;
-  } catch {}
-  return readReceiptsOn(
-    row && typeof row === "object"
-      ? {
-          setting:
-            row.readReceiptsDisabled == null ? null : intEnum.toNumber(row.readReceiptsDisabled),
-        }
-      : null,
-    pageDefault,
-  );
+    return await Promise.race([
+      read().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  async function read(): Promise<boolean | null> {
+    const [i64, database, intEnum] = (await loadFacebookModules(load, [
+      "I64",
+      "LSDatabaseSingleton",
+      "LSIntEnum",
+    ])) as [I64Module, { LSDatabaseSingleton: Promise<Database> }, LSIntEnum];
+    const db = await database.LSDatabaseSingleton;
+    const table = db.tables?.messaging_privacy_settings;
+    const row = (
+      typeof table?.get === "function" ? await table.get(i64.of_string(account)) : null
+    ) as { readReceiptsDisabled?: unknown } | null;
+    let pageDefault: unknown = null;
+    try {
+      // A server-sent configuration module; absent on some pages.
+      pageDefault = (load?.("MessengerWebPrivacySettings") as { read_receipts_disabled?: unknown })
+        ?.read_receipts_disabled;
+    } catch {}
+    return readReceiptsOn(
+      row && typeof row === "object"
+        ? {
+            setting:
+              row.readReceiptsDisabled == null ? null : intEnum.toNumber(row.readReceiptsDisabled),
+          }
+        : null,
+      pageDefault,
+    );
+  }
 }
 
 /**
