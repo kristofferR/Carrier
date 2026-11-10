@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Facebook වෙතින් ඉවත් විය නොහැකි විය",
   "dialog.log_out.facebook_failed_message": "Facebook සැසිය අවසන් කළේ නැත ({error}). {app} තවමත් මෙම ගිණුමේ දත්ත මෙම පරිගණකයෙන් මකා නැවත ආරම්භ වේ. Facebook හිද සැසිය අවසන් කිරීමට, Facebook හි “ඔබ පිවිසී ඇති ස්ථාන” සැකසුම්වලින් මෙම උපාංගයෙන් ඉවත් වන්න.",
   "dialog.log_out.restart": "නැවත අරඹන්න",
+  "dialog.clear_incomplete.title": "සමහර දත්ත මකා දැමුණේ නැත",
+  "dialog.clear_incomplete.message": "{app} හට මෙම පරිගණකයෙන් එහි සියලු Messenger දත්ත මකා දැමිය නොහැකි විය ({error}). නැවත උත්සාහ කිරීමට \"හැඹිලිය හිස් කර නැවත අරඹන්න\" භාවිත කරන්න.",
   "dialog.webview2_missing.message": "{app} සඳහා Microsoft Edge WebView2 Runtime අවශ්‍ය වේ, නමුත් එය මෙම පරිගණකයේ ස්ථාපනය කර නැත.\n\nMicrosoft හි බාගැනීම් පිටුව විවෘත කිරීමට OK තෝරන්න. Evergreen runtime එක ස්ථාපනය කර, ඉන්පසු {app} නැවත අරඹන්න.",
   "download.dialog.title": "Messenger බාගැනීම සුරකින්න",
   "error.config_folder": "{app} හි config ෆෝල්ඩරය සොයාගත නොහැකි විය: {error}",

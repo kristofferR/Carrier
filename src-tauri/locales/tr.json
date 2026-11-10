@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Facebook'tan çıkış yapılamadı",
   "dialog.log_out.facebook_failed_message": "Facebook oturumu sonlandırmadı ({error}). {app} yine de bu hesabın verilerini bu bilgisayardan siler ve yeniden başlar. Oturumu Facebook'ta da sonlandırmak için Facebook'un “Giriş yaptığın yer” ayarlarından bu cihazın oturumunu kapat.",
   "dialog.log_out.restart": "Yeniden başlat",
+  "dialog.clear_incomplete.title": "Bazı veriler silinmedi",
+  "dialog.clear_incomplete.message": "{app}, Messenger verilerinin tamamını bu bilgisayardan silemedi ({error}). Tekrar denemek için \"Önbelleği temizle ve yeniden başlat\" seçeneğini kullanın.",
   "dialog.webview2_missing.message": "{app} için Microsoft Edge WebView2 Runtime gerekiyor, ancak bu bilgisayarda yüklü değil.\n\nMicrosoft'un indirme sayfasını açmak için Tamam'ı seç. Evergreen çalışma zamanını yükle, ardından {app} uygulamasını yeniden başlat.",
   "download.dialog.title": "Messenger indirmesini kaydet",
   "error.config_folder": "{app} yapılandırma klasörü bulunamadı: {error}",

@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Échec de la déconnexion de Facebook",
   "dialog.log_out.facebook_failed_message": "Facebook n'a pas mis fin à la session ({error}). {app} supprime quand même les données de ce compte sur cet ordinateur, puis redémarre. Pour mettre aussi fin à la session sur Facebook, déconnecte cet appareil dans le paramètre « Où vous êtes connecté(e) » de Facebook.",
   "dialog.log_out.restart": "Redémarrer",
+  "dialog.clear_incomplete.title": "Certaines données n'ont pas été supprimées",
+  "dialog.clear_incomplete.message": "{app} n'a pas pu supprimer toutes ses données Messenger de cet ordinateur ({error}). Pour réessayer, utilisez « Vider le cache et redémarrer ».",
   "dialog.webview2_missing.message": "{app} a besoin de Microsoft Edge WebView2 Runtime, qui n'est pas installé sur cet ordinateur.\n\nChoisis OK pour ouvrir la page de téléchargement de Microsoft. Installe le runtime Evergreen, puis relance {app}.",
   "download.dialog.title": "Enregistrer le téléchargement Messenger",
   "error.config_folder": "impossible de trouver le dossier de configuration de {app} : {error}",

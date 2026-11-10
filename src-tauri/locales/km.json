@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "មិនអាចចេញពីគណនី Facebook បានទេ",
   "dialog.log_out.facebook_failed_message": "Facebook មិនបានបញ្ចប់សម័យប្រើប្រាស់ទេ ({error})។ {app} នៅតែលុបទិន្នន័យរបស់គណនីនេះចេញពីកុំព្យូទ័រនេះ ហើយចាប់ផ្តើមឡើងវិញ។ ដើម្បីបញ្ចប់សម័យនៅលើ Facebook ផងដែរ សូមចេញពីឧបករណ៍នេះនៅក្នុងការកំណត់ “Where you're logged in” របស់ Facebook។",
   "dialog.log_out.restart": "ចាប់ផ្តើមឡើងវិញ",
+  "dialog.clear_incomplete.title": "ទិន្នន័យខ្លះមិនត្រូវបានលុបទេ",
+  "dialog.clear_incomplete.message": "{app} មិនអាចលុបទិន្នន័យ Messenger ទាំងអស់របស់វាពីកុំព្យូទ័រនេះបានទេ ({error})។ ដើម្បីសាកល្បងម្ដងទៀត សូមប្រើ \"សម្អាតឃ្លាំងសម្ងាត់ និងចាប់ផ្តើមឡើងវិញ\"។",
   "dialog.webview2_missing.message": "{app} ត្រូវការ Microsoft Edge WebView2 Runtime ដែលមិនទាន់បានដំឡើងនៅលើកុំព្យូទ័រនេះទេ។\n\nជ្រើសរើស OK ដើម្បីបើកទំព័រទាញយករបស់ Microsoft។ ដំឡើង Evergreen runtime រួចបើក {app} ម្តងទៀត។",
   "download.dialog.title": "រក្សាទុកឯកសារទាញយកពី Messenger",
   "error.config_folder": "រកមិនឃើញថតការកំណត់របស់ {app} ទេ៖ {error}",

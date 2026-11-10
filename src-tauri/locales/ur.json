@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Facebook سے لاگ آؤٹ نہیں ہو سکا",
   "dialog.log_out.facebook_failed_message": "Facebook نے سیشن ختم نہیں کیا ({error})۔ {app} پھر بھی اس اکاؤنٹ کا ڈیٹا اس کمپیوٹر سے ڈیلیٹ کر کے ری اسٹارٹ ہوتا ہے۔ Facebook پر بھی سیشن ختم کرنے کے لیے Facebook کی “آپ کہاں لاگ اِن ہیں” سیٹنگز میں اس ڈیوائس سے لاگ آؤٹ کریں۔",
   "dialog.log_out.restart": "ری اسٹارٹ کریں",
+  "dialog.clear_incomplete.title": "کچھ ڈیٹا حذف نہیں ہوا",
+  "dialog.clear_incomplete.message": "{app} اس کمپیوٹر سے اپنا سارا Messenger ڈیٹا حذف نہیں کر سکا ({error})۔ دوبارہ کوشش کرنے کے لیے \"کیشے صاف کریں اور ری اسٹارٹ کریں\" استعمال کریں۔",
   "dialog.webview2_missing.message": "{app} کو Microsoft Edge WebView2 Runtime درکار ہے، جو اس کمپیوٹر پر انسٹال نہیں ہے۔\n\nMicrosoft کا ڈاؤن لوڈ پیج کھولنے کے لیے OK چنیں۔ Evergreen رن ٹائم انسٹال کریں، پھر {app} دوبارہ شروع کریں۔",
   "download.dialog.title": "Messenger کا ڈاؤن لوڈ محفوظ کریں",
   "error.config_folder": "{app} کا کنفیگ فولڈر نہیں مل سکا: {error}",

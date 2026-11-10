@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Nem sikerült kijelentkezni a Facebookról",
   "dialog.log_out.facebook_failed_message": "A Facebook nem zárta le a munkamenetet ({error}). A {app} ennek ellenére törli a fiók adatait erről a számítógépről, és újraindul. Ha a Facebookon is le szeretnéd zárni a munkamenetet, jelentkezz ki erről az eszközről a Facebook „Hol vagy bejelentkezve” beállításai között.",
   "dialog.log_out.restart": "Újraindítás",
+  "dialog.clear_incomplete.title": "Néhány adat nem törlődött",
+  "dialog.clear_incomplete.message": "A(z) {app} nem tudta törölni az összes Messenger-adatát erről a számítógépről ({error}). Az újrapróbálkozáshoz használd a(z) „Gyorsítótár törlése és újraindítás” lehetőséget.",
   "dialog.webview2_missing.message": "A {app} működéséhez szükség van a Microsoft Edge WebView2 Runtime-ra, amely nincs telepítve ezen a számítógépen.\n\nAz OK gombbal megnyílik a Microsoft letöltési oldala. Telepítsd az Evergreen futtatókörnyezetet, majd indítsd el újra a {app} alkalmazást.",
   "download.dialog.title": "Messenger-letöltés mentése",
   "error.config_folder": "nem található a {app} konfigurációs mappája: {error}",

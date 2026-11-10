@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Facebook থেকে লগ আউট করা যায়নি",
   "dialog.log_out.facebook_failed_message": "Facebook সেশনটি শেষ করেনি ({error})। {app} তবুও এই কম্পিউটার থেকে এই অ্যাকাউন্টের ডেটা মুছে রিস্টার্ট হবে। Facebook-এও সেশন শেষ করতে Facebook-এর “আপনি যেখানে লগ ইন করেছেন” সেটিংসে গিয়ে এই ডিভাইস থেকে লগ আউট করুন।",
   "dialog.log_out.restart": "রিস্টার্ট করুন",
+  "dialog.clear_incomplete.title": "কিছু ডেটা মোছা হয়নি",
+  "dialog.clear_incomplete.message": "{app} এই কম্পিউটার থেকে তার সব Messenger ডেটা মুছতে পারেনি ({error})। আবার চেষ্টা করতে \"ক্যাশ মুছে রিস্টার্ট করুন\" ব্যবহার করুন।",
   "dialog.webview2_missing.message": "{app} চালাতে Microsoft Edge WebView2 Runtime দরকার, যা এই কম্পিউটারে ইনস্টল করা নেই।\n\nMicrosoft-এর ডাউনলোড পেজ খুলতে OK বেছে নিন। Evergreen runtime ইনস্টল করে আবার {app} চালু করুন।",
   "download.dialog.title": "Messenger ডাউনলোড সেভ করুন",
   "error.config_folder": "{app}-এর কনফিগ ফোল্ডার খুঁজে পাওয়া যায়নি: {error}",

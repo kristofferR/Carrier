@@ -147,6 +147,8 @@
   "dialog.log_out.facebook_failed_title": "Facebook बाट लग आउट गर्न सकिएन",
   "dialog.log_out.facebook_failed_message": "Facebook ले सत्र अन्त्य गरेन ({error})। {app} ले अझै पनि यो खाताको डेटा यस कम्प्युटरबाट मेटाएर पुनः सुरु गर्छ। Facebook मा पनि सत्र अन्त्य गर्न, Facebook को “तपाईं कहाँ लग इन हुनुहुन्छ” सेटिङमा गएर यो डिभाइसबाट लग आउट गर्नुहोस्।",
   "dialog.log_out.restart": "पुनः सुरु गर्नुहोस्",
+  "dialog.clear_incomplete.title": "केही डेटा मेटिएन",
+  "dialog.clear_incomplete.message": "{app} ले यो कम्प्युटरबाट आफ्नो सबै Messenger डेटा मेटाउन सकेन ({error})। फेरि प्रयास गर्न \"क्यास खाली गरी पुनः सुरु गर्नुहोस्\" प्रयोग गर्नुहोस्।",
   "dialog.webview2_missing.message": "{app} लाई Microsoft Edge WebView2 Runtime चाहिन्छ, जुन यो कम्प्युटरमा इन्स्टल गरिएको छैन।\n\nMicrosoft को डाउनलोड पेज खोल्न OK रोज्नुहोस्। Evergreen runtime इन्स्टल गर्नुहोस्, त्यसपछि {app} फेरि सुरु गर्नुहोस्।",
   "download.dialog.title": "Messenger डाउनलोड सुरक्षित गर्नुहोस्",
   "error.config_folder": "{app} को कन्फिग फोल्डर फेला पार्न सकिएन: {error}",
