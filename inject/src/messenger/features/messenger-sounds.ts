@@ -11,8 +11,8 @@
 // on macOS 27), so SoundPlayer's elements stay muted while Web Audio plays
 // their sound, and are unmuted whenever they play themselves.
 //
-// The new-message sound itself (`MWLSChatPopperCommon.playChatTabSound`)
-// follows Do Not Disturb, Pause and Mute, and rings once per message (see
+// Messenger's new-message sound (`MWLSChatPopperCommon.playChatTabSound`)
+// never plays: Chatpane's own message sound replaces it (see
 // lib/messenger-sounds.ts).
 /*! Includes code adapted from fMess (https://github.com/toanbku/fmess).
  *
@@ -38,7 +38,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-import { diag } from "../bridge";
+import { diag, invoke } from "../bridge";
 import { playsMessageSound } from "../lib/messenger-sounds";
 import { notificationsGloballyMuted } from "../lib/mute";
 import {
@@ -63,26 +63,23 @@ const pageLoad = () => (window as unknown as { require?: unknown }).require;
 
 // While above zero, an <audio> element's play() is one of SoundPlayer's one-shots.
 let soundPlayerCalls = 0;
-// Messenger plays a new message's sound a moment after asking for it (it
-// first reads whether the account's sounds are on).
-const MESSAGE_SOUND_PENDING_MS = 3000;
-// A native notification this soon after Messenger's message sound is silent.
+// A native notification this soon after the in-front message sound is silent.
 const MESSAGE_SOUND_RING_MS = 5000;
-interface MessageSound {
+let messageSound: {
   thread: string;
-  /** Messenger's id for the message, when the row carried one. */
+  /** Messenger's id for the message, when it had one. */
   messageId: string;
-}
-let pendingMessageSound: (MessageSound & { until: number }) | null = null;
-let messageSound: (MessageSound & { at: number }) | null = null;
+  at: number;
+} | null = null;
 
 /**
- * Messenger's own sound just played for this message, so its native
- * notification shouldn't ring too: a message rings once. A notification that
- * names its message matches by id; one that doesn't (the row fallback)
- * matches the conversation, and only once, so a later message there rings.
+ * Chatpane's in-front message sound just played for this message, so its
+ * native notification shouldn't ring too: a message rings once. A
+ * notification that names its message matches by id; one that doesn't (the
+ * row fallback) matches the conversation, and only once, so a later message
+ * there rings.
  */
-export function messengerMessageSoundJustPlayed(thread: string | null, messageId = ""): boolean {
+export function messageSoundJustPlayed(thread: string | null, messageId = ""): boolean {
   const sound = messageSound;
   if (!sound || Date.now() - sound.at >= MESSAGE_SOUND_RING_MS) return false;
   if (messageId) return sound.messageId === messageId;
@@ -185,11 +182,6 @@ export function installMessengerSoundPlayback() {
     quiet(this);
     // Do Not Disturb, Pause and Mute silence all of Messenger's sounds.
     if (notificationsGloballyMuted(window.__CHATPANE_SETTINGS__)) return Promise.resolve();
-    if (pendingMessageSound && Date.now() < pendingMessageSound.until) {
-      const { thread, messageId } = pendingMessageSound;
-      messageSound = { thread, messageId, at: Date.now() };
-      pendingMessageSound = null;
-    }
     const pausesAtStart = pausesOf(this);
     return playThroughWebAudio(this).catch(() => {
       diag("sound.web-audio", "Web Audio could not play a Messenger sound; using the element");
@@ -254,25 +246,24 @@ function patchSoundPlayer(exports: Record<string, unknown>): boolean {
 }
 
 function patchChatPopperCommon(exports: Record<string, unknown>): boolean {
-  const playChatTabSound = exports.playChatTabSound;
-  if (typeof playChatTabSound !== "function") return false;
-  exports.playChatTabSound = function (this: unknown, ...args: unknown[]) {
-    const settings = window.__CHATPANE_SETTINGS__;
+  if (typeof exports.playChatTabSound !== "function") return false;
+  // Messenger's sound never plays; native plays Chatpane's own instead.
+  exports.playChatTabSound = (...args: unknown[]) => {
     const load = pageLoad();
     const message = args[0] as { timestampMs?: unknown; messageId?: unknown } | null | undefined;
     const plays = playsMessageSound({
-      globallyMuted: notificationsGloballyMuted(settings),
+      globallyMuted: notificationsGloballyMuted(window.__CHATPANE_SETTINGS__),
       oldNews: isOldNews(messengerMillis(message?.timestampMs, load), serverNowMs(load), null),
       focused: document.hasFocus(),
-      nativeSoundOn: settings?.notification_sound !== false,
     });
     if (!plays) return undefined;
     const thread = messageThreadId(message, load);
     const messageId = typeof message?.messageId === "string" ? message.messageId : "";
-    pendingMessageSound = thread
-      ? { thread, messageId, until: Date.now() + MESSAGE_SOUND_PENDING_MS }
-      : null;
-    return Reflect.apply(playChatTabSound, this, args);
+    messageSound = thread ? { thread, messageId, at: Date.now() } : null;
+    invoke("plugin:event|emit", { event: "chatpane:message-sound", payload: null })?.catch?.(() =>
+      diag("sound.message", "chatpane:message-sound emit failed"),
+    );
+    return undefined;
   };
   return true;
 }

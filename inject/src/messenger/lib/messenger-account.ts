@@ -1,6 +1,6 @@
 /*
- * Messenger's own account settings (Ref #358): Active Status, message sounds,
- * Do Not Disturb and read receipts, read and changed the way Messenger's own
+ * Messenger's own account settings (Ref #358): Active Status, Do Not Disturb
+ * and read receipts, read and changed the way Messenger's own
  * dialogs and menus do, so they sync to the account. Idea from fMess
  * (github.com/toanbku/fmess, MIT).
  */
@@ -10,7 +10,6 @@ import { readMessengerDndUntil } from "./messenger-dnd";
 
 export interface MessengerAccountState {
   activeStatus: boolean | null;
-  sounds: boolean | null;
   /** Seconds since 1970 when Do Not Disturb ends: 0 off, -1 until turned off. */
   dndUntil: number | null;
   /** Whether people see when you've read their messages (and you theirs). */
@@ -19,7 +18,6 @@ export interface MessengerAccountState {
 
 export type MessengerAccountChange =
   | { setting: "activeStatus"; value: boolean }
-  | { setting: "sounds"; value: boolean }
   /** Minutes: 0 turns it off, -1 until turned off. */
   | { setting: "doNotDisturb"; value: number }
   | { setting: "readReceipts"; value: boolean };
@@ -34,7 +32,6 @@ interface Relay {
 }
 
 export interface ChatSettingsViewer {
-  chat_sounds_on?: unknown;
   chat_visibility?: unknown;
   chat_visibility_on_messenger?: unknown;
   chat_visibility_on_facebook?: unknown;
@@ -49,7 +46,7 @@ export function stateFromViewer(
   dndUntil: number | null,
   readReceipts: boolean | null,
 ): MessengerAccountState {
-  if (!viewer) return { activeStatus: null, sounds: null, dndUntil, readReceipts };
+  if (!viewer) return { activeStatus: null, dndUntil, readReceipts };
   const active = resolveActiveStatus(
     flag(viewer.chat_visibility),
     flag(viewer.chat_visibility_on_messenger),
@@ -57,7 +54,6 @@ export function stateFromViewer(
   );
   return {
     activeStatus: flag(active),
-    sounds: flag(viewer.chat_sounds_on),
     dndUntil,
     readReceipts,
   };
@@ -227,16 +223,7 @@ export async function changeMessengerAccount(
   change: MessengerAccountChange,
 ): Promise<MessengerAccountState> {
   await loadPreferencesCode(load);
-  if (change.setting === "sounds") {
-    const [environment, mutation] = await loadFacebookModules(load, [
-      "CometRelayEnvironment",
-      "MWChatChangeSoundsSettingMutation",
-    ]);
-    await (mutation as { commit(environment: unknown, input: object): unknown }).commit(
-      defaultExport(environment),
-      { sounds_on: change.value },
-    );
-  } else if (change.setting === "activeStatus") {
+  if (change.setting === "activeStatus") {
     await setActiveStatus(load, change.value);
   } else if (change.setting === "readReceipts") {
     await setReadReceipts(load, change.value);
@@ -256,8 +243,6 @@ export function applied(state: MessengerAccountState, change: MessengerAccountCh
   switch (change.setting) {
     case "activeStatus":
       return state.activeStatus === change.value;
-    case "sounds":
-      return state.sounds === change.value;
     case "readReceipts":
       return state.readReceipts === change.value;
     case "doNotDisturb": {

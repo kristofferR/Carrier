@@ -35,6 +35,7 @@
     "allow-list-fonts",
     "allow-notification-sounds",
     "allow-choose-notification-sound",
-    "allow-preview-notification-sound"
+    "allow-preview-notification-sound",
+    "allow-copy-messenger-sound"
   ]
 }

@@ -34,6 +34,7 @@ const COMMANDS: &[&str] = &[
     "notification_sounds",
     "choose_notification_sound",
     "preview_notification_sound",
+    "copy_messenger_sound",
     "choose_download",
     "prepare_download",
     "share_download",

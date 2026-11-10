@@ -73,7 +73,7 @@ import { readNewestMessageId, readThreadStates } from "../lib/thread-state";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
-import { messengerMessageSoundJustPlayed } from "./messenger-sounds";
+import { messageSoundJustPlayed } from "./messenger-sounds";
 import { watchReactions } from "./reaction-notifications";
 
 interface ChatpaneNotificationInstance {
@@ -300,8 +300,8 @@ export function initNotificationBridge() {
         account: accountId(document.cookie) || "",
         row,
         sender,
-        // Messenger's own sound just rang for this message (see messenger-sounds).
-        silent: messengerMessageSoundJustPlayed(threadIdFromHref(threadPath), messageId),
+        // The in-front message sound just rang for this message (see messenger-sounds).
+        silent: messageSoundJustPlayed(threadIdFromHref(threadPath), messageId),
       },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);

@@ -973,6 +973,7 @@ const soundValue = (sound: import("./native-types").NotificationSound) => JSON.s
 function notificationSoundRow() {
   const row = el("div", "row");
   const select = document.createElement("select");
+  select.id = "message-sound";
   select.setAttribute("aria-label", t("settings.notifications.notification_sound.label"));
   const current =
     settings.notification_sound_choice ??
@@ -980,6 +981,7 @@ function notificationSoundRow() {
   const options: [import("./native-types").NotificationSound | "choose", string][] = [
     ["off", t("settings.notifications.notification_sound.off")],
     ["default", t("settings.notifications.notification_sound.default")],
+    ["messenger", t("settings.notifications.notification_sound.messenger")],
   ];
   for (const { label, sound } of sounds || []) options.push([sound, label]);
   options.push(["choose", t("settings.notifications.notification_sound.choose")]);
@@ -1011,6 +1013,19 @@ function notificationSoundRow() {
   select.onchange = async () => {
     if (select.value !== "choose") {
       const sound = selectedSound();
+      if (sound === "messenger") {
+        // Copy Messenger's sound from its page first; keep the current
+        // sound when that fails.
+        select.disabled = true;
+        try {
+          await invoke("copy_messenger_sound");
+        } catch (e) {
+          select.value = shown;
+          select.disabled = false;
+          setStatus(errorMessage(e));
+          return;
+        }
+      }
       if (sound) await persist({ key: "notification_sound_choice", value: sound });
       return;
     }
@@ -1410,7 +1425,7 @@ async function loadMessengerAccount(change?: MessengerAccountChange) {
 }
 
 function accountToggleRow(
-  setting: "activeStatus" | "sounds" | "readReceipts",
+  setting: "activeStatus" | "readReceipts",
   label: string,
   hint: string,
   value: boolean | null,
@@ -1462,7 +1477,19 @@ function dndRow(until: number | null) {
 
 function messengerAccountSection() {
   const wrap = titledCard(t("settings.account.title"));
-  wrap.append(el("div", "section-hint", t("settings.account.intro")));
+  const intro = el("div", "section-hint", t("settings.account.intro"));
+  // The message sound is Chatpane's own, on the Notifications tab.
+  const soundLink = el("button", "link-button", t("settings.account.sound_link"));
+  soundLink.type = "button";
+  soundLink.style.marginTop = "4px";
+  soundLink.onclick = () => {
+    selectTab("notifications", false);
+    const sound = document.getElementById("message-sound");
+    sound?.scrollIntoView({ block: "center" });
+    sound?.focus();
+  };
+  intro.append(el("br"), soundLink);
+  wrap.append(intro);
   const { state, error, loading } = messengerAccount;
   if (error) {
     const notice = el("div", "notice error");
@@ -1491,12 +1518,6 @@ function messengerAccountSection() {
       t("settings.account.read_receipts.label"),
       t("settings.account.read_receipts.hint"),
       state.readReceipts,
-    ),
-    accountToggleRow(
-      "sounds",
-      t("settings.account.sounds.label"),
-      t("settings.account.sounds.hint"),
-      state.sounds,
     ),
     dndRow(state.dndUntil),
   );

@@ -129,7 +129,7 @@ function installBridge(platform: string, strings: typeof globalThis.__CHATPANE_I
         case "update_install_mode":
           return { kind: "built-in" };
         case "messenger_account":
-          return { activeStatus: true, sounds: false, dndUntil: 0, readReceipts: true };
+          return { activeStatus: true, dndUntil: 0, readReceipts: true };
         case "list_themes":
           return [{ id: "default", name: "Default", builtIn: true }];
         case "notification_sounds":
@@ -194,6 +194,23 @@ async function exerciseSettings() {
       );
       assert(document.getElementById("rows")!.children.length > 0, `${name} has controls`);
     }
+    // The message sound is Chatpane's own: Account links to it, and picking
+    // Messenger copies Messenger's sound before saving the choice.
+    tab("account");
+    await settle();
+    [...document.querySelectorAll<HTMLButtonElement>("#rows .link-button")]
+      .find((link) => link.textContent?.startsWith("Message sound"))!
+      .click();
+    await settle();
+    const messageSound = document.getElementById("message-sound") as HTMLSelectElement;
+    assert(document.activeElement === messageSound, "Account link opens the message sound");
+    fixture.calls.length = 0;
+    messageSound.value = JSON.stringify("messenger");
+    messageSound.dispatchEvent(new Event("change"));
+    await settle();
+    assert(fixture.calls.join() === "copy_messenger_sound,update_setting", "copies, then saves");
+    assert(fixture.current.notification_sound_choice === "messenger", "Messenger is the choice");
+
     const platform = navigator.platform;
     assert(
       Boolean(document.getElementById("window-controls")) === (platform !== "MacIntel"),
@@ -232,9 +249,7 @@ async function exerciseSettings() {
     assert(fixture.current.zoom === 120, "numeric settings keep numeric wire values");
 
     tab("notifications");
-    const sound = document.querySelector<HTMLSelectElement>(
-      'select[aria-label="Notification sound"]',
-    )!;
+    const sound = document.querySelector<HTMLSelectElement>('select[aria-label="Message sound"]')!;
     sound.value = JSON.stringify("off");
     sound.dispatchEvent(new Event("change"));
     await settle();

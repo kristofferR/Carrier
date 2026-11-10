@@ -1052,11 +1052,13 @@
   function notificationSoundRow() {
     const row = el("div", "row");
     const select = document.createElement("select");
+    select.id = "message-sound";
     select.setAttribute("aria-label", settingsText("settings.notifications.notification_sound.label"));
     const current2 = settings.notification_sound_choice ?? (settings.notification_sound === false ? "off" : "default");
     const options = [
       ["off", settingsText("settings.notifications.notification_sound.off")],
-      ["default", settingsText("settings.notifications.notification_sound.default")]
+      ["default", settingsText("settings.notifications.notification_sound.default")],
+      ["messenger", settingsText("settings.notifications.notification_sound.messenger")]
     ];
     for (const { label: label2, sound } of sounds || []) options.push([sound, label2]);
     options.push(["choose", settingsText("settings.notifications.notification_sound.choose")]);
@@ -1085,6 +1087,17 @@
     select.onchange = async () => {
       if (select.value !== "choose") {
         const sound = selectedSound();
+        if (sound === "messenger") {
+          select.disabled = true;
+          try {
+            await invoke("copy_messenger_sound");
+          } catch (e) {
+            select.value = shown;
+            select.disabled = false;
+            setStatus(errorMessage(e));
+            return;
+          }
+        }
         if (sound) await persist({ key: "notification_sound_choice", value: sound });
         return;
       }
@@ -1464,7 +1477,18 @@
   }
   function messengerAccountSection() {
     const wrap = titledCard(settingsText("settings.account.title"));
-    wrap.append(el("div", "section-hint", settingsText("settings.account.intro")));
+    const intro = el("div", "section-hint", settingsText("settings.account.intro"));
+    const soundLink = el("button", "link-button", settingsText("settings.account.sound_link"));
+    soundLink.type = "button";
+    soundLink.style.marginTop = "4px";
+    soundLink.onclick = () => {
+      selectTab("notifications", false);
+      const sound = document.getElementById("message-sound");
+      sound?.scrollIntoView({ block: "center" });
+      sound?.focus();
+    };
+    intro.append(el("br"), soundLink);
+    wrap.append(intro);
     const { state, error, loading } = messengerAccount;
     if (error) {
       const notice = el("div", "notice error");
@@ -1493,12 +1517,6 @@
         settingsText("settings.account.read_receipts.label"),
         settingsText("settings.account.read_receipts.hint"),
         state.readReceipts
-      ),
-      accountToggleRow(
-        "sounds",
-        settingsText("settings.account.sounds.label"),
-        settingsText("settings.account.sounds.hint"),
-        state.sounds
       ),
       dndRow(state.dndUntil)
     );
