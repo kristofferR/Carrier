@@ -108,6 +108,48 @@ pub(crate) fn is_messenger_window_label(label: &str) -> bool {
 
 pub(crate) const POPUP_LABEL_PREFIX: &str = "popup-";
 
+/// Destroy a Messenger or Settings window. WebKitGTK keeps a destroyed
+/// webview's page running in its web process, hundreds of MB for the rest of
+/// the session, so on Linux the process is ended first.
+pub(crate) fn destroy_webview_window(window: &WebviewWindow) -> tauri::Result<()> {
+    #[cfg(target_os = "linux")]
+    end_web_process(window);
+    window.destroy()
+}
+
+/// Linux: end a window's web process when the user closes it, as closing
+/// destroys it ([`destroy_webview_window`]). Only for windows nothing keeps
+/// open on close, and never for a page's own windows (calls), which share
+/// their opener's process.
+#[cfg(target_os = "linux")]
+fn end_web_process_on_close(window: &WebviewWindow) {
+    let target = window.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::CloseRequested { .. }) {
+            end_web_process(&target);
+        }
+    });
+}
+
+/// A page's own windows (calls) share their opener's web process, so while
+/// one is open no Facebook window's process is ended: that would end the call.
+/// Settings opens none.
+#[cfg(target_os = "linux")]
+fn end_web_process(window: &WebviewWindow) {
+    let page_window_open = window
+        .app_handle()
+        .webview_windows()
+        .keys()
+        .any(|label| label.starts_with(POPUP_LABEL_PREFIX) && label != FACEBOOK_LANGUAGE_LABEL);
+    if window.label() != "settings" && page_window_open {
+        return;
+    }
+    let _ = window.with_webview(|webview| {
+        use webkit2gtk::WebViewExt;
+        webview.inner().terminate_web_process();
+    });
+}
+
 /// Messenger and call windows load Messenger in the app and open other web
 /// pages in the browser.
 fn allow_navigation(url: &Url) -> bool {
@@ -303,6 +345,8 @@ pub(crate) async fn open_facebook_language(app: tauri::AppHandle) {
             // would reload one, not this page). Settings drops it too.
             #[cfg(not(target_os = "macos"))]
             let _ = window.remove_menu();
+            #[cfg(target_os = "linux")]
+            end_web_process_on_close(&window);
             window.on_window_event(move |event| {
                 if matches!(event, WindowEvent::Destroyed) {
                     // Messenger waits out a draft, a send or a call before
@@ -387,7 +431,7 @@ async fn move_windows_to_shared_engine(app: &tauri::AppHandle) -> bool {
             label,
         };
         crate::webview_watchdog::realtime_window_replacing(&snapshot.label);
-        match window.destroy() {
+        match destroy_webview_window(&window) {
             Ok(()) => destroyed.push(snapshot),
             Err(error) => {
                 crate::webview_watchdog::realtime_window_replacement_failed(&snapshot.label);
@@ -796,6 +840,10 @@ fn build_app_window_with_render_budget(
             crate::linux::configure_messenger_webview_memory(window);
             crate::linux::enable_calls(window);
             crate::linux::install_webview_diagnostics(window);
+            // `main` hides on close or quits the app; other windows close.
+            if label != "main" {
+                end_web_process_on_close(window);
+            }
         }
         // New windows inherit the current always-on-top preference and zoom.
         let _ = window.set_always_on_top(settings.always_on_top);
@@ -1146,7 +1194,7 @@ pub(crate) fn recreate_messenger_window(
                         .url()
                         .ok()
                         .and_then(|url| crate::messenger_url_thread_id(&url));
-                    (target.destroy(), was_loaded, thread)
+                    (destroy_webview_window(&target), was_loaded, thread)
                 });
                 let _ = sender.send(result);
             });
@@ -1159,7 +1207,7 @@ pub(crate) fn recreate_messenger_window(
                 (Some(result), was_loaded, thread)
             })
         } else {
-            (Some(window.destroy()), None, None)
+            (Some(destroy_webview_window(&window)), None, None)
         };
         let was_loaded = was_loaded.or(recycle_was_loaded);
         if !matches!(destroy_result, Some(Ok(()))) {
@@ -1293,14 +1341,7 @@ fn release_settings_later(window: WebviewWindow) {
         let target = window.clone();
         let _ = window.run_on_main_thread(move || {
             if SETTINGS_GENERATION.load(SeqCst) == closed && !target.is_visible().unwrap_or(true) {
-                // WebKitGTK keeps a destroyed webview's web process running
-                // (over 100 MB each), so end it first.
-                #[cfg(target_os = "linux")]
-                let _ = target.with_webview(|webview| {
-                    use webkit2gtk::WebViewExt;
-                    webview.inner().terminate_web_process();
-                });
-                let _ = target.destroy();
+                let _ = destroy_webview_window(&target);
             }
         });
     });
