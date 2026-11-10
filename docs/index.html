@@ -670,8 +670,11 @@
     --w-out: #3dff6e;
     --w-out-text: #001a06;
   }
-  .win-stage[data-win-skin="terminal"] .msg, .win-stage[data-win-skin="terminal"] .comp-input {
+  /* Monospace across the whole window, like the app; font-size-adjust keeps
+     the text at the sans-serif's x-height. The notifications are the OS's. */
+  .win-stage[data-win-skin="terminal"] :is(.win, .win *) {
     font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size-adjust: .52;
   }
   /* Graphite and Warm paint sent messages in their own solid color */
   .win-stage:is([data-win-skin="graphite"], [data-win-skin="warm"], [data-win-skin="pink"], [data-win-skin="lavender"], [data-win-skin="sage"], [data-win-skin="slate"], [data-win-skin="terminal"]) .msg.out { background-image: none; background-color: var(--w-out); color: var(--w-out-text); }
