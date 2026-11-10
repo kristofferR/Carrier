@@ -23,6 +23,13 @@
   --link: var(--grad-b);
   --head-bg: rgba(255, 255, 255, .97);
   --foot: #f6f9fd;
+  /* White buttons on the blue sections */
+  --raised: #ffffff;
+  --raised-ink: #14283f;
+  --raised-muted: #4a627a;
+  --raised-accent: var(--grad-b);
+  --raised-tile: #f2f6fb;
+  --raised-icon: #1d2129;
   color-scheme: light;
   --shadow-soft: 0 8px 30px -12px rgba(15, 60, 130, .18);
   --shadow-card: 0 14px 40px -18px rgba(15, 60, 130, .22);
@@ -51,9 +58,16 @@
     --link: #5cabff;
     --head-bg: rgba(11, 19, 30, .94);
     --foot: #08101a;
+    --raised: #0f1a29;
+    --raised-ink: #e6edf6;
+    --raised-muted: #9fb2c7;
+    --raised-accent: #5cabff;
+    --raised-tile: #1c2a3d;
+    --raised-icon: #e6edf6;
     --shadow-soft: 0 8px 30px -12px rgba(0, 0, 0, .6);
     --shadow-card: 0 14px 40px -18px rgba(0, 0, 0, .7);
   }
+  .dl-ico [fill="#fff"] { fill: var(--raised-tile); } /* the penguin's white parts */
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -140,7 +154,7 @@ code {
   transition: transform .22s cubic-bezier(.2,.7,.3,1.4), box-shadow .22s ease;
 }
 .btn-primary {
-  background: #fff; color: var(--grad-b);
+  background: var(--raised); color: var(--raised-accent);
   border-end-end-radius: 6px;
   box-shadow: 0 14px 34px -10px rgba(0, 30, 90, .45);
 }
@@ -294,16 +308,17 @@ table.cmp thead .us { color: var(--link); }
 .dl-alts a { color: #fff; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .dl {
   display: flex; align-items: center; gap: .9rem;
-  /* White buttons on the blue section in either scheme, so their text stays dark. */
-  --ink: #14283f; --muted: #4a627a;
-  background: #fff; color: var(--ink);
+  --ink: var(--raised-ink); --muted: var(--raised-muted);
+  background: var(--raised); color: var(--ink);
   text-decoration: none; text-align: start;
   padding: 1rem 1.25rem; border-radius: 999px;
   box-shadow: 0 14px 34px -12px rgba(0, 30, 90, .4);
   transition: transform .22s cubic-bezier(.2,.7,.3,1.4), box-shadow .22s ease;
 }
 .dl:hover, .dl:focus-visible { transform: translateY(-4px) scale(1.02); box-shadow: 0 22px 48px -14px rgba(0, 30, 90, .5); }
-.dl-ico { width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0; background: #f2f6fb; display: grid; place-items: center; }
+.dl-ico { width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0; background: var(--raised-tile); display: grid; place-items: center; }
+/* The platform icons follow the button: dark on white, light on dark. */
+.dl-ico [fill="#1d2129"] { fill: var(--raised-icon); }
 .dl b { display: block; font-family: var(--font-display); font-size: 1.06rem; font-weight: 800; }
 .dl small { color: var(--muted); font-weight: 600; font-size: .82rem; }
 .other-versions { position: relative; margin-top: 1.5rem; font-weight: 600; }
