@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Messenger ไม่ได้รายงานการตั้งค่านี้",
   "settings.account.active_status.label": "สถานะการใช้งาน",
   "settings.account.active_status.hint": "ให้ผู้อื่นเห็นเมื่อคุณกำลังใช้งานอยู่หรือเพิ่งใช้งาน",
+  "settings.account.read_receipts.label": "การแจ้งว่าอ่านแล้ว",
+  "settings.account.read_receipts.hint": "ให้ผู้อื่นเห็นเมื่อคุณอ่านข้อความของพวกเขาแล้ว การตั้งค่านี้มีผลทั้งสองทาง: หากปิดไว้ คุณก็จะไม่เห็นเช่นกันว่าพวกเขาอ่านข้อความของคุณแล้วหรือยัง",
   "settings.account.sounds.label": "เสียงข้อความ",
   "settings.account.sounds.hint": "เสียงของ Messenger เองสำหรับข้อความใหม่ เสียงการแจ้งเตือนของ {app} ตั้งค่าแยกต่างหาก",
   "settings.account.dnd.label": "ห้ามรบกวน",

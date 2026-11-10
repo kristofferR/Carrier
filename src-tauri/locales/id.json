@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Messenger tidak memberikan pengaturan ini.",
   "settings.account.active_status.label": "Status Aktif",
   "settings.account.active_status.hint": "Tunjukkan kepada orang lain saat kamu aktif atau baru saja aktif.",
+  "settings.account.read_receipts.label": "Tanda sudah dibaca",
+  "settings.account.read_receipts.hint": "Biarkan orang lain melihat saat kamu sudah membaca pesan mereka. Ini berlaku dua arah: jika dimatikan, kamu juga tidak akan melihat saat mereka sudah membaca pesanmu.",
   "settings.account.sounds.label": "Suara pesan",
   "settings.account.sounds.hint": "Suara Messenger sendiri untuk pesan baru. Suara notifikasi {app} diatur terpisah.",
   "settings.account.dnd.label": "Jangan Ganggu",

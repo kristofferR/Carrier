@@ -1489,6 +1489,12 @@
         state.activeStatus
       ),
       accountToggleRow(
+        "readReceipts",
+        settingsText("settings.account.read_receipts.label"),
+        settingsText("settings.account.read_receipts.hint"),
+        state.readReceipts
+      ),
+      accountToggleRow(
         "sounds",
         settingsText("settings.account.sounds.label"),
         settingsText("settings.account.sounds.hint"),

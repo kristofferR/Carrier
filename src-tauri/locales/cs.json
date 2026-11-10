@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Messenger toto nastavení neposkytl.",
   "settings.account.active_status.label": "Stav aktivity",
   "settings.account.active_status.hint": "Ukazuje ostatním, kdy jsi aktivní nebo nedávno aktivní.",
+  "settings.account.read_receipts.label": "Potvrzení o přečtení",
+  "settings.account.read_receipts.hint": "Ostatní uvidí, kdy sis přečetl(a) jejich zprávy. Platí to oboustranně: když to vypneš, neuvidíš ani ty, kdy si přečetli tvoje.",
   "settings.account.sounds.label": "Zvuky zpráv",
   "settings.account.sounds.hint": "Vlastní zvuky Messengeru pro nové zprávy. Zvuk oznámení aplikace {app} se nastavuje zvlášť.",
   "settings.account.dnd.label": "Nerušit",

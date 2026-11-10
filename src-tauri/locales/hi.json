@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Messenger ने यह सेटिंग नहीं बताई।",
   "settings.account.active_status.label": "एक्टिव स्टेटस",
   "settings.account.active_status.hint": "लोगों को दिखाएँ कि आप कब एक्टिव हैं या हाल ही में एक्टिव थे।",
+  "settings.account.read_receipts.label": "रीड रिसीट",
+  "settings.account.read_receipts.hint": "लोगों को दिखाएँ कि आपने उनके मैसेज कब पढ़े। यह दोनों तरफ़ लागू होता है: बंद करने पर आप भी नहीं देख पाएँगे कि उन्होंने आपके मैसेज कब पढ़े।",
   "settings.account.sounds.label": "मैसेज साउंड",
   "settings.account.sounds.hint": "नए मैसेज के लिए Messenger की अपनी साउंड। {app} की नोटिफ़िकेशन साउंड अलग है।",
   "settings.account.dnd.label": "परेशान न करें",

@@ -396,14 +396,26 @@
 
   // inject/src/messenger/lib/messenger-account.ts
   var flag = (value) => typeof value === "boolean" ? value : null;
-  function stateFromViewer(viewer, resolveActiveStatus, dndUntil) {
-    if (!viewer) return { activeStatus: null, sounds: null, dndUntil };
+  function stateFromViewer(viewer, resolveActiveStatus, dndUntil, readReceipts) {
+    if (!viewer) return { activeStatus: null, sounds: null, dndUntil, readReceipts };
     const active = resolveActiveStatus(
       flag(viewer.chat_visibility),
       flag(viewer.chat_visibility_on_messenger),
       flag(viewer.chat_visibility_on_facebook)
     );
-    return { activeStatus: flag(active), sounds: flag(viewer.chat_sounds_on), dndUntil };
+    return {
+      activeStatus: flag(active),
+      sounds: flag(viewer.chat_sounds_on),
+      dndUntil,
+      readReceipts
+    };
+  }
+  var READ_RECEIPTS_DEFAULT = 0;
+  var READ_RECEIPTS_DISABLED = 1;
+  var READ_RECEIPTS_ENABLED = 2;
+  function readReceiptsOn(row, pageDefault) {
+    if (row) return (row.setting ?? READ_RECEIPTS_DEFAULT) !== READ_RECEIPTS_DISABLED;
+    return typeof pageDefault === "number" ? pageDefault !== READ_RECEIPTS_DISABLED : null;
   }
   function dndUntilFor(minutes, nowMs) {
     if (minutes === 0 || minutes === -1) return minutes;
@@ -434,7 +446,59 @@
     return stateFromViewer(
       data.viewer,
       defaultExport(resolve),
-      dndUntil
+      dndUntil,
+      await readReadReceipts(load, account2)
+    );
+  }
+  async function readReadReceipts(load, account2, timeoutMs = 3e3) {
+    let timer;
+    try {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    async function read() {
+      const [i64, database2, intEnum] = await loadFacebookModules(load, [
+        "I64",
+        "LSDatabaseSingleton",
+        "LSIntEnum"
+      ]);
+      const db = await database2.LSDatabaseSingleton;
+      const table = db.tables?.messaging_privacy_settings;
+      const row = typeof table?.get === "function" ? await table.get(i64.of_string(account2)) : null;
+      let pageDefault = null;
+      try {
+        pageDefault = load?.("MessengerWebPrivacySettings")?.read_receipts_disabled;
+      } catch {
+      }
+      return readReceiptsOn(
+        row && typeof row === "object" ? {
+          setting: row.readReceiptsDisabled == null ? null : intEnum.toNumber(row.readReceiptsDisabled)
+        } : null,
+        pageDefault
+      );
+    }
+  }
+  async function setReadReceipts(load, on2) {
+    await loadFacebookModules(load, ["MWInboxSettingsMenu.react"]);
+    const [database2, factory, intEnum, update] = await loadFacebookModules(load, [
+      "LSDatabaseSingleton",
+      "LSFactory",
+      "LSIntEnum",
+      "LSOptimisticallyUpdateMessagingPrivacySettingsStoredProcedure"
+    ]);
+    const db = await database2.LSDatabaseSingleton;
+    const makeFactory = defaultExport(factory);
+    const run = defaultExport(update);
+    const value = intEnum.ofNumber(on2 ? READ_RECEIPTS_ENABLED : READ_RECEIPTS_DISABLED);
+    await db.runInTransaction(
+      (tx) => run(makeFactory(tx), { readReceiptsDisabled: value }),
+      "readwrite"
     );
   }
   async function changeMessengerAccount(load, account2, change) {
@@ -450,6 +514,8 @@
       );
     } else if (change.setting === "activeStatus") {
       await setActiveStatus(load, change.value);
+    } else if (change.setting === "readReceipts") {
+      await setReadReceipts(load, change.value);
     } else {
       await setDoNotDisturb(load, account2, change.value);
     }
@@ -466,6 +532,8 @@
         return state3.activeStatus === change.value;
       case "sounds":
         return state3.sounds === change.value;
+      case "readReceipts":
+        return state3.readReceipts === change.value;
       case "doNotDisturb": {
         if (change.value <= 0) return state3.dndUntil === change.value;
         const expected = dndUntilFor(change.value, Date.now());
@@ -555,6 +623,10 @@
       }),
       "set-sounds": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
         setting: "sounds",
+        value: value === true
+      }),
+      "set-read-receipts": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
+        setting: "readReceipts",
         value: value === true
       }),
       "set-dnd": async (value) => {
