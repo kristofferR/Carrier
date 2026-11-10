@@ -4471,7 +4471,7 @@ ${button.innerHTML}`)
     const unconfirmed = [];
     let sending = false;
     const show = (snapshot) => {
-      if (!snapshot || snapshot.revision <= revision) return;
+      if (!snapshot || snapshot.revision < revision) return;
       revision = snapshot.revision;
       store.replace(unconfirmed.reduce(applyPinChange, snapshot.pins));
     };
@@ -4487,12 +4487,22 @@ ${button.innerHTML}`)
         unconfirmed.push(change);
         if (sending) return;
         sending = true;
-        while (unconfirmed[0]) {
-          const snapshot = await request2(unconfirmed[0]);
-          unconfirmed.shift();
-          show(snapshot);
+        let resync = false;
+        try {
+          while (unconfirmed[0] || resync) {
+            if (unconfirmed[0]) {
+              const snapshot = await request2(unconfirmed[0]);
+              unconfirmed.shift();
+              if (snapshot) show(snapshot);
+              else resync = true;
+            } else {
+              resync = false;
+              show(await request2());
+            }
+          }
+        } finally {
+          sending = false;
         }
-        sending = false;
       }
     };
   }

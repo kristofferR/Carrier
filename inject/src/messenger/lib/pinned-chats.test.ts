@@ -110,4 +110,45 @@ describe("pinned chats", () => {
     await settle();
     expect(store.getSnapshot()).toEqual([ada, bob]);
   });
+
+  test("a failed change re-reads native pins even when their revision hasn't changed", async () => {
+    const store = createPinnedChatsStore();
+    const ada = { id: "1", name: "Ada" };
+    const bob = { id: "2", name: "Bob" };
+    const sent: (PinChange | undefined)[] = [];
+    const sync = createPinnedChatsSync(store, async (change) => {
+      sent.push(change);
+      return change ? null : { revision: 1, pins: [ada] };
+    });
+    await sync.refresh();
+    const change = sync.change({ op: "pin", ...bob });
+    expect(store.getSnapshot()).toEqual([ada, bob]);
+    await change;
+    expect(sent).toEqual([undefined, { op: "pin", ...bob }, undefined]);
+    expect(store.getSnapshot()).toEqual([ada]);
+  });
+
+  test("a listener error while showing an answer doesn't block later changes", async () => {
+    const store = createPinnedChatsStore();
+    const ada = { id: "1", name: "Ada" };
+    const bob = { id: "2", name: "Bob" };
+    const sent: (PinChange | undefined)[] = [];
+    const sync = createPinnedChatsSync(store, async (change) => {
+      sent.push(change);
+      // Native rejected the first pin, so showing the answer changes the store.
+      return { revision: sent.length, pins: change?.id === bob.id ? [bob] : [] };
+    });
+    const first = sync.change({ op: "pin", ...ada });
+    const unsubscribe = store.subscribe(() => {
+      throw new Error("listener failed");
+    });
+    await expect(first).rejects.toThrow("listener failed");
+    unsubscribe();
+    await sync.change({ op: "pin", ...bob });
+    expect(sent).toEqual([
+      { op: "pin", ...ada },
+      { op: "pin", ...bob },
+    ]);
+    expect(store.getSnapshot()).toEqual([bob]);
+  });
 });

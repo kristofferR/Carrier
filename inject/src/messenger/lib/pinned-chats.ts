@@ -137,7 +137,7 @@ export function createPinnedChatsSync(
   const unconfirmed: PinChange[] = [];
   let sending = false;
   const show = (snapshot: PinnedSnapshot | null) => {
-    if (!snapshot || snapshot.revision <= revision) return;
+    if (!snapshot || snapshot.revision < revision) return;
     revision = snapshot.revision;
     store.replace(unconfirmed.reduce(applyPinChange, snapshot.pins));
   };
@@ -153,12 +153,22 @@ export function createPinnedChatsSync(
       unconfirmed.push(change);
       if (sending) return;
       sending = true;
-      while (unconfirmed[0]) {
-        const snapshot = await request(unconfirmed[0]);
-        unconfirmed.shift();
-        show(snapshot);
+      let resync = false;
+      try {
+        while (unconfirmed[0] || resync) {
+          if (unconfirmed[0]) {
+            const snapshot = await request(unconfirmed[0]);
+            unconfirmed.shift();
+            if (snapshot) show(snapshot);
+            else resync = true;
+          } else {
+            resync = false;
+            show(await request());
+          }
+        }
+      } finally {
+        sending = false;
       }
-      sending = false;
     },
   };
 }
