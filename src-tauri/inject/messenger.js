@@ -1638,6 +1638,101 @@ ${button.innerHTML}`)
     }
   };
 
+  // inject/src/messenger/lib/messenger-error-block.ts
+  var ERROR_BLOCK_MODULE = "MWErrorBlock.react";
+  var ErrorBlockTracker = class {
+    constructor(onChange) {
+      __publicField(this, "onChange", onChange);
+      __publicField(this, "shown", /* @__PURE__ */ new Map());
+    }
+    mount(error) {
+      const token = Symbol(error);
+      this.shown.set(token, error);
+      this.onChange(true, error);
+      return () => {
+        if (!this.shown.delete(token)) return;
+        this.onChange(this.shown.size > 0, error);
+      };
+    }
+    get isShown() {
+      return this.shown.size > 0;
+    }
+  };
+  function errorName(props) {
+    const error = props?.error;
+    const name = error?.name;
+    return typeof name === "string" && /^[\w.:-]{1,80}$/.test(name) ? name : "unknown";
+  }
+  function trackedErrorBlock(original, react2, tracker2) {
+    const tracked = (props) => {
+      const React = react2();
+      if (!React) return original(props);
+      const name = errorName(props);
+      React.useEffect(() => tracker2.mount(name), [name]);
+      return React.createElement(original, props);
+    };
+    Object.defineProperty(tracked, "displayName", { value: "ChatpaneTrackedErrorBlock" });
+    return tracked;
+  }
+  var wrappedComponents = /* @__PURE__ */ new WeakSet();
+  function wrapErrorBlockFactory(factory, react2, tracker2) {
+    const patch = (exports) => {
+      if (!exports || typeof exports !== "object") return false;
+      const record4 = exports;
+      const component = record4.default;
+      if (typeof component !== "function") return false;
+      if (wrappedComponents.has(component)) return true;
+      const tracked = trackedErrorBlock(component, react2, tracker2);
+      wrappedComponents.add(tracked);
+      record4.default = tracked;
+      return true;
+    };
+    const wrapped3 = function(...args) {
+      const result = Reflect.apply(factory, this, args);
+      for (const candidate of [result, ...args.slice(-2)]) {
+        try {
+          if (patch(candidate)) break;
+          const exports = candidate?.exports;
+          if (candidate && typeof candidate === "object" && patch(exports)) break;
+        } catch {
+        }
+      }
+      return result;
+    };
+    try {
+      Object.defineProperty(wrapped3, "length", { value: factory.length });
+    } catch {
+    }
+    return wrapped3;
+  }
+
+  // inject/src/messenger/features/messenger-error-block.ts
+  var ERROR_BLOCK_EVENT = "chatpane:messenger-error-block";
+  var tracker = new ErrorBlockTracker((shown, error) => {
+    diag("recover.error-block", `${shown ? "shown" : "gone"}: ${error}`);
+    window.dispatchEvent(new CustomEvent(ERROR_BLOCK_EVENT));
+  });
+  var messengerErrorBlockShown = () => tracker.isShown;
+  var react = () => {
+    try {
+      const load = window.require;
+      const React = load?.("react");
+      return typeof React?.createElement === "function" && typeof React.useEffect === "function" ? React : null;
+    } catch {
+      return null;
+    }
+  };
+  function interceptErrorBlock(define) {
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        if (args[0] === ERROR_BLOCK_MODULE && typeof args[2] === "function") {
+          args[2] = wrapErrorBlockFactory(args[2], react, tracker);
+        }
+        return Reflect.apply(target, thisArg, args);
+      }
+    });
+  }
+
   // inject/src/messenger/lib/sync-health.ts
   var SYNC_REQUEST_TIMEOUT_MS = 3e4;
   var SYNC_WINDOW_MS = 18e4;
@@ -2808,7 +2903,8 @@ ${button.innerHTML}`)
     const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
     const onFacebookErrorPage = () => {
       try {
-        return hasFacebookReloadDialog() || looksLikeFacebookErrorPage({
+        return hasFacebookReloadDialog() || // Messenger's own "Couldn't load chats" screen.
+        messengerErrorBlockShown() || looksLikeFacebookErrorPage({
           hasBackLink: !!document.getElementById("back"),
           hasIconImage: document.getElementById("icon") instanceof HTMLImageElement,
           elementCount: document.getElementsByTagName("*").length
@@ -2898,6 +2994,7 @@ ${button.innerHTML}`)
     };
     window.addEventListener("input", emitProtectionChange, true);
     window.addEventListener("chatpane:protection-change", emitProtectionChange);
+    window.addEventListener(ERROR_BLOCK_EVENT, () => emitHeartbeat());
     emitHeartbeat();
     const processingActive = () => !systemSleeping && !document.hidden && navigator.onLine && rateLimitRemainingMs() <= 0 && isMessengerContentPath(location.pathname);
     const captureRecovery = async () => {
@@ -4612,9 +4709,9 @@ ${button.innerHTML}`)
   async function readMessageOffer(message) {
     const text2 = messageText(message);
     if (!await ensureToolbar(message)) return { reactions: [], text: text2, actions: [] };
-    const react = toolbarButton(message, "react");
-    const reactions = react ? await withHiddenMenu(
-      react,
+    const react2 = toolbarButton(message, "react");
+    const reactions = react2 ? await withHiddenMenu(
+      react2,
       (menu) => [...reactionRows(menu)].map((row) => ({
         emoji: reactionEmoji(row),
         checked: row.getAttribute("aria-checked") === "true"
@@ -4643,10 +4740,10 @@ ${button.innerHTML}`)
   var reactTo = (message, emoji) => drive(
     message,
     async () => {
-      const react = await ensureToolbar(message) ? toolbarButton(message, "react") : null;
-      if (!react) return false;
+      const react2 = await ensureToolbar(message) ? toolbarButton(message, "react") : null;
+      if (!react2) return false;
       const picked = await withHiddenMenu(
-        react,
+        react2,
         (menu) => {
           const row = [...reactionRows(menu)].find((item) => reactionEmoji(item) === emoji);
           row?.click();
@@ -5822,23 +5919,23 @@ ${button.innerHTML}`)
     return mode === "all" || mode === "groups" && isGroup !== false || mode === "direct" && isGroup !== true;
   }
   var threadContexts = /* @__PURE__ */ new WeakMap();
-  function threadContext(react, runtime) {
-    let context2 = threadContexts.get(react);
+  function threadContext(react2, runtime) {
+    let context2 = threadContexts.get(react2);
     if (!context2 && runtime.createContext) {
       context2 = runtime.createContext(void 0);
-      threadContexts.set(react, context2);
+      threadContexts.set(react2, context2);
     }
     return context2;
   }
-  function patchNicknameThreadContext(value, react, isGroup) {
-    if (!value || typeof value !== "object" || !react || typeof react !== "object" || typeof isGroup !== "function")
+  function patchNicknameThreadContext(value, react2, isGroup) {
+    if (!value || typeof value !== "object" || !react2 || typeof react2 !== "object" || typeof isGroup !== "function")
       return;
     const exports = value;
-    const runtime = react;
+    const runtime = react2;
     const original = exports.Provider;
     if (typeof original !== "function" || wrappedProviders.has(original) || !runtime.createElement)
       return;
-    const context2 = threadContext(react, runtime);
+    const context2 = threadContext(react2, runtime);
     if (!context2) return;
     const { createElement } = runtime;
     const provider = (props) => {
@@ -5862,15 +5959,15 @@ ${button.innerHTML}`)
     }
   }
   var wrappedProviders = /* @__PURE__ */ new WeakSet();
-  function patchNicknameContext(value, react, preference) {
-    if (!value || typeof value !== "object" || !react || typeof react !== "object") return;
+  function patchNicknameContext(value, react2, preference) {
+    if (!value || typeof value !== "object" || !react2 || typeof react2 !== "object") return;
     const exports = value;
-    const runtime = react;
+    const runtime = react2;
     const original = exports.MWPContactContextProvider;
     if (typeof original !== "function" || wrappedProviders.has(original) || typeof runtime.createElement !== "function" || typeof runtime.useSyncExternalStore !== "function")
       return;
     const { createElement, useSyncExternalStore, useContext } = runtime;
-    const context2 = threadContext(react, runtime);
+    const context2 = threadContext(react2, runtime);
     const provider = function ChatpaneNicknameProvider(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const group = context2 && useContext ? useContext(context2) : void 0;
@@ -6282,11 +6379,11 @@ ${button.innerHTML}`)
     if (!value || typeof value !== "object") return;
     const exports = value, original = exports.default;
     if (typeof original !== "function" || wrapped.has(original)) return;
-    const react = importModule("react");
+    const react2 = importModule("react");
     const i64 = importModule("I64");
-    if (typeof react?.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useEffect !== "function" || typeof i64?.to_string !== "function")
+    if (typeof react2?.useSyncExternalStore !== "function" || typeof react2.useState !== "function" || typeof react2.useEffect !== "function" || typeof i64?.to_string !== "function")
       return;
-    const { useSyncExternalStore, useState, useEffect } = react, { to_string: stringify } = i64;
+    const { useSyncExternalStore, useState, useEffect } = react2, { to_string: stringify } = i64;
     const pending = /* @__PURE__ */ new Map();
     const readNames = (key) => {
       const existing = pending.get(key);
@@ -6387,12 +6484,12 @@ ${button.innerHTML}`)
     const exports = value;
     const original = exports.default;
     if (typeof original !== "function" || wrapped2.has(original)) return;
-    const react = importModule("react");
+    const react2 = importModule("react");
     const i64 = importModule("I64");
     const vault = importModule("ReStoreVaulting");
-    if (typeof react?.createElement !== "function" || typeof react.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useRef !== "function" || typeof react.useEffect !== "function" || typeof react.useLayoutEffect !== "function" || typeof i64?.to_string !== "function" || typeof vault?.maybeUnvault !== "function")
+    if (typeof react2?.createElement !== "function" || typeof react2.useSyncExternalStore !== "function" || typeof react2.useState !== "function" || typeof react2.useRef !== "function" || typeof react2.useEffect !== "function" || typeof react2.useLayoutEffect !== "function" || typeof i64?.to_string !== "function" || typeof vault?.maybeUnvault !== "function")
       return;
-    const { createElement, useSyncExternalStore, useState, useRef, useEffect, useLayoutEffect } = react;
+    const { createElement, useSyncExternalStore, useState, useRef, useEffect, useLayoutEffect } = react2;
     const { to_string: threadKey } = i64;
     const { maybeUnvault } = vault;
     const component = function ChatpaneNicknameSnippet(props) {
@@ -6480,7 +6577,7 @@ ${button.innerHTML}`)
     const exports = value;
     const original = exports.default;
     if (typeof original !== "function" || wrappedHooks.has(original)) return;
-    const react = importModule("react");
+    const react2 = importModule("react");
     const compute = importModule("MWPGetThreadTitle");
     const i64 = importModule("I64");
     const listModule = importModule("intlList");
@@ -6488,9 +6585,9 @@ ${button.innerHTML}`)
     const types = importModule("LSMessagingThreadTypeUtil");
     const computeTitle = compute?.computeThreadTitle;
     const threadKey = i64?.to_string;
-    if (typeof react?.useSyncExternalStore !== "function" || typeof react.useMemo !== "function" || typeof computeTitle !== "function" || typeof threadKey !== "function")
+    if (typeof react2?.useSyncExternalStore !== "function" || typeof react2.useMemo !== "function" || typeof computeTitle !== "function" || typeof threadKey !== "function")
       return;
-    const { useSyncExternalStore, useMemo } = react;
+    const { useSyncExternalStore, useMemo } = react2;
     const wrapped3 = new Proxy(original, {
       apply(target, receiver, args) {
         const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
@@ -6747,7 +6844,7 @@ ${button.innerHTML}`)
         try {
           const importModule = factoryArgs[3];
           if (typeof importModule === "function") {
-            const react = importModule("react");
+            const react2 = importModule("react");
             const patch = (value) => {
               if (moduleName === "useMWReplySnippetContent") {
                 patchNicknameReplies(value, (name) => importModule(name), nicknamePreference);
@@ -6757,8 +6854,8 @@ ${button.innerHTML}`)
                 patchNicknameThreadTitles(value, (name) => importModule(name), nicknamePreference);
               } else if (moduleName === "MWPThreadCapabilitiesContext") {
                 const types = importModule("LSMessagingThreadTypeUtil");
-                patchNicknameThreadContext(value, react, types?.isGroup);
-              } else patchNicknameContext(value, react, nicknamePreference);
+                patchNicknameThreadContext(value, react2, types?.isGroup);
+              } else patchNicknameContext(value, react2, nicknamePreference);
             };
             for (const candidate of [result, ...factoryArgs.slice(-2)]) {
               patch(candidate);
@@ -7760,7 +7857,9 @@ ${button.innerHTML}`)
       const wrapped3 = interceptOnce(
         value,
         (define) => createFacebookModuleDefineInterceptor(
-          interceptNotificationModules(interceptSoundModules(define)),
+          interceptNotificationModules(
+            interceptErrorBlock(interceptSoundModules(define))
+          ),
           shouldBlockTelemetry,
           (restore2) => searchIndex.register(restore2),
           (error) => {
@@ -15226,7 +15325,7 @@ ${text2}`)) {
   // inject/src/messenger/features/sync-health.ts
   var SYNC_CHECK_INTERVAL_MS = 1e4;
   function initSyncHealth() {
-    const tracker = new SyncHealthTracker();
+    const tracker2 = new SyncHealthTracker();
     const serverDelays = new RetryAfterWindow();
     const emitSyncAlert = (kind) => invoke("plugin:event|emit", { event: "chatpane:sync-alert", payload: { kind } })?.catch?.(
       () => {
@@ -15238,9 +15337,9 @@ ${text2}`)) {
     const observeResponse = (id, status, retryHeader, syncOperation) => {
       const now = Date.now();
       const delay = status === 429 && navigator.onLine ? serverDelays.observe(retryHeader, now) : void 0;
-      if (tracker.response(id, status, now, navigator.onLine)) {
+      if (tracker2.response(id, status, now, navigator.onLine)) {
         reportRateLimit("http-429", delay);
-      } else if (syncOperation && syncResponseSucceeded(status) && rateLimitRemainingMs() <= 0 && !tracker.degraded(now)) {
+      } else if (syncOperation && syncResponseSucceeded(status) && rateLimitRemainingMs() <= 0 && !tracker2.degraded(now)) {
         recoveryObservedAt ?? (recoveryObservedAt = now);
       } else if (!syncResponseSucceeded(status)) {
         recoveryObservedAt = null;
@@ -15256,7 +15355,7 @@ ${text2}`)) {
             const input = args[0];
             const url = typeof input === "string" || input instanceof URL ? String(input) : input instanceof Request ? input.url : "";
             if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
-              tracked = tracker.started(Date.now());
+              tracked = tracker2.started(Date.now());
               const headers = new Headers(
                 args[1]?.headers ?? (input instanceof Request ? input.headers : void 0)
               );
@@ -15281,8 +15380,8 @@ ${text2}`)) {
               },
               (error) => {
                 const aborted = error?.name === "AbortError";
-                if (navigator.onLine && !aborted) tracker.failed(id, Date.now());
-                else tracker.abandoned(id);
+                if (navigator.onLine && !aborted) tracker2.failed(id, Date.now());
+                else tracker2.abandoned(id);
               }
             );
           }
@@ -15312,9 +15411,9 @@ ${text2}`)) {
         try {
           const url = xhrUrls.get(this);
           if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
-            const id = tracker.started(Date.now());
+            const id = tracker2.started(Date.now());
             const syncOperation = isMessengerSyncOperation(args[0]);
-            this.addEventListener("abort", () => tracker.abandoned(id), { once: true });
+            this.addEventListener("abort", () => tracker2.abandoned(id), { once: true });
             this.addEventListener(
               "loadend",
               () => {
@@ -15475,14 +15574,14 @@ ${text2}`)) {
       else if (recoveryFailed || degraded || syncProcessingStalled) showSyncBanner();
       else hideSyncBanner();
     });
-    window.addEventListener("offline", () => tracker.abandonOutstanding());
+    window.addEventListener("offline", () => tracker2.abandonOutstanding());
     let degraded = false;
     const showRateLimit = () => {
       if (rateLimitRemainingMs() > 0) {
         recoveryObservedAt = null;
         if (!sawRateLimit) emitSyncAlert("rate-limited");
         sawRateLimit = true;
-        tracker.abandonOutstanding();
+        tracker2.abandonOutstanding();
         stuckLoading.observe(false);
       }
       if (sawRateLimit) showSyncBanner(true);
@@ -15495,12 +15594,12 @@ ${text2}`)) {
         return;
       }
       if (!navigator.onLine) {
-        tracker.abandonOutstanding();
+        tracker2.abandonOutstanding();
         return;
       }
       const now = Date.now();
-      tracker.sweep(now);
-      if (recoveryObservedAt !== null && now - recoveryObservedAt >= SYNC_CHECK_INTERVAL_MS && !tracker.degraded(now)) {
+      tracker2.sweep(now);
+      if (recoveryObservedAt !== null && now - recoveryObservedAt >= SYNC_CHECK_INTERVAL_MS && !tracker2.degraded(now)) {
         sawRateLimit = false;
         recoveryObservedAt = null;
         if (clearRateLimitOnRecovery()) {
@@ -15511,10 +15610,10 @@ ${text2}`)) {
       if (!document.hidden && isMessengerContentPath(location.pathname)) {
         stuckLoading.observe(loadingSpinnerVisible());
       }
-      const degradedNow = tracker.degraded(now) || stuckLoading.persistent() || syncProcessingStalled;
+      const degradedNow = tracker2.degraded(now) || stuckLoading.persistent() || syncProcessingStalled;
       if (degradedNow && !degraded) {
         degraded = true;
-        const reason = syncProcessingStalled ? "message processing stalled" : stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
+        const reason = syncProcessingStalled ? "message processing stalled" : stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker2.summary(now)})`;
         diag("sync.stalled", `messenger sync degraded: ${reason}`);
         emitSyncAlert("degraded");
       } else if (!degradedNow && degraded) {

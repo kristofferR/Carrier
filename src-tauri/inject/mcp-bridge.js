@@ -540,6 +540,12 @@
           reply(loginLayoutProbe());
           return;
         }
+        // Live check for recovering from Messenger's "Couldn't load chats"
+        // screen; see errorBlockWorkerDeath. Progress is logged natively.
+        if (code === "__chatpane_mcp_error_block__:worker-death") {
+          reply(errorBlockWorkerDeath());
+          return;
+        }
         // Runs an account request (Settings → Account, Log Out) without the
         // Settings window; the answer is logged natively.
         var accountCall = /^__chatpane_mcp_account__:([a-z-]+)(?::(.*))?$/.exec(code);
@@ -3852,6 +3858,64 @@
     // A chat-list row's "More options" menu: the row's shape, the menu
     // button, and (for `open`) the rows the menu offers. Rows are picked by
     // list index or by thread id ("t<digits>"); names are never reported.
+    // Brings up Messenger's "Couldn't load chats" screen the way fMess's live
+    // check does: keep Messenger's encrypted-chat worker from restarting, end
+    // it, then ask it for the newest messages of a few encrypted chats.
+    // Chatpane should log recover.error-block and reload by itself. Reports
+    // counts and error names only.
+    function errorBlockWorkerDeath() {
+      var load = window.require;
+      if (typeof load !== "function") return { started: false, reason: "no module loader" };
+      var names = [
+        "MAWSetupWorker",
+        "ReQL",
+        "LSDatabaseSingleton",
+        "LSMessagingThreadTypeUtil",
+        "MAWPreloadSecureMessages",
+      ];
+      var log = function (text) {
+        console.info("[chatpane-mcp] error-block check: " + text);
+      };
+      load("Bootloader").loadModules(
+        names,
+        function () {
+          var setup = load("MAWSetupWorker");
+          var ReQL = load("ReQL");
+          var util = load("LSMessagingThreadTypeUtil");
+          var preload = load("MAWPreloadSecureMessages");
+          load("LSDatabaseSingleton")
+            .LSDatabaseSingleton.then(function (db) {
+              var recent = ReQL.fromTableDescending(
+                db.tables.threads.index("lastActivityTimestampMs"),
+              ).take(60);
+              return ReQL.toArrayAsync(recent).then(function (chats) {
+                var secure = chats
+                  .filter(function (chat) {
+                    return util.isArmadilloSecure(chat.threadType);
+                  })
+                  .slice(15, 18);
+                setup.setPreventWorkerRestart(true);
+                return Promise.resolve(setup.terminateWorker("chatpane_mcp_check")).then(function () {
+                  log("worker ended; asking " + secure.length + " encrypted chats");
+                  secure.forEach(function (chat) {
+                    Promise.resolve(
+                      preload.preloadSecureMessages(db, chat.threadKey, 20, chat.authorityLevel),
+                    ).catch(function (error) {
+                      log("preload failed: " + ((error && error.name) || "error"));
+                    });
+                  });
+                });
+              });
+            })
+            .catch(function (error) {
+              log("failed: " + ((error && error.name) || "error"));
+            });
+        },
+        "chatpane-mcp",
+      );
+      return { started: true };
+    }
+
     function chatRowMenuProbe(selector, step) {
       var links = Array.prototype.filter.call(
         document.querySelectorAll('[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]'),
