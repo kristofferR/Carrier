@@ -60,6 +60,8 @@
       <caption>Dark appearance with the same fictional English demo conversations</caption>
     </screenshot>
   </screenshots>
+  <!-- The release workflow adds each newer release from its GitHub release notes
+       (scripts/release/metainfo.ts). Don't add entries here by hand. -->
   <releases>
     <release version="3.1.0" date="2026-11-09">
       <description>
