@@ -32,6 +32,14 @@ const entryKey = (threadId: string, name: string) =>
  * requested size in the query, so the same photo arrives under many URLs; the
  * path names the photo itself, which is what tells two people apart.
  */
+/**
+ * Whether an image's own size is an avatar's: Messenger serves faces as small
+ * square crops, while photos and attachments keep their shape or come larger.
+ * This tells them apart without reading their (translated) alt text.
+ */
+export const isAvatarSize = (width: number, height: number): boolean =>
+  width > 0 && width === height && width <= 256;
+
 export function avatarPhotoId(url: string): string {
   try {
     return new URL(url, "https://www.facebook.com/").pathname;

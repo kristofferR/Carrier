@@ -72,6 +72,10 @@ export function initHideNames() {
           if (chatNames.size > NAMES_LIMIT) chatNames.delete(chatNames.keys().next().value!);
           if (names && String(names) !== String(known?.names)) schedule();
         })
+        .catch(() => {
+          chatNames.delete(id);
+          chatNames.set(id, { names: null, at: Date.now() });
+        })
         .finally(() => loadingNames.delete(id));
     }
     return known?.names ?? null;

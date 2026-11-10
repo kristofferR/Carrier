@@ -67,7 +67,7 @@ import {
 import { groupTitleTemplates, pageMessages } from "../lib/page-notifications";
 import { reactionKey } from "../lib/reaction-notifications";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
-import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
+import { avatarPhotoId, isAvatarSize, SenderAvatarStore } from "../lib/sender-avatars";
 import { readThreadIsGroup, suppressGroupChat, ThreadKindCache } from "../lib/thread-kind";
 import { readThreadStates } from "../lib/thread-state";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
@@ -898,11 +898,8 @@ export function initNotificationBridge() {
     /\p{Letter}/u.test(value);
   // Alt text on Messenger's avatars is the person's name; its photo and
   // attachment images describe themselves instead ("May be an image of …").
-  // Avatars are small square crops, which tells them apart in any language.
   const isAvatarImage = (image: HTMLImageElement) =>
-    image.naturalWidth > 0 &&
-    image.naturalWidth === image.naturalHeight &&
-    image.naturalWidth <= 256;
+    isAvatarSize(image.naturalWidth, image.naturalHeight);
 
   interface HarvestedFace {
     name: string;

@@ -6732,6 +6732,7 @@ ${button.innerHTML}`)
   var SENDER_AVATAR_STORAGE_KEY = "__chatpane_sender_avatars__";
   var normalizeSenderName = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
   var entryKey = (threadId, name) => `${threadId}\0${normalizeSenderName(name)}`;
+  var isAvatarSize = (width2, height) => width2 > 0 && width2 === height && width2 <= 256;
   function avatarPhotoId(url) {
     try {
       return new URL(url, "https://www.facebook.com/").pathname;
@@ -8405,7 +8406,10 @@ ${button.innerHTML}`)
     for (const name of sorted) {
       for (let from = text2.indexOf(name); from !== -1; from = text2.indexOf(name, from + 1)) {
         const to = from + name.length;
-        if (!nameEdge(text2[from - 1], name[0]) || !nameEdge(text2[to], name[name.length - 1]))
+        const before = [...text2.slice(Math.max(0, from - 2), from)].pop();
+        const after = [...text2.slice(to, to + 2)][0];
+        const letters = [...name];
+        if (!nameEdge(before, letters[0]) || !nameEdge(after, letters[letters.length - 1]))
           continue;
         if (ranges.some(([start, end]) => from < end && to > start)) continue;
         ranges.push([from, to]);
@@ -8485,6 +8489,9 @@ ${button.innerHTML}`)
           chatNames.set(id, { names, at: Date.now() });
           if (chatNames.size > NAMES_LIMIT) chatNames.delete(chatNames.keys().next().value);
           if (names && String(names) !== String(known?.names)) schedule();
+        }).catch(() => {
+          chatNames.delete(id);
+          chatNames.set(id, { names: null, at: Date.now() });
         }).finally(() => loadingNames.delete(id));
       }
       return known?.names ?? null;
@@ -12356,7 +12363,7 @@ ${button.innerHTML}`)
     let settleAttempts = 0;
     const normalizedText = (value) => (value || "").replace(/\s+/g, " ").trim();
     const isPersonName = (value) => value.length > 0 && value.length <= 60 && value.split(" ").length <= 5 && /\p{Letter}/u.test(value);
-    const isAvatarImage = (image) => image.naturalWidth > 0 && image.naturalWidth === image.naturalHeight && image.naturalWidth <= 256;
+    const isAvatarImage = (image) => isAvatarSize(image.naturalWidth, image.naturalHeight);
     const paneShowsThread = (title, leaving = []) => {
       const needle = title.replace(/[…\s]+$/, "").toLowerCase();
       if (needle.length < 3) return "unknown";

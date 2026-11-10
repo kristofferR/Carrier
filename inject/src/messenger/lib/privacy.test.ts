@@ -44,6 +44,12 @@ describe("nameRanges", () => {
     expect(nameRanges("민수님이 사진을 보냈습니다", ["민수"])).toEqual([[0, 2]]);
   });
 
+  test("judges whole characters at a name's edges, not UTF-16 halves", () => {
+    // A name ending in a supplementary-plane Han character runs into the next letter.
+    expect(nameRanges("田𠀀abc", ["田𠀀"])).toEqual([[0, 3]]);
+    expect(nameRanges("Kim🙂: hei", ["Kim🙂"])).toEqual([[0, 5]]);
+  });
+
   test("matches whole words only, and nothing without names", () => {
     expect(words("Kimchi for dinner")).toEqual([]);
     expect(words("Akim: hi")).toEqual([]);

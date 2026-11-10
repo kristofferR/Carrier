@@ -47,7 +47,11 @@ export function nameRanges(text: string, names: Iterable<string>): [number, numb
   for (const name of sorted) {
     for (let from = text.indexOf(name); from !== -1; from = text.indexOf(name, from + 1)) {
       const to = from + name.length;
-      if (!nameEdge(text[from - 1], name[0]!) || !nameEdge(text[to], name[name.length - 1]!))
+      // Whole characters, not UTF-16 halves: names and text may hold emoji.
+      const before = [...text.slice(Math.max(0, from - 2), from)].pop();
+      const after = [...text.slice(to, to + 2)][0];
+      const letters = [...name];
+      if (!nameEdge(before, letters[0]!) || !nameEdge(after, letters[letters.length - 1]!))
         continue;
       if (ranges.some(([start, end]) => from < end && to > start)) continue;
       ranges.push([from, to]);
