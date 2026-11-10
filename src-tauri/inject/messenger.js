@@ -11664,6 +11664,23 @@ ${button.innerHTML}`)
       timeoutMs
     );
   }
+  async function readNewestMessageId(id, load, timeoutMs = 750) {
+    if (!/^\d+$/.test(id)) return null;
+    const newest = await readMessengerDatabase(
+      load,
+      async ({ db, i64, load: load2 }) => {
+        const q = load2("ReQL");
+        const messages = db.tables.messages;
+        const rows = await q.toArrayAsync(
+          q.fromTableDescending(messages).getKeyRange(i64.of_string(id)).take(1)
+        );
+        const messageId = Array.isArray(rows) ? rows[0]?.messageId : void 0;
+        return typeof messageId === "string" && messageId ? messageId : null;
+      },
+      timeoutMs
+    );
+    return newest ?? null;
+  }
 
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
@@ -12694,13 +12711,16 @@ ${button.innerHTML}`)
       );
       const timer = setTimeout(async () => {
         await learnThreadKind(conversation.key);
-        const fresh = (await readThreadStates([conversation.key], pageRequire(), Date.now()))?.get(
-          conversation.key
-        );
+        const [states, newest] = await Promise.all([
+          readThreadStates([conversation.key], pageRequire(), Date.now()),
+          readNewestMessageId(conversation.key, pageRequire())
+        ]);
+        const fresh = states?.get(conversation.key);
         if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
+        const announced = newest !== null && pageMessages.threadFor(newest) === conversation.key;
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const settings = window.__CHATPANE_SETTINGS__ || {};
-        if (fresh?.unread === false || suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
+        if (fresh?.unread === false || announced || suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
             notificationCorrelations.removeRow(conversation.key);

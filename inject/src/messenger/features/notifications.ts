@@ -69,7 +69,7 @@ import { reactionKey } from "../lib/reaction-notifications";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, isAvatarSize, SenderAvatarStore } from "../lib/sender-avatars";
 import { readThreadIsGroup, suppressGroupChat, ThreadKindCache } from "../lib/thread-kind";
-import { readThreadStates } from "../lib/thread-state";
+import { readNewestMessageId, readThreadStates } from "../lib/thread-state";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
@@ -1407,15 +1407,21 @@ export function initNotificationBridge() {
       // Messenger's database has the facts a bold row only suggests: whether
       // the chat is still unread for you (not your own message, not read
       // elsewhere meanwhile) and muted, in any UI language.
-      const fresh = (await readThreadStates([conversation.key], pageRequire(), Date.now()))?.get(
-        conversation.key,
-      );
+      const [states, newest] = await Promise.all([
+        readThreadStates([conversation.key], pageRequire(), Date.now()),
+        readNewestMessageId(conversation.key, pageRequire()),
+      ]);
+      const fresh = states?.get(conversation.key);
       if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
+      // Messenger already notified about this chat's newest message: the row
+      // only caught up with it, as a photo's preview does a moment later.
+      const announced = newest !== null && pageMessages.threadFor(newest) === conversation.key;
       // A newer preview may own this conversation now; it decides, not us.
       if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
       const settings = window.__CHATPANE_SETTINGS__ || {};
       if (
         fresh?.unread === false ||
+        announced ||
         suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) ||
         groupSuppressed(conversation.key)
       ) {
