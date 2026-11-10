@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { avatarPhotoId, SENDER_AVATAR_STORAGE_KEY, SenderAvatarStore } from "./sender-avatars";
+import {
+  avatarPhotoId,
+  isAvatarSize,
+  SENDER_AVATAR_STORAGE_KEY,
+  SenderAvatarStore,
+} from "./sender-avatars";
 
 const memoryStorage = (initial: Record<string, string> = {}) => {
   const values = new Map(Object.entries(initial));
@@ -305,5 +310,18 @@ describe("avatarPhotoId", () => {
       avatarPhotoId("https://cdn/v/two_n.jpg"),
     );
     expect(avatarPhotoId("not a url")).toBe("/not%20a%20url");
+  });
+});
+
+describe("isAvatarSize", () => {
+  test("small square crops are avatars, whatever their alt text says", () => {
+    expect(isAvatarSize(60, 60)).toBe(true);
+    expect(isAvatarSize(256, 256)).toBe(true);
+  });
+
+  test("photos keep their shape or come larger, and unloaded images are unknown", () => {
+    expect(isAvatarSize(320, 240)).toBe(false);
+    expect(isAvatarSize(257, 257)).toBe(false);
+    expect(isAvatarSize(0, 0)).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { language } from "../i18n";
+import { language, t } from "../i18n";
 
 /** Only a browser-generated activation of Chatpane's own button may reveal. */
 export const canActivateToastAction = (eventIsTrusted: boolean, userActivationIsActive: boolean) =>
@@ -48,7 +48,7 @@ export function installToast() {
   const close = document.createElement("button");
   close.type = "button";
   close.textContent = "✕";
-  close.setAttribute("aria-label", "Close");
+  close.setAttribute("aria-label", t("page.window.close"));
   Object.assign(close.style, {
     border: "0",
     padding: "0 2px",

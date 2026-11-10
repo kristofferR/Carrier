@@ -76,3 +76,38 @@ export function readThreadStates(
     timeoutMs,
   );
 }
+
+interface NewestMessageQueries {
+  fromTableDescending(table: unknown): {
+    getKeyRange(...key: unknown[]): { take(limit: number): unknown };
+  };
+  toArrayAsync(query: unknown): Promise<unknown>;
+}
+
+/**
+ * The id of the conversation's newest message in Messenger's database, or
+ * null when it can't be read. Never writes to Messenger.
+ */
+export async function readNewestMessageId(
+  id: string,
+  load: unknown,
+  timeoutMs = 750,
+): Promise<string | null> {
+  if (!/^\d+$/.test(id)) return null;
+  const newest = await readMessengerDatabase(
+    load,
+    async ({ db, i64, load }) => {
+      const q = load("ReQL") as NewestMessageQueries;
+      const messages = (db.tables as Record<string, unknown>).messages;
+      const rows = await q.toArrayAsync(
+        q.fromTableDescending(messages).getKeyRange(i64.of_string(id)).take(1),
+      );
+      const messageId = Array.isArray(rows)
+        ? (rows[0] as { messageId?: unknown } | undefined)?.messageId
+        : undefined;
+      return typeof messageId === "string" && messageId ? messageId : null;
+    },
+    timeoutMs,
+  );
+  return newest ?? null;
+}

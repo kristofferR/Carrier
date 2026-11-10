@@ -25,7 +25,7 @@ import {
   withComposerDelivery,
 } from "../lib/scheduled-send";
 import { accountScopedStorageKey, threadIdFromHref } from "../lib/threads";
-import { buttonByLabel, isShown } from "./conversation-actions";
+import { componentButton, EMOJI_BUTTONS, isShown } from "./conversation-actions";
 import { rateLimitRemainingMs } from "./rate-limit";
 import { scheduledSendConnectionReady } from "./realtime-health";
 
@@ -727,7 +727,7 @@ export function initScheduledSend() {
     const nextEmoji =
       emoji?.isConnected && region.contains(emoji)
         ? emoji
-        : (buttonByLabel(["choose an emoji", "emoji"], region) ??
+        : (componentButton(EMOJI_BUTTONS, region) ??
           [
             ...(box.parentElement?.querySelectorAll<HTMLElement>('button, [role="button"]') ?? []),
           ].find(
