@@ -858,7 +858,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         }
         "quit" => app.exit(0),
         "clear_cache" => confirm_clear_cache(app),
-        "log_out" => crate::log_out::log_out(app),
+        "log_out" => crate::log_out::confirm(app, None),
         "always_on_top" => mutate_settings(app, |s| s.always_on_top = !s.always_on_top),
         "devtools" =>
         {

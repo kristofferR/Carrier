@@ -24,6 +24,7 @@ fn settings_types_match_native() {
         crate::sound::SoundOption::decl(&config),
         crate::account::MessengerAccountState::decl(&config),
         crate::account::MessengerAccountChange::decl(&config),
+        crate::account::MessengerProfile::decl(&config),
         crate::commands::UpdateInstallKind::decl(&config),
         crate::commands::UpdateInstallMode::decl(&config),
     ];

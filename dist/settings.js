@@ -489,7 +489,7 @@
       id: "account",
       label: settingsText("settings.tab.account"),
       icon: ICONS.account,
-      cards: ["messenger_account"]
+      cards: ["profile", "messenger_account"]
     },
     {
       id: "advanced",
@@ -1417,7 +1417,42 @@
     error: "",
     loading: false
   };
+  var profile;
+  var profileLoading = false;
+  async function loadProfile() {
+    if (profileLoading || profile) return;
+    profileLoading = true;
+    try {
+      profile = await invoke("messenger_profile");
+    } catch (e) {
+      profile = null;
+      console.error(e);
+    } finally {
+      profileLoading = false;
+      if (activeTab === "account") renderBody();
+    }
+  }
+  function profileSection() {
+    const card = el("section", "card profile");
+    let avatar;
+    if (profile?.picture) {
+      const picture = el("img", "avatar");
+      picture.alt = "";
+      picture.src = profile.picture;
+      avatar = picture;
+    } else {
+      avatar = el("div", "avatar");
+      avatar.append(svgIcon(ICONS.account));
+    }
+    const name = profile === void 0 ? "" : profile?.name || settingsText("settings.account.profile.unknown");
+    const logOut = el("button", "secondary", settingsText("settings.account.log_out"));
+    logOut.type = "button";
+    logOut.onclick = () => invoke("log_out").catch((e) => setStatus(errorMessage(e)));
+    card.append(avatar, el("div", "name", name), logOut);
+    return card;
+  }
   async function loadMessengerAccount(change) {
+    if (!change) loadProfile();
     if (messengerAccount.loading) return;
     messengerAccount.loading = true;
     messengerAccount.error = "";
@@ -1541,6 +1576,7 @@
     open_logs: openLogsRow,
     test_notification: testNotificationRow,
     nickname_scope: nicknameRow,
+    profile: profileSection,
     messenger_account: messengerAccountSection
   };
   function isCustomRow(key) {

@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "Facebook लिङ्क ट्र्याकिङ हटाउनुहोस्",
   "settings.privacy.strip_link_tracking.hint": "तपाईंले कपी गर्ने वा ब्राउजरमा खोल्ने लिङ्कहरूबाट Facebook का ट्र्याकिङ ID हटाउनुहोस्।",
   "settings.account.title": "Messenger खाता",
+  "settings.account.profile.unknown": "तपाईंको Facebook खाता",
+  "settings.account.log_out": "लग आउट गर्नुहोस्…",
   "settings.account.intro": "तपाईंको Facebook खाताका आफ्नै Messenger सेटिङ। परिवर्तनहरू तपाईंको फोनसहित तपाईंले Messenger प्रयोग गर्ने सबै ठाउँमा लागू हुन्छन्।",
   "settings.account.sound_link": "सन्देशको आवाज र सूचनाहरू “सूचनाहरू” ट्याबमा छन्",
   "settings.account.loading": "Messenger का सेटिङ पढ्दै…",

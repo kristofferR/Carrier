@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "ลบการติดตามลิงก์ของ Facebook",
   "settings.privacy.strip_link_tracking.hint": "ตัด ID ติดตามของ Facebook ออกจากลิงก์ที่คุณคัดลอกหรือเปิดในเบราว์เซอร์",
   "settings.account.title": "บัญชี Messenger",
+  "settings.account.profile.unknown": "บัญชี Facebook ของคุณ",
+  "settings.account.log_out": "ออกจากระบบ…",
   "settings.account.intro": "การตั้งค่า Messenger ของบัญชี Facebook ของคุณเอง การเปลี่ยนแปลงมีผลทุกที่ที่คุณใช้ Messenger รวมถึงโทรศัพท์ของคุณ",
   "settings.account.sound_link": "เสียงข้อความและการแจ้งเตือนอยู่ในแท็บการแจ้งเตือน",
   "settings.account.loading": "กำลังอ่านการตั้งค่าของ Messenger…",

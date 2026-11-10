@@ -3,6 +3,7 @@ import { invoke } from "./bridge";
 import type {
   MessengerAccountChange,
   MessengerAccountState,
+  MessengerProfile,
   Settings,
   SettingsChange,
   SoundOption,
@@ -307,7 +308,7 @@ const TABS: Tab[] = [
     id: "account",
     label: t("settings.tab.account"),
     icon: ICONS.account,
-    cards: ["messenger_account"],
+    cards: ["profile", "messenger_account"],
   },
   {
     id: "advanced",
@@ -1407,7 +1408,49 @@ const messengerAccount: { state: MessengerAccountState | null; error: string; lo
   loading: false,
 };
 
+// The signed-in account's name and picture: undefined until Messenger first
+// answers, null when it couldn't (asked again with the account settings).
+let profile: MessengerProfile | null | undefined;
+let profileLoading = false;
+
+async function loadProfile() {
+  if (profileLoading || profile) return;
+  profileLoading = true;
+  try {
+    profile = await invoke("messenger_profile");
+  } catch (e) {
+    profile = null;
+    console.error(e);
+  } finally {
+    profileLoading = false;
+    if (activeTab === "account") renderBody();
+  }
+}
+
+// The account's picture and name, and Log Out with the menu's confirmation.
+function profileSection() {
+  const card = el("section", "card profile");
+  let avatar: HTMLElement;
+  if (profile?.picture) {
+    const picture = el("img", "avatar");
+    picture.alt = "";
+    // Native passes only a checked PNG data URL.
+    picture.src = profile.picture;
+    avatar = picture;
+  } else {
+    avatar = el("div", "avatar");
+    avatar.append(svgIcon(ICONS.account));
+  }
+  const name = profile === undefined ? "" : profile?.name || t("settings.account.profile.unknown");
+  const logOut = el("button", "secondary", t("settings.account.log_out"));
+  logOut.type = "button";
+  logOut.onclick = () => invoke("log_out").catch((e) => setStatus(errorMessage(e)));
+  card.append(avatar, el("div", "name", name), logOut);
+  return card;
+}
+
 async function loadMessengerAccount(change?: MessengerAccountChange) {
+  if (!change) loadProfile();
   if (messengerAccount.loading) return;
   messengerAccount.loading = true;
   messengerAccount.error = "";
@@ -1525,7 +1568,7 @@ function messengerAccountSection() {
 }
 
 // Fields with their own builder; every other field is a switch. The
-// sections (theme, look, app icon, account) build a whole card.
+// sections (theme, look, app icon, profile, account) build a whole card.
 const CUSTOM_ROWS = {
   language: languageRow,
   messenger_language: messengerLanguageRow,
@@ -1545,6 +1588,7 @@ const CUSTOM_ROWS = {
   open_logs: openLogsRow,
   test_notification: testNotificationRow,
   nickname_scope: nicknameRow,
+  profile: profileSection,
   messenger_account: messengerAccountSection,
 };
 

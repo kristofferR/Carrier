@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "Αφαίρεση παρακολούθησης συνδέσμων του Facebook",
   "settings.privacy.strip_link_tracking.hint": "Αφαιρεί τα αναγνωριστικά παρακολούθησης του Facebook από συνδέσμους που αντιγράφεις ή ανοίγεις στο πρόγραμμα περιήγησης.",
   "settings.account.title": "Λογαριασμός Messenger",
+  "settings.account.profile.unknown": "Ο λογαριασμός σου στο Facebook",
+  "settings.account.log_out": "Αποσύνδεση…",
   "settings.account.intro": "Οι ρυθμίσεις Messenger του λογαριασμού σου στο Facebook. Οι αλλαγές ισχύουν όπου χρησιμοποιείς το Messenger, και στο κινητό σου.",
   "settings.account.sound_link": "Ο ήχος μηνυμάτων και οι ειδοποιήσεις βρίσκονται στην καρτέλα Ειδοποιήσεις",
   "settings.account.loading": "Ανάγνωση ρυθμίσεων του Messenger…",

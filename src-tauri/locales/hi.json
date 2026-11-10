@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "Facebook लिंक ट्रैकिंग हटाएँ",
   "settings.privacy.strip_link_tracking.hint": "आप जो लिंक कॉपी करते हैं या ब्राउज़र में खोलते हैं, उनसे Facebook के ट्रैकिंग ID हटाएँ।",
   "settings.account.title": "Messenger अकाउंट",
+  "settings.account.profile.unknown": "आपका Facebook अकाउंट",
+  "settings.account.log_out": "लॉग आउट करें…",
   "settings.account.intro": "आपके Facebook अकाउंट की अपनी Messenger सेटिंग। बदलाव हर उस जगह लागू होते हैं जहाँ आप Messenger इस्तेमाल करते हैं, आपके फ़ोन पर भी।",
   "settings.account.sound_link": "मैसेज साउंड और नोटिफ़िकेशन “नोटिफ़िकेशन” टैब में हैं",
   "settings.account.loading": "Messenger की सेटिंग पढ़ी जा रही है…",

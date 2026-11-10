@@ -1,6 +1,7 @@
 import type {
   MessengerAccountChange,
   MessengerAccountState,
+  MessengerProfile,
   NotificationSound,
   Settings,
   SettingsChange,
@@ -35,6 +36,8 @@ interface Commands {
   open_custom_css: [undefined, null];
   messenger_account: [undefined, MessengerAccountState];
   set_messenger_account: [{ change: MessengerAccountChange }, MessengerAccountState];
+  messenger_profile: [undefined, MessengerProfile];
+  log_out: [undefined, null];
   copy_share_message: [undefined, null];
   open_github: [undefined, null];
   update_release_notes: [{ version: string }, string | null];

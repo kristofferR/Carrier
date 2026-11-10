@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "Remove Facebook link tracking",
   "settings.privacy.strip_link_tracking.hint": "Strip Facebook tracking IDs from links you copy or open in your browser.",
   "settings.account.title": "Messenger account",
+  "settings.account.profile.unknown": "Your Facebook account",
+  "settings.account.log_out": "Log Out…",
   "settings.account.intro": "Your Facebook account's own Messenger settings. Changes apply wherever you use Messenger, including your phone.",
   "settings.account.sound_link": "Message sound and notifications are on the Notifications tab",
   "settings.account.loading": "Reading Messenger's settings…",

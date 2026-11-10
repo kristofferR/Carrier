@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "Facebook လင့်ခ် ခြေရာခံမှုကို ဖယ်ရှားရန်",
   "settings.privacy.strip_link_tracking.hint": "သင်ကူးယူတဲ့ ဒါမှမဟုတ် browser မှာ ဖွင့်တဲ့ လင့်ခ်တွေထဲက Facebook ခြေရာခံ ID တွေကို ဖယ်ရှားပါ။",
   "settings.account.title": "Messenger အကောင့်",
+  "settings.account.profile.unknown": "သင့် Facebook အကောင့်",
+  "settings.account.log_out": "အကောင့်မှ ထွက်ရန်…",
   "settings.account.intro": "သင့် Facebook အကောင့်ရဲ့ ကိုယ်ပိုင် Messenger ဆက်တင်များ။ ပြောင်းလဲမှုတွေက သင့်ဖုန်း အပါအဝင် Messenger သုံးတဲ့ နေရာတိုင်းမှာ သက်ရောက်ပါတယ်။",
   "settings.account.sound_link": "မက်ဆေ့ချ် အသံနဲ့ အသိပေးချက်တွေက အသိပေးချက်များ tab မှာ ရှိပါတယ်",
   "settings.account.loading": "Messenger ဆက်တင်တွေကို ဖတ်နေပါတယ်…",

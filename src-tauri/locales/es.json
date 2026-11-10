@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "Quitar el rastreo de enlaces de Facebook",
   "settings.privacy.strip_link_tracking.hint": "Elimina los ID de rastreo de Facebook de los enlaces que copias o abres en tu navegador.",
   "settings.account.title": "Cuenta de Messenger",
+  "settings.account.profile.unknown": "Tu cuenta de Facebook",
+  "settings.account.log_out": "Cerrar sesión…",
   "settings.account.intro": "La configuración de Messenger de tu cuenta de Facebook. Los cambios se aplican en todos los lugares donde usas Messenger, incluido tu teléfono.",
   "settings.account.sound_link": "El sonido de mensajes y las notificaciones están en la pestaña Notificaciones",
   "settings.account.loading": "Leyendo la configuración de Messenger…",

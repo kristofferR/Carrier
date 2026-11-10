@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "Gỡ theo dõi liên kết của Facebook",
   "settings.privacy.strip_link_tracking.hint": "Loại bỏ mã theo dõi của Facebook khỏi liên kết bạn sao chép hoặc mở trong trình duyệt.",
   "settings.account.title": "Tài khoản Messenger",
+  "settings.account.profile.unknown": "Tài khoản Facebook của bạn",
+  "settings.account.log_out": "Đăng xuất…",
   "settings.account.intro": "Cài đặt Messenger của chính tài khoản Facebook của bạn. Thay đổi sẽ áp dụng ở mọi nơi bạn dùng Messenger, kể cả trên điện thoại.",
   "settings.account.sound_link": "Âm thanh tin nhắn và thông báo nằm trong tab Thông báo",
   "settings.account.loading": "Đang đọc cài đặt Messenger…",

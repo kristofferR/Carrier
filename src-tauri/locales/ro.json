@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "Elimină urmărirea din linkurile Facebook",
   "settings.privacy.strip_link_tracking.hint": "Elimină ID-urile de urmărire Facebook din linkurile pe care le copiezi sau le deschizi în browser.",
   "settings.account.title": "Contul Messenger",
+  "settings.account.profile.unknown": "Contul tău Facebook",
+  "settings.account.log_out": "Deconectare…",
   "settings.account.intro": "Setările Messenger ale contului tău Facebook. Modificările se aplică oriunde folosești Messenger, inclusiv pe telefon.",
   "settings.account.sound_link": "Sunetul mesajelor și notificările sunt în fila Notificări",
   "settings.account.loading": "Se citesc setările Messenger…",

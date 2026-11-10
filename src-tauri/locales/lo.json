@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "ລຶບການຕິດຕາມລິ້ງຂອງ Facebook",
   "settings.privacy.strip_link_tracking.hint": "ລຶບ ID ຕິດຕາມຂອງ Facebook ອອກຈາກລິ້ງທີ່ເຈົ້າສຳເນົາ ຫຼື ເປີດໃນບຣາວເຊີ.",
   "settings.account.title": "ບັນຊີ Messenger",
+  "settings.account.profile.unknown": "ບັນຊີ Facebook ຂອງເຈົ້າ",
+  "settings.account.log_out": "ອອກຈາກລະບົບ…",
   "settings.account.intro": "ການຕັ້ງຄ່າ Messenger ຂອງບັນຊີ Facebook ຂອງເຈົ້າເອງ. ການປ່ຽນແປງຈະມີຜົນທຸກບ່ອນທີ່ເຈົ້າໃຊ້ Messenger ລວມທັງໂທລະສັບ.",
   "settings.account.sound_link": "ສຽງຂໍ້ຄວາມ ແລະ ການແຈ້ງເຕືອນຢູ່ໃນແຖບ “ການແຈ້ງເຕືອນ”",
   "settings.account.loading": "ກຳລັງອ່ານການຕັ້ງຄ່າຂອງ Messenger…",

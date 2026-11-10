@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "លុបការតាមដានតំណរបស់ Facebook",
   "settings.privacy.strip_link_tracking.hint": "ដក ID តាមដានរបស់ Facebook ចេញពីតំណដែលអ្នកចម្លង ឬបើកក្នុងកម្មវិធីរុករក។",
   "settings.account.title": "គណនី Messenger",
+  "settings.account.profile.unknown": "គណនី Facebook របស់អ្នក",
+  "settings.account.log_out": "ចេញពីគណនី…",
   "settings.account.intro": "ការកំណត់ Messenger ផ្ទាល់របស់គណនី Facebook អ្នក។ ការផ្លាស់ប្តូរមានប្រសិទ្ធភាពគ្រប់កន្លែងដែលអ្នកប្រើ Messenger រួមទាំងទូរស័ព្ទរបស់អ្នក។",
   "settings.account.sound_link": "សំឡេងសារ និងការជូនដំណឹងស្ថិតនៅផ្ទាំង “ការជូនដំណឹង”",
   "settings.account.loading": "កំពុងអានការកំណត់របស់ Messenger…",

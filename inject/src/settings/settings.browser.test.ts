@@ -130,6 +130,8 @@ function installBridge(platform: string, strings: typeof globalThis.__CHATPANE_I
           return { kind: "built-in" };
         case "messenger_account":
           return { activeStatus: true, dndUntil: 0, readReceipts: true };
+        case "messenger_profile":
+          return { name: "Ada Lovelace", picture: "data:image/png;base64,iVBORw0KGgo=" };
         case "list_themes":
           return [{ id: "default", name: "Default", builtIn: true }];
         case "notification_sounds":
@@ -194,10 +196,22 @@ async function exerciseSettings() {
       );
       assert(document.getElementById("rows")!.children.length > 0, `${name} has controls`);
     }
-    // The message sound is Chatpane's own: Account links to it, and picking
-    // Messenger copies Messenger's sound before saving the choice.
+    // Account opens with the signed-in account, and Log Out asks native to confirm.
     tab("account");
     await settle();
+    const profile = document.querySelector(".profile")!;
+    assert(profile.querySelector(".name")?.textContent === "Ada Lovelace", "profile name");
+    assert(
+      profile.querySelector<HTMLImageElement>("img.avatar")?.src.startsWith("data:image/png"),
+      "profile picture",
+    );
+    fixture.calls.length = 0;
+    profile.querySelector("button")!.click();
+    await settle();
+    assert(fixture.calls.join() === "log_out", "Log Out asks native");
+
+    // The message sound is Chatpane's own: Account links to it, and picking
+    // Messenger copies Messenger's sound before saving the choice.
     [...document.querySelectorAll<HTMLButtonElement>("#rows .link-button")]
       .find((link) => link.textContent?.startsWith("Message sound"))!
       .click();

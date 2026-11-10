@@ -536,6 +536,8 @@
   "settings.privacy.strip_link_tracking.label": "Facebook bağlantı izlemesini kaldır",
   "settings.privacy.strip_link_tracking.hint": "Kopyaladığın veya tarayıcında açtığın bağlantılardan Facebook izleme kimliklerini temizle.",
   "settings.account.title": "Messenger hesabı",
+  "settings.account.profile.unknown": "Facebook hesabın",
+  "settings.account.log_out": "Çıkış yap…",
   "settings.account.intro": "Facebook hesabının kendi Messenger ayarları. Değişiklikler, telefonun dahil Messenger'ı kullandığın her yerde geçerli olur.",
   "settings.account.sound_link": "Mesaj sesi ve bildirimler Bildirimler sekmesinde",
   "settings.account.loading": "Messenger ayarları okunuyor…",
