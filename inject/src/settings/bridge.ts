@@ -28,6 +28,7 @@ interface Commands {
   notification_sounds: [undefined, SoundOption[]];
   choose_notification_sound: [undefined, NotificationSound | null];
   preview_notification_sound: [{ sound: NotificationSound }, null];
+  copy_messenger_sound: [undefined, null];
   restart_app: [undefined, null];
   open_facebook_language: [undefined, null];
   send_test_notification: [undefined, string];

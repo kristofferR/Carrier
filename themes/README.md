@@ -84,8 +84,8 @@ Set only the tokens you want to change. Put the dark values in a media query:
 `html[data-chatpane-dark]` is there too when you need a selector rather than a
 media query. The built-in themes in
 [`src-tauri/themes/`](../src-tauri/themes/) are complete examples: `warm.css`
-covers light and dark, `terminal.css` is dark only and changes the message
-font.
+covers light and dark, `terminal.css` is dark only and sets a monospace
+font across the chats.
 
 ## Beyond colors
 

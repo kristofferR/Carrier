@@ -8,6 +8,7 @@ import {
   pageMessages,
   readGroupTitleTemplates,
   readOldNews,
+  recordNotifiedMessage,
   rewriteChatPopperSource,
   wrapChatPopperFactory,
   wrapDesktopNotificationsFactory,
@@ -55,9 +56,22 @@ describe("PageMessageIndex", () => {
     expect(index.threadFor("mid.1")).toBeUndefined();
   });
 
+  test("remembers which messages Messenger summarised for lack of text", () => {
+    const load = (name: string) => (name === "I64" ? { to_string: String } : undefined);
+    recordNotifiedMessage({ messageId: "mid.photo", threadKey: "10", text: null }, load);
+    recordNotifiedMessage({ messageId: "mid.empty", threadKey: "10", text: "" }, load);
+    recordNotifiedMessage({ messageId: "mid.caption", threadKey: "10", text: "Look!" }, load);
+    expect(pageMessages.isTextless("mid.photo")).toBe(true);
+    expect(pageMessages.isTextless("mid.empty")).toBe(true);
+    expect(pageMessages.isTextless("mid.caption")).toBe(false);
+    expect(pageMessages.isTextless(undefined)).toBe(false);
+  });
+
   test("a notification tag repeats only after it was raised", () => {
     const index = new PageMessageIndex();
+    expect(index.wasRaised("mid.1")).toBe(false);
     expect(index.repeats("mid.1")).toBe(false);
+    expect(index.wasRaised("mid.1")).toBe(true);
     expect(index.repeats("mid.1")).toBe(true);
     expect(index.repeats("mid.2")).toBe(false);
     expect(index.repeats(undefined)).toBe(false);

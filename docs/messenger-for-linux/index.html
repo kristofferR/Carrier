@@ -24,6 +24,45 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@600;700;800&family=Nunito+Sans:opsz,wght@6..12,400;6..12,600;6..12,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/guide.css">
+<!-- scheme -->
+<script>
+  (function () {
+    var KEY = 'chatpane-scheme';
+    var MEDIA = '(prefers-color-scheme: dark)';
+    var rules = [];
+    for (var i = 0; i < document.styleSheets.length; i++) {
+      try {
+        var list = document.styleSheets[i].cssRules;
+        for (var j = 0; j < list.length; j++) {
+          if (list[j].media && list[j].media.mediaText.indexOf('prefers-color-scheme: dark') >= 0) rules.push(list[j]);
+        }
+      } catch (_) {}
+    }
+    function get() {
+      var mode = null;
+      try { mode = localStorage.getItem(KEY); } catch (_) {}
+      return mode === 'light' || mode === 'dark' ? mode : 'system';
+    }
+    function apply() {
+      var mode = get();
+      var media = mode === 'dark' ? 'all' : mode === 'light' ? 'not all' : MEDIA;
+      rules.forEach(function (r) { r.media.mediaText = media; });
+    }
+    window.chatpaneScheme = {
+      get: get,
+      set: function (mode) {
+        try { mode === 'system' ? localStorage.removeItem(KEY) : localStorage.setItem(KEY, mode); } catch (_) {}
+        apply();
+      },
+      isDark: function () {
+        var mode = get();
+        return mode === 'system' ? !!(window.matchMedia && matchMedia(MEDIA).matches) : mode === 'dark';
+      },
+    };
+    apply();
+  })();
+</script>
+<!-- /scheme -->
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>

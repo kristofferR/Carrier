@@ -1,19 +1,50 @@
 import { t } from "../../i18n";
+import { readMessengerDatabase } from "./messenger-db";
 
-const photoSummary =
-  /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
-
-/** An empty or photo-only preview ("Sent a photo"): no text a bubble could be matched by. */
-export function isPhotoSummary(body: string) {
-  return !body.trim() || photoSummary.test(body.trim());
-}
-
-/** Use the sender line to introduce an attached photo, keeping link and caption text intact. */
-export function notificationPhotoText(title: string, body: string, hasThumbnail: boolean) {
-  if (hasThumbnail && isPhotoSummary(body)) {
+/**
+ * Introduce an attached photo with the sender line, for a message that is
+ * just one photo (`photo`) or has an empty body. Messenger's body is then
+ * only its translated summary ("Sent a photo."). Link and caption text stay.
+ */
+export function notificationPhotoText(
+  title: string,
+  body: string,
+  hasThumbnail: boolean,
+  photo: boolean,
+) {
+  if (hasThumbnail && (photo || !body.trim())) {
     return { title: t("page.notification.sent_image", { name: title }), body: "" };
   }
   return { title, body };
+}
+
+interface PhotoQueries {
+  fromTableAscending(table: unknown): { getKeyRange(...key: unknown[]): unknown };
+  toArrayAsync(query: unknown): Promise<unknown>;
+}
+
+/**
+ * Whether a message without text is a single photo, read from its
+ * attachments as Messenger's own notification does. False when unknown.
+ */
+export async function readSinglePhoto(
+  load: unknown,
+  threadId: string,
+  messageId: string,
+): Promise<boolean> {
+  const photo = await readMessengerDatabase(load, async ({ db, i64, load }) => {
+    const q = load("ReQL") as PhotoQueries;
+    const { unwrapIntEnum } = load("LSIntEnum") as { unwrapIntEnum(value: unknown): unknown };
+    const types = load("MessagingAttachmentType") as { IMAGE: number; EPHEMERAL_IMAGE: number };
+    const attachments = (db.tables as Record<string, unknown>).attachments;
+    const rows = await q.toArrayAsync(
+      q.fromTableAscending(attachments).getKeyRange(i64.of_string(threadId), messageId),
+    );
+    if (!Array.isArray(rows) || rows.length !== 1) return false;
+    const kind = unwrapIntEnum((rows[0] as { attachmentType?: unknown }).attachmentType);
+    return kind === types.IMAGE || kind === types.EPHEMERAL_IMAGE;
+  });
+  return photo === true;
 }
 
 /** Keep the whole image, bounded to the native notification decoder's limit. */

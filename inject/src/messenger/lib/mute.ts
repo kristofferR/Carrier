@@ -1,28 +1,11 @@
 /* Per-conversation mute: whether Messenger has silenced a thread.
  *
  * Facebook's title "(N)" and bold chat rows still count muted chats. Chatpane
- * reads mute from accessible names on the row (and the open-thread Mute /
- * Unmute control), then remembers the thread id while its row is virtualized.
+ * reads mute from Messenger's database (thread-state.ts) and, where that
+ * can't answer, from the muted icon on a chat row, then remembers the thread
+ * id while its row is virtualized. Neither depends on the UI language.
  */
 import { messengerDndActive } from "./messenger-dnd";
-import { threadIdFromHref } from "./threads";
-
-const MUTE_LABEL_LIMIT = 60;
-
-/** Localized status words that sit alone on Messenger's mute glyph. */
-const MUTED_STATUS_RE =
-  /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
-
-/** Action that un-silences a thread — the conversation is currently muted. */
-const UNMUTE_ACTION_RE =
-  /^(?:un(?:-)?mute(?: notifications?)?|turn on notifications|stummschaltung aufheben)$/i;
-
-/** Action that silences a thread — the conversation is currently unmuted. */
-const MUTE_ACTION_RE = /^(?:mute(?: notifications?)?|turn off notifications)$/i;
-
-const LABEL_ATTRS = ["aria-label", "title", "aria-description"] as const;
-const MUTE_ACTION_ROLES = new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
-const STATEFUL_MUTE_ROLES = new Set(["menuitemcheckbox", "switch"]);
 
 const MUTED_ROW_ICON_SHAPE = 0x774a4a14;
 const MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
@@ -96,97 +79,6 @@ export function suppressNotificationDelivery(
   settings: ({ mute_notifications?: boolean } & MutedPolicySettings) | null | undefined,
 ): boolean {
   return notificationsGloballyMuted(settings) || suppressMutedDelivery(muted, settings);
-}
-
-/**
- * Whether an accessible name is a mute *status* or mute *action*, not a
- * contact named "Muted Group". Null when the string is unrelated.
- *
- * - `"Muted"` / `"Unmute"` → the thread is muted (`true`)
- * - `"Mute"` / `"Mute notifications"` → the thread is not muted (`false`)
- */
-export function conversationMuteFromLabel(value: string): boolean | null {
-  const text = (value || "").replace(/\s+/g, " ").trim();
-  if (!text || text.length > MUTE_LABEL_LIMIT) return null;
-  if (UNMUTE_ACTION_RE.test(text) || MUTED_STATUS_RE.test(text)) return true;
-  if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return false;
-  return null;
-}
-
-export function isExplicitUnmuteAction(value: string): boolean {
-  return muteStateAfterExplicitAction(value) === false;
-}
-
-/** The mute state Messenger will have after this explicit action succeeds. */
-export function muteStateAfterExplicitAction(value: string): boolean | undefined {
-  const text = (value || "").replace(/\s+/g, " ").trim();
-  if (!text || text.length > MUTE_LABEL_LIMIT) return undefined;
-  if (UNMUTE_ACTION_RE.test(text)) return false;
-  if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return true;
-  return undefined;
-}
-
-/** Predict the post-click state of a mute action or stateful mute toggle. */
-export function muteStateAfterControlAction(
-  value: string,
-  role?: string | null,
-  ariaChecked?: string | null,
-): boolean | undefined {
-  const text = (value || "").replace(/\s+/g, " ").trim();
-  const normalizedRole = (role || "").toLowerCase();
-  if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(normalizedRole)) {
-    if (ariaChecked === "true") return false;
-    if (ariaChecked === "false") return true;
-    return undefined;
-  }
-  return muteStateAfterExplicitAction(text);
-}
-
-/**
- * Accessible labels qualify only when they belong to mute UI, never message
- * content or an avatar. This prevents a contact whose image alt is "Muted"
- * from being treated as a muted conversation.
- */
-export function muteSignalFromSource(source: {
-  value: string;
-  tagName: string;
-  role?: string | null;
-  attribute: string;
-  containsSvg?: boolean;
-  ariaChecked?: string | null;
-}): boolean | null {
-  if (source.attribute === "alt") return null;
-  const text = (source.value || "").replace(/\s+/g, " ").trim();
-  const signal = conversationMuteFromLabel(text);
-  if (signal === null) return null;
-  const tag = source.tagName.toLowerCase();
-  const role = (source.role || "").toLowerCase();
-  if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(role)) {
-    if (source.ariaChecked === "true") return true;
-    if (source.ariaChecked === "false") return false;
-    return null;
-  }
-  if (UNMUTE_ACTION_RE.test(text) || MUTE_ACTION_RE.test(text)) {
-    return tag === "button" || MUTE_ACTION_ROLES.has(role) ? signal : null;
-  }
-  if (tag === "a" || tag === "img" || role === "link" || role === "row" || role === "gridcell") {
-    return null;
-  }
-  return tag === "svg" || role === "img" || source.containsSvg === true ? signal : null;
-}
-
-/** Combine labels from one surface: muted wins if both action kinds appear. */
-export function muteSignalFromLabels(labels: Iterable<string>): boolean | null {
-  let muted = false;
-  let unmuted = false;
-  for (const label of labels) {
-    const signal = conversationMuteFromLabel(label);
-    if (signal === true) muted = true;
-    else if (signal === false) unmuted = true;
-  }
-  if (muted) return true;
-  if (unmuted) return false;
-  return null;
 }
 
 export interface MutedRowIconShape {
@@ -263,60 +155,6 @@ export function hasMutedRowIcon(root: ParentNode): boolean {
   return false;
 }
 
-/**
- * Turn this scan's labels into a cache write.
- *
- * A row without a scoped signal is inconclusive until the store observes that
- * absence as stable. Missing virtualized rows are never observed here.
- */
-export function resolveMuteObservation(labels: Iterable<string>): boolean | undefined {
-  const signal = muteSignalFromLabels(labels);
-  if (signal !== null) return signal;
-  return undefined;
-}
-
-export function collectMuteLabels(root: ParentNode, includeActions = true): string[] {
-  const labels: string[] = [];
-  const seen = new Set<string>();
-  const push = (value: string | null | undefined) => {
-    const text = (value || "").replace(/\s+/g, " ").trim();
-    if (!text || seen.has(text)) return;
-    seen.add(text);
-    labels.push(text);
-  };
-  const inspect = (el: Element) => {
-    for (const attr of LABEL_ATTRS) {
-      const value = el.getAttribute(attr);
-      if (
-        !includeActions &&
-        value &&
-        (isExplicitUnmuteAction(value) || MUTE_ACTION_RE.test(value.replace(/\s+/g, " ").trim()))
-      ) {
-        continue;
-      }
-      if (value) {
-        const signal = muteSignalFromSource({
-          value,
-          tagName: el.tagName,
-          role: el.getAttribute("role"),
-          attribute: attr,
-          containsSvg: [...el.children].some((child) => child.tagName.toLowerCase() === "svg"),
-          ariaChecked: el.getAttribute("aria-checked"),
-        });
-        // Preserve the resolved state, not the static label: a switch named
-        // "Mute notifications" uses aria-checked as its only state signal.
-        if (signal !== null) push(signal ? "Muted" : "Mute");
-      }
-    }
-  };
-  if (root instanceof Element) inspect(root);
-  for (const el of root.querySelectorAll("[aria-label], [title], [aria-description]")) {
-    inspect(el);
-  }
-  for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
-  return labels;
-}
-
 export class MutedThreadStore {
   private readonly states = new Map<string, boolean>();
   private readonly rowAbsences = new Map<string, { since: number; observations: number }>();
@@ -376,88 +214,9 @@ export class MutedThreadStore {
 /** Shared across the unread badge and the notification scanner. */
 export const mutedThreads = new MutedThreadStore();
 
-let actionInvalidationStarted = false;
-
-const threadIdFromActionTarget = (target: Element): string => {
-  const row = target.closest('[role="row"]');
-  const href = row?.querySelector<HTMLAnchorElement>('a[href*="/t/"]')?.getAttribute("href") || "";
-  return threadIdFromHref(href) || "";
-};
-
-export function resolveMuteActionThreadId(
-  rowId: string,
-  openId: string,
-  recentRowId: string,
-  actionIsInOpenSurface: boolean,
-): string {
-  if (rowId) return rowId;
-  if (actionIsInOpenSurface && openId) return openId;
-  return recentRowId || openId;
-}
-
-/** Mirror Messenger's explicit Mute / Unmute action into the thread cache. */
-export function initMuteActionTracking(): void {
-  if (actionInvalidationStarted) return;
-  actionInvalidationStarted = true;
-  let recentRow: { id: string; at: number } | null = null;
-  const rememberRow = (target: EventTarget | null) => {
-    if (!(target instanceof Element)) return;
-    // The action itself is often rendered in a portal. Preserve the row that
-    // opened that menu, but clear it when an unrelated header/info trigger is
-    // used so an old list interaction cannot invalidate the wrong thread.
-    if (target.closest('[role="menu"], [role="menuitem"], [role="menuitemcheckbox"]')) return;
-    const id = threadIdFromActionTarget(target);
-    recentRow = id ? { id, at: Date.now() } : null;
-  };
-  document.addEventListener("pointerdown", (event) => rememberRow(event.target), true);
-  document.addEventListener("contextmenu", (event) => rememberRow(event.target), true);
-  document.addEventListener("focusin", (event) => rememberRow(event.target), true);
-  document.addEventListener(
-    "click",
-    (event) => {
-      if (!event.isTrusted) return;
-      if (!(event.target instanceof Element)) return;
-      rememberRow(event.target);
-      const action = event.target.closest<HTMLElement>(
-        'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]',
-      );
-      if (!action) return;
-      const label =
-        action.getAttribute("aria-label") ||
-        action.getAttribute("title") ||
-        action.textContent ||
-        "";
-      const nextMuted = muteStateAfterControlAction(
-        label,
-        action.getAttribute("role"),
-        action.getAttribute("aria-checked"),
-      );
-      if (nextMuted === undefined) return;
-      const rowId = threadIdFromActionTarget(action);
-      const openId = threadIdFromHref(location.pathname) || "";
-      const recentId = recentRow && Date.now() - recentRow.at <= 15_000 ? recentRow.id : "";
-      const id = resolveMuteActionThreadId(
-        rowId,
-        openId,
-        recentId,
-        !!action.closest('[role="main"], [role="complementary"], [role="dialog"]'),
-      );
-      if (id) {
-        mutedThreads.observe(id, nextMuted);
-        window.dispatchEvent(
-          new CustomEvent("chatpane:thread-mute", { detail: { id, muted: nextMuted } }),
-        );
-      }
-    },
-    true,
-  );
-}
-
+/** A mounted chat row: its muted icon, or that icon's lasting absence. */
 export function observeConversationMute(id: string, root: ParentNode): boolean {
-  mutedThreads.observeMountedRow(
-    id,
-    hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false)),
-  );
+  mutedThreads.observeMountedRow(id, hasMutedRowIcon(root) ? true : undefined);
   return mutedThreads.isMuted(id);
 }
 
@@ -465,16 +224,4 @@ export function observeConversationMute(id: string, root: ParentNode): boolean {
 export function observeDatabaseMute(id: string, muted: boolean): boolean {
   mutedThreads.observe(id, muted);
   return muted;
-}
-
-/** Info-sidebar / header Mute and Unmute controls for the open thread. */
-export function observeOpenThreadMute(id: string, roots: Iterable<ParentNode>): boolean {
-  const labels: string[] = [];
-  for (const root of roots) {
-    for (const label of collectMuteLabels(root)) {
-      if (conversationMuteFromLabel(label) !== null) labels.push(label);
-    }
-  }
-  mutedThreads.observe(id, muteSignalFromLabels(labels) ?? undefined);
-  return mutedThreads.isMuted(id);
 }

@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   ConversationNotificationTracker,
   groupPreviewSender,
-  isOwnMessagePreview,
   NotificationCorrelationQueue,
   NotifiedSignatureStore,
   notificationDedupeKey,
@@ -1786,19 +1785,6 @@ describe("StableMismatchTracker", () => {
     expect(tracker.observe([["1", "bbbb"]], 5_000).recovered).toEqual([]);
     expect(tracker.observe([["1", "bbbb"]], 5_999).recovered).toEqual([]);
     expect(tracker.observe([["1", "bbbb"]], 6_000).recovered).toEqual(["1"]);
-  });
-});
-
-describe("isOwnMessagePreview", () => {
-  test("recognizes the supported first-person preview forms", () => {
-    expect(isOwnMessagePreview("You: hello")).toBe(true);
-    expect(isOwnMessagePreview("Du sendte et bilde")).toBe(true);
-    expect(isOwnMessagePreview("Meg: hello")).toBe(true);
-  });
-
-  test("does not suppress incoming previews", () => {
-    expect(isOwnMessagePreview("Jane: hello")).toBe(false);
-    expect(isOwnMessagePreview("New message")).toBe(false);
   });
 });
 

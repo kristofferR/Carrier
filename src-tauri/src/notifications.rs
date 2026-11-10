@@ -11,7 +11,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::AtomicU64;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -106,9 +106,6 @@ pub(crate) struct NotifyMsg {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     sender: Option<NotifySender>,
-    /// Messenger's UI language is English. Older page bundles omit it.
-    #[serde(default)]
-    english_ui: bool,
     /// Messenger's own sound already rang for this message, so the
     /// notification stays silent. It can only take the sound away.
     #[serde(default)]
@@ -198,35 +195,24 @@ pub(crate) fn remember_action_target(native_id: u64, target: ActionTarget) {
 /// Every combination of quick actions a notification can carry, in button
 /// order. macOS registers one category per entry.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-pub(crate) const ACTION_SETS: [&[NotificationAction]; 5] = {
+pub(crate) const ACTION_SETS: [&[NotificationAction]; 3] = {
     use NotificationAction::{MarkRead, Mute, React};
-    [
-        &[],
-        &[MarkRead],
-        &[React, MarkRead],
-        &[MarkRead, Mute],
-        &[React, MarkRead, Mute],
-    ]
+    [&[], &[MarkRead, Mute], &[React, MarkRead, Mute]]
 };
 
 /// The quick actions a shown notification offers: none without a recorded
-/// target; Mark as Read always; React when the page named the exact message;
-/// Mute only for an English Messenger UI, whose labels it drives.
+/// target; Mark as Read and Mute always; React when the page named the exact
+/// message.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn offered_actions(native_id: u64) -> &'static [NotificationAction] {
     action_target(native_id).map_or(ACTION_SETS[0], |target| {
-        action_set(!target.message.is_empty(), quick_actions_supported())
+        action_set(!target.message.is_empty())
     })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn action_set(react: bool, mute: bool) -> &'static [NotificationAction] {
-    ACTION_SETS[match (react, mute) {
-        (false, false) => 1,
-        (true, false) => 2,
-        (false, true) => 3,
-        (true, true) => 4,
-    }]
+fn action_set(react: bool) -> &'static [NotificationAction] {
+    ACTION_SETS[if react { 2 } else { 1 }]
 }
 
 /// Messenger's six default reactions, which React can be set to: the literal
@@ -285,16 +271,6 @@ fn action_target(native_id: u64) -> Option<ActionTarget> {
         .iter()
         .find(|(id, _)| *id == native_id)
         .map(|(_, target)| target.clone())
-}
-
-/// The Messenger UI language the page last reported. Mute drives
-/// English-labelled controls, so it is offered only for an English UI; the
-/// other actions work in any language.
-static MESSENGER_ENGLISH_UI: AtomicBool = AtomicBool::new(false);
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn quick_actions_supported() -> bool {
-    MESSENGER_ENGLISH_UI.load(Ordering::Relaxed)
 }
 
 impl NotifyMsg {
@@ -2518,7 +2494,6 @@ pub(crate) fn show_message_notification(
     // Window URLs are read on the main thread: never while holding settings.
     let muted = muted || in_call(&app);
     late_notification_routes().lock().unwrap().forget(msg.id);
-    MESSENGER_ENGLISH_UI.store(msg.english_ui, Ordering::Relaxed);
     if muted {
         log::info!(
             "chatpane:notify suppressed: notifications muted, paused or in a call (id {})",
@@ -3477,7 +3452,6 @@ mod tests {
             dedupe_key: dedupe_key.into(),
             thread_path: String::new(),
             sender: None,
-            english_ui: false,
             silent: false,
             message_id: String::new(),
             account: String::new(),
@@ -3658,10 +3632,8 @@ mod tests {
     #[test]
     fn quick_actions_follow_what_the_notification_named() {
         use NotificationAction::{MarkRead, Mute, React};
-        assert_eq!(action_set(false, false), [MarkRead]);
-        assert_eq!(action_set(true, false), [React, MarkRead]);
-        assert_eq!(action_set(false, true), [MarkRead, Mute]);
-        assert_eq!(action_set(true, true), [React, MarkRead, Mute]);
+        assert_eq!(action_set(false), [MarkRead, Mute]);
+        assert_eq!(action_set(true), [React, MarkRead, Mute]);
         for action in [React, MarkRead, Mute] {
             assert_eq!(NotificationAction::from_id(action.id()), Some(action));
         }

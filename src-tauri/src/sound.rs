@@ -1,6 +1,9 @@
-//! The notification sound (Settings → Notifications, Ref #363 and #446): the
-//! stored choice, the sounds each OS ships, sounds added with Choose file…,
-//! and playing a sound where a notification can't carry it.
+//! The message sound (Settings → Notifications, Ref #363 and #446): the
+//! stored choice, the sounds each OS ships, Messenger's own sound, sounds
+//! added with Choose file…, and playing a sound where a notification can't
+//! carry it. It plays once per message: with the notification in the
+//! background, and on its own while a Messenger window is in front
+//! ([`install`]). Facebook's own sound setting plays no part.
 //!
 //! - macOS lists `~/Library/Sounds` and `/System/Library/Sounds` and delivers
 //!   the name with `UNNotificationSound`. Choose file… copies the file into
@@ -12,15 +15,21 @@
 //!   notification server that advertises the `sound` capability plays the
 //!   hint; for any other, Chatpane sends `suppress-sound` and plays the file.
 //!
-//! The Messenger page never picks a sound. Its only say is `chatpane:notify`'s
-//! `silent` flag, which can take the sound away ([`message_sound`]). Stored
-//! names resolve only against the listed folders and tables, so a setting
-//! never becomes an arbitrary path.
+//! Messenger's sound is copied from the page when it is picked, as a WAV
+//! where Choose file… keeps its copies ([`copy_messenger_sound`]).
+//!
+//! The Messenger page never picks a sound. Its say is `chatpane:notify`'s
+//! `silent` flag, which can take the sound away ([`message_sound`]), and
+//! `chatpane:message-sound`, which plays the chosen one. Stored names resolve
+//! only against the listed folders and tables, so a setting never becomes an
+//! arbitrary path.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Listener, Manager};
 
 use crate::i18n::{t, tf};
 
@@ -44,6 +53,13 @@ const EXTENSIONS: &[&str] = &["wav", "ogg", "oga"];
 
 /// Choose file… copies the sound, so keep that copy small.
 const MAX_SOUND_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Messenger's sound, copied from the page. Settings lists it as Messenger,
+/// never under this name.
+const MESSENGER_SOUND: &str = "Chatpane Messenger";
+const MESSENGER_SOUND_FILE: &str = "Chatpane Messenger.wav";
+/// Messenger's sound is about 200 KB; the page sends at most ten seconds.
+const MAX_MESSENGER_SOUND_BYTES: usize = 4 * 1024 * 1024;
 
 /// The built-in toast sounds besides `Notification.Default` (System default):
 /// name, toast sound event, label's UI string key. The looping alarm and call
@@ -93,6 +109,8 @@ pub(crate) enum NotificationSound {
     /// A sound added with Choose file… on Windows or Linux, by its name in
     /// Chatpane's sounds folder.
     File(String),
+    /// Messenger's own new-message sound, once copied.
+    Messenger,
 }
 
 impl NotificationSound {
@@ -130,8 +148,8 @@ impl crate::settings::Settings {
     }
 }
 
-/// The sound for one message notification. The page's `silent` flag
-/// (Messenger's own sound just rang) can take the sound away, never add one.
+/// The sound for one message notification. The page's `silent` flag (the
+/// in-front message sound just rang) can take the sound away, never add one.
 pub(crate) fn message_sound(choice: &NotificationSound, page_silent: bool) -> NotificationSound {
     if page_silent {
         NotificationSound::Off
@@ -165,7 +183,69 @@ pub(crate) fn resolve(app: &tauri::AppHandle, choice: &NotificationSound) -> Sou
         NotificationSound::File(name) => added_sound(app, name)
             .map(Sound::File)
             .unwrap_or(Sound::Default),
+        NotificationSound::Messenger => messenger_sound(app).unwrap_or(Sound::Default),
     }
+}
+
+/// Messenger's sound, when it has been copied: a named sound on macOS, a file
+/// Chatpane plays or hands over elsewhere.
+fn messenger_sound(app: &tauri::AppHandle) -> Option<Sound> {
+    let path = import_dir(app).ok()?.join(MESSENGER_SOUND_FILE);
+    if !path.is_file() {
+        return None;
+    }
+    Some(if cfg!(target_os = "macos") {
+        Sound::Named(MESSENGER_SOUND_FILE.into())
+    } else {
+        Sound::File(path)
+    })
+}
+
+/// The WAV in the page's answer: None unless it is a bounded base64 WAV data
+/// URL whose bytes start like a WAV file.
+fn decode_wav_data_url(data_url: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let b64 = data_url.strip_prefix("data:audio/wav;base64,")?;
+    if b64.len() > MAX_MESSENGER_SOUND_BYTES / 3 * 4 + 4 {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    (bytes.len() > 44
+        && bytes.len() <= MAX_MESSENGER_SOUND_BYTES
+        && bytes.starts_with(b"RIFF")
+        && &bytes[8..16] == b"WAVEfmt ")
+        .then_some(bytes)
+}
+
+/// Settings → Message sound → Messenger: copy Messenger's own sound from the
+/// page to where notifications can play it. An earlier copy stays in use when
+/// the page can't answer.
+#[tauri::command]
+pub(crate) async fn copy_messenger_sound(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = import_dir(&app)?;
+    let path = dir.join(MESSENGER_SOUND_FILE);
+    let bytes =
+        match crate::account::page_request(&app, "message-sound", serde_json::Value::Null).await {
+            Ok(serde_json::Value::String(url)) => decode_wav_data_url(&url)
+                .ok_or_else(|| t("account.error.unexpected_answer").to_string())?,
+            Ok(_) => return Err(t("account.error.unexpected_answer").into()),
+            Err(_) if path.is_file() => return Ok(()),
+            Err(error) => return Err(error),
+        };
+    let io = |error: std::io::Error| {
+        tf(
+            "sound.error.io",
+            &[("file", &MESSENGER_SOUND_FILE), ("error", &error)],
+        )
+    };
+    std::fs::create_dir_all(&dir).map_err(io)?;
+    // A hidden name is never listed, so a half-written copy never plays.
+    let partial = dir.join(format!(".{MESSENGER_SOUND_FILE}.part"));
+    std::fs::write(&partial, &bytes).map_err(io)?;
+    std::fs::rename(&partial, &path).map_err(|error| {
+        let _ = std::fs::remove_file(&partial);
+        io(error)
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -391,7 +471,15 @@ fn linux_system_sounds(theme_has: impl Fn(&str) -> bool) -> Vec<SoundOption> {
         .collect()
 }
 
+/// Settings: the OS's sounds and the added ones. Messenger's copy is left
+/// out: Settings offers it as Messenger.
 fn available(app: &tauri::AppHandle) -> Vec<SoundOption> {
+    let mut options = listed(app);
+    options.retain(|option| option.label != MESSENGER_SOUND);
+    options
+}
+
+fn listed(app: &tauri::AppHandle) -> Vec<SoundOption> {
     #[cfg(target_os = "macos")]
     {
         let _ = app;
@@ -474,13 +562,52 @@ pub(crate) async fn preview_notification_sound(
     app: tauri::AppHandle,
     sound: NotificationSound,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || preview(&app, &resolve(&app, &sound)))
+    tauri::async_runtime::spawn_blocking(move || play(&app, &resolve(&app, &sound)))
         .await
         .map_err(|error| error.to_string())
 }
 
+/// The in-front message sound rings at most this often.
+const MESSAGE_SOUND_GAP: Duration = Duration::from_secs(1);
+
+/// Whether a message sound asked for at `now` rings, given when one last did.
+fn rings(last: &mut Option<Instant>, now: Instant) -> bool {
+    if last.is_some_and(|at| now.duration_since(at) < MESSAGE_SOUND_GAP) {
+        return false;
+    }
+    *last = Some(now);
+    true
+}
+
+/// While a Messenger window is in front a new message raises no
+/// notification, so its page asks for the message sound here
+/// (`chatpane:message-sound`). Any script on the page can ask, so Mute and
+/// Pause apply here too, and it rings at most once a second.
+pub(crate) fn install(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    app.listen_any("chatpane:message-sound", move |_| {
+        static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+        let choice = {
+            let state = handle.state::<crate::settings::AppState>();
+            let settings = state.settings.lock().unwrap();
+            if crate::pause::pause_state(&settings, crate::pause::now_ms())
+                != crate::pause::PauseState::Active
+            {
+                return;
+            }
+            settings.sound_choice()
+        };
+        if !rings(&mut LAST.lock().unwrap(), Instant::now()) {
+            return;
+        }
+        let app = handle.clone();
+        tauri::async_runtime::spawn_blocking(move || play(&app, &resolve(&app, &choice)));
+    });
+}
+
+/// Play a sound now, without a notification.
 #[cfg(target_os = "macos")]
-fn preview(_app: &tauri::AppHandle, sound: &Sound) {
+fn play(_app: &tauri::AppHandle, sound: &Sound) {
     use objc2_foundation::NSString;
     match sound {
         Sound::Silent => {}
@@ -503,7 +630,7 @@ fn preview(_app: &tauri::AppHandle, sound: &Sound) {
 }
 
 #[cfg(target_os = "windows")]
-fn preview(_app: &tauri::AppHandle, sound: &Sound) {
+fn play(_app: &tauri::AppHandle, sound: &Sound) {
     use windows_sys::Win32::Media::Audio::SND_ALIAS;
     match sound {
         Sound::File(path) => play_file(path),
@@ -517,7 +644,7 @@ fn preview(_app: &tauri::AppHandle, sound: &Sound) {
 }
 
 #[cfg(target_os = "linux")]
-fn preview(app: &tauri::AppHandle, sound: &Sound) {
+fn play(app: &tauri::AppHandle, sound: &Sound) {
     if let Some(file) =
         linux_sound(sound.clone(), SoundServer::IgnoresSound, &theme_sounds(app)).play
     {
@@ -875,6 +1002,7 @@ mod tests {
             NotificationSound::Default,
             NotificationSound::system("Glass"),
             NotificationSound::File("ding".into()),
+            NotificationSound::Messenger,
         ] {
             let settings = Settings {
                 notification_sound: true,
@@ -913,10 +1041,39 @@ mod tests {
             NotificationSound::Default,
             NotificationSound::system("bell"),
             NotificationSound::File("ding".into()),
+            NotificationSound::Messenger,
         ] {
             assert_eq!(message_sound(&choice, true), NotificationSound::Off);
             assert_eq!(message_sound(&choice, false), choice);
         }
+    }
+
+    #[test]
+    fn messenger_sound_accepts_only_a_bounded_wav() {
+        use base64::Engine as _;
+        let url = |bytes: &[u8]| {
+            format!(
+                "data:audio/wav;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(bytes)
+            )
+        };
+        let wav = [b"RIFF\0\0\0\0WAVEfmt ".as_slice(), &[0; 40]].concat();
+        assert_eq!(decode_wav_data_url(&url(&wav)), Some(wav.clone()));
+        let mut avi = wav.clone();
+        avi[8..12].copy_from_slice(b"AVI ");
+        assert!(decode_wav_data_url(&url(&avi)).is_none());
+        assert!(decode_wav_data_url(&url(&wav[..20])).is_none());
+        assert!(decode_wav_data_url(&url(&wav).replace("audio/wav", "audio/mpeg")).is_none());
+        let huge = format!("data:audio/wav;base64,{}", "A".repeat(8 << 20));
+        assert!(decode_wav_data_url(&huge).is_none());
+    }
+
+    #[test]
+    fn the_in_front_sound_rings_at_most_once_a_second() {
+        let (mut last, start) = (None, Instant::now());
+        assert!(rings(&mut last, start));
+        assert!(!rings(&mut last, start + Duration::from_millis(400)));
+        assert!(rings(&mut last, start + MESSAGE_SOUND_GAP));
     }
 
     #[test]

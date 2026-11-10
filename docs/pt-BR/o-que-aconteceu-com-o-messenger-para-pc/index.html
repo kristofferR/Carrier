@@ -113,6 +113,45 @@
   ]
 }
 </script>
+<!-- scheme -->
+<script>
+  (function () {
+    var KEY = 'chatpane-scheme';
+    var MEDIA = '(prefers-color-scheme: dark)';
+    var rules = [];
+    for (var i = 0; i < document.styleSheets.length; i++) {
+      try {
+        var list = document.styleSheets[i].cssRules;
+        for (var j = 0; j < list.length; j++) {
+          if (list[j].media && list[j].media.mediaText.indexOf('prefers-color-scheme: dark') >= 0) rules.push(list[j]);
+        }
+      } catch (_) {}
+    }
+    function get() {
+      var mode = null;
+      try { mode = localStorage.getItem(KEY); } catch (_) {}
+      return mode === 'light' || mode === 'dark' ? mode : 'system';
+    }
+    function apply() {
+      var mode = get();
+      var media = mode === 'dark' ? 'all' : mode === 'light' ? 'not all' : MEDIA;
+      rules.forEach(function (r) { r.media.mediaText = media; });
+    }
+    window.chatpaneScheme = {
+      get: get,
+      set: function (mode) {
+        try { mode === 'system' ? localStorage.removeItem(KEY) : localStorage.setItem(KEY, mode); } catch (_) {}
+        apply();
+      },
+      isDark: function () {
+        var mode = get();
+        return mode === 'system' ? !!(window.matchMedia && matchMedia(MEDIA).matches) : mode === 'dark';
+      },
+    };
+    apply();
+  })();
+</script>
+<!-- /scheme -->
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>

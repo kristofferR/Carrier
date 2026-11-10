@@ -12,13 +12,14 @@ import {
   isUnreadConversationText,
 } from "../lib/conversation-row";
 import { EMOJI_SOURCE_RE } from "../lib/emoji";
+import { pageRequire } from "../lib/facebook-loader";
 import { reactionLabel } from "../lib/message-menu";
 import {
   ignoresMutedConversations,
   mutedThreads,
   notificationsGloballyMuted,
   observeConversationMute,
-  observeOpenThreadMute,
+  observeDatabaseMute,
   suppressMutedDelivery,
   suppressNotificationDelivery,
 } from "../lib/mute";
@@ -28,7 +29,6 @@ import { nicknameMode, showNicknames } from "../lib/nicknames";
 import {
   ConversationNotificationTracker,
   groupPreviewSender,
-  isOwnMessagePreview,
   type NativeNotificationDelivery,
   NotificationCorrelationQueue,
   NotifiedSignatureStore,
@@ -45,7 +45,11 @@ import {
   UnreadArrivalTracker,
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
-import { notificationPhotoText, notificationThumbnail } from "../lib/notification-images";
+import {
+  notificationPhotoText,
+  notificationThumbnail,
+  readSinglePhoto,
+} from "../lib/notification-images";
 import {
   notificationLinkBody,
   notificationLinkCards,
@@ -63,12 +67,13 @@ import {
 import { groupTitleTemplates, pageMessages } from "../lib/page-notifications";
 import { reactionKey } from "../lib/reaction-notifications";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
-import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
+import { avatarPhotoId, isAvatarSize, SenderAvatarStore } from "../lib/sender-avatars";
 import { readThreadIsGroup, suppressGroupChat, ThreadKindCache } from "../lib/thread-kind";
+import { readNewestMessageId, readThreadStates } from "../lib/thread-state";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
-import { messengerMessageSoundJustPlayed } from "./messenger-sounds";
+import { messageSoundJustPlayed } from "./messenger-sounds";
 import { watchReactions } from "./reaction-notifications";
 
 interface ChatpaneNotificationInstance {
@@ -291,14 +296,12 @@ export function initNotificationBridge() {
         image,
         dedupe_key: dedupeKey,
         thread_path: threadPath || "",
-        // Like/Mute match English control labels; native offers them only then.
-        english_ui: /^en\b/i.test(document.documentElement.lang),
         message_id: messageId,
         account: accountId(document.cookie) || "",
         row,
         sender,
-        // Messenger's own sound just rang for this message (see messenger-sounds).
-        silent: messengerMessageSoundJustPlayed(threadIdFromHref(threadPath), messageId),
+        // The in-front message sound just rang for this message (see messenger-sounds).
+        silent: messageSoundJustPlayed(threadIdFromHref(threadPath), messageId),
       },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);
@@ -630,6 +633,12 @@ export function initNotificationBridge() {
         const person = addressedGroupSender(originalTitle, group, groupTitleTemplates);
         return person && { person, photo: await avatarToDataUrl(person.avatar) };
       });
+      // A message without text that is one photo: Messenger's body is only its
+      // translated summary of it.
+      const photo =
+        taggedThread && typeof opts.tag === "string" && pageMessages.isTextless(opts.tag)
+          ? readSinglePhoto(pageRequire(), taggedThread, opts.tag)
+          : false;
       Promise.all([
         avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
         kindWait,
@@ -637,7 +646,8 @@ export function initNotificationBridge() {
         names,
         groupPicture(names),
         addressedSender,
-      ]).then(([icon, , image, group, picture, addressed]) => {
+        photo,
+      ]).then(([icon, , image, group, picture, addressed, singlePhoto]) => {
         const signal = pageMatch.signal;
         const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
         const deliverySettings = window.__CHATPANE_SETTINGS__ || {};
@@ -739,6 +749,7 @@ export function initNotificationBridge() {
           displayTitle || named.title,
           richMessageBody(named.body, threadPath),
           Boolean(image),
+          singlePhoto,
         );
         const sender = hidePreview
           ? undefined
@@ -880,14 +891,15 @@ export function initNotificationBridge() {
   let settleAttempts = 0;
   const normalizedText = (value: string | null | undefined) =>
     (value || "").replace(/\s+/g, " ").trim();
-  // Alt text on Messenger's avatars is the person's name; its photo and
-  // attachment images describe themselves instead ("May be an image of …").
   const isPersonName = (value: string) =>
     value.length > 0 &&
     value.length <= 60 &&
     value.split(" ").length <= 5 &&
-    /\p{Letter}/u.test(value) &&
-    !/profile|picture|photo|image|avatar|bilde/i.test(value);
+    /\p{Letter}/u.test(value);
+  // Alt text on Messenger's avatars is the person's name; its photo and
+  // attachment images describe themselves instead ("May be an image of …").
+  const isAvatarImage = (image: HTMLImageElement) =>
+    isAvatarSize(image.naturalWidth, image.naturalHeight);
 
   interface HarvestedFace {
     name: string;
@@ -1008,7 +1020,7 @@ export function initNotificationBridge() {
         const source = image.currentSrc || image.src || "";
         if (!source || EMOJI_SOURCE_RE.test(source)) continue;
         const name = normalizedText(image.getAttribute("alt"));
-        if (!isPersonName(name)) continue;
+        if (!isPersonName(name) || !isAvatarImage(image)) continue;
         note(name, source, name);
         // Group previews use the short name Messenger prints above a message
         // ("Kim"), while the avatar's alt holds the full one ("Kim Andersen").
@@ -1392,10 +1404,26 @@ export function initNotificationBridge() {
     );
     const timer = setTimeout(async () => {
       await learnThreadKind(conversation.key);
+      // Messenger's database has the facts a bold row only suggests: whether
+      // the chat is still unread for you (not your own message, not read
+      // elsewhere meanwhile) and muted, in any UI language.
+      const [states, newest] = await Promise.all([
+        readThreadStates([conversation.key], pageRequire(), Date.now()),
+        readNewestMessageId(conversation.key, pageRequire()),
+      ]);
+      const fresh = states?.get(conversation.key);
+      if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
+      // Messenger already notified about this chat's newest message (or left
+      // it out as old news): the row only caught up with it, as a photo's
+      // preview does a moment later.
+      const announced =
+        newest !== null && (pageMessages.wasRaised(newest) || pageMessages.isStale(newest));
       // A newer preview may own this conversation now; it decides, not us.
       if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
       const settings = window.__CHATPANE_SETTINGS__ || {};
       if (
+        fresh?.unread === false ||
+        announced ||
         suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) ||
         groupSuppressed(conversation.key)
       ) {
@@ -1480,7 +1508,8 @@ export function initNotificationBridge() {
         showNicknames(nicknameMode(deliverySettings), group?.isGroup),
         visiblePresentation.subtitle ? "sender" : "group",
       );
-      const text = notificationPhotoText(named.title, named.body, Boolean(image));
+      // A row preview can't tell a caption from Messenger's summary of a photo.
+      const text = notificationPhotoText(named.title, named.body, Boolean(image), false);
       emitNotification(
         ++notifySeq,
         hidePreview ? "Messenger" : text.title,
@@ -1577,13 +1606,6 @@ export function initNotificationBridge() {
     scanRunning = true;
     try {
       harvestSenderAvatars(Date.now());
-      const openId = threadIdFromHref(location.pathname);
-      if (openId) {
-        observeOpenThreadMute(openId, [
-          ...document.querySelectorAll('[role="main"]'),
-          ...document.querySelectorAll('[role="complementary"], [role="dialog"]'),
-        ]);
-      }
       const links = chatRows();
       // A grid can exist briefly before its rows hydrate. Do not prime an empty
       // list or the first real render would look like a burst of new messages.
@@ -1593,8 +1615,7 @@ export function initNotificationBridge() {
         .filter((conversation): conversation is Conversation => conversation !== null);
       for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
       const conversations = observed.filter(
-        (conversation) =>
-          conversation.unread && !isOwnMessagePreview(conversation.body) && !conversation.draft,
+        (conversation) => conversation.unread && !conversation.draft,
       );
       for (const conversation of conversations) void learnThreadKind(conversation.key);
       const ignoreMuted = ignoresMutedConversations(window.__CHATPANE_SETTINGS__);
@@ -1758,7 +1779,7 @@ export function initNotificationBridge() {
       }
       for (const key of pendingArrivalKeys) {
         const row = observed.find((conversation) => conversation.key === key);
-        if (row && (!row.unread || isOwnMessagePreview(row.body))) {
+        if (row && !row.unread) {
           pendingArrivalKeys.delete(key);
         }
       }

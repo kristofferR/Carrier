@@ -16,16 +16,15 @@ describe("stateFromViewer", () => {
     };
     expect(
       stateFromViewer(
-        { chat_sounds_on: false, chat_visibility: true, chat_visibility_on_messenger: false },
+        { chat_visibility: true, chat_visibility_on_messenger: false },
         resolve,
         -1,
         false,
       ),
-    ).toEqual({ activeStatus: false, sounds: false, dndUntil: -1, readReceipts: false });
+    ).toEqual({ activeStatus: false, dndUntil: -1, readReceipts: false });
     expect(calls).toEqual([[true, false, null]]);
-    expect(stateFromViewer({ chat_sounds_on: "yes" }, () => undefined, 0, null)).toEqual({
+    expect(stateFromViewer({ chat_visibility: "yes" }, () => undefined, 0, null)).toEqual({
       activeStatus: null,
-      sounds: null,
       dndUntil: 0,
       readReceipts: null,
     });

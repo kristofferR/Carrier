@@ -1644,13 +1644,6 @@ export function notificationPresentation(
   return { title, subtitle: "", body, icon: photos.thread };
 }
 
-/** Best-effort suppression for previews produced by the signed-in user. */
-export function isOwnMessagePreview(value: string): boolean {
-  return /^(?:you|du|me|meg):|^(?:you|du|me|meg)\s+(?:sent|replied|forwarded|reacted|sendte|svarte|videresendte|reagerte)\b/i.test(
-    value.trim().replace(/\s+/g, " "),
-  );
-}
-
 /** Whether page and row signals describe the same conversation update. */
 export function notificationTextMatches(
   pageTitle: string,

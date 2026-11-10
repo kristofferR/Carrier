@@ -234,11 +234,39 @@ async function fixtures(
     region.append(fileInput);
     assert("captionless file protects recovery", hasDraft());
     fileInput.remove();
+    // A staged file shows no image, only Messenger's attachment chip with its
+    // remove button, recognised through React's records in any language: in
+    // the composer's default export, or the newer composer's named export.
     const removeAttachment = document.createElement("button");
-    removeAttachment.setAttribute("aria-label", "Remove attachment");
-    region.append(removeAttachment);
-    assert("attachment removal control protects recovery", hasDraft());
-    removeAttachment.remove();
+    removeAttachment.setAttribute("aria-label", "Anhang entfernen");
+    const stagingItem = function MWV2ComposerMediaStagingItem() {};
+    const filePreview = function MWXComposerFileAttachmentPreview() {};
+    const facebook = window as unknown as { require?: (name: string) => unknown };
+    for (const [module, component] of [
+      ["MWV2ComposerMediaStagingItem.react", stagingItem],
+      ["MWXComposerAttachmentPreview.react", { MWXComposerFileAttachmentPreview: filePreview }],
+    ] as const) {
+      const rendered = typeof component === "function" ? component : filePreview;
+      facebook.require = (name) =>
+        name === "ReactDOM"
+          ? {
+              __DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE: {
+                Events: [
+                  (node: Element) =>
+                    node === removeAttachment
+                      ? { stateNode: node, type: "button", return: { type: rendered } }
+                      : null,
+                ],
+              },
+            }
+          : name === module
+            ? component
+            : undefined;
+      region.append(removeAttachment);
+      assert(`a staged attachment protects recovery (${module})`, hasDraft());
+      removeAttachment.remove();
+    }
+    delete facebook.require;
     assert("removing attachments allows recovery", !hasDraft());
 
     // biome-ignore lint/suspicious/noDocumentCookie: Mimic Messenger's account cookie in an isolated fixture.

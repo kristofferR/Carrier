@@ -62,7 +62,6 @@ import { initTypingBlock } from "./features/typing-block";
 import { initUnreadBadge } from "./features/unread-badge";
 import { initViewerControls } from "./features/viewer-controls";
 import { initZoom } from "./features/zoom";
-import { initMuteActionTracking } from "./lib/mute";
 import { migratePageStorage } from "./lib/storage-migration";
 
 function initFeature(name: string, init: () => void) {
@@ -104,7 +103,6 @@ function main() {
   initFeature("spellcheck", initSpellcheck);
   initFeature("telemetry", initTelemetryBlocking);
   initFeature("media-autoplay", initMediaAutoplay);
-  initFeature("mute-action-tracking", initMuteActionTracking);
   initFeature("messenger-dnd", initMessengerDnd);
   initFeature("account-requests", initAccountRequests);
   initFeature("notifications", initNotificationBridge);

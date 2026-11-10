@@ -1,5 +1,5 @@
 import { patchNicknameReplies } from "./nickname-replies";
-import { patchNicknameSnippets } from "./nickname-snippets";
+import { nativeSnippetPrefixes, patchNicknameSnippets, readDraftLabel } from "./nickname-snippets";
 import { patchNicknameThreadTitles } from "./nickname-thread-titles";
 import {
   type NicknamePreference,
@@ -317,6 +317,11 @@ function wrapFactory(
       // This Haste module imports React through the namespace dependency slot.
       // Patch before consumers receive the provider, so React owns every render.
       try {
+        if (moduleName === "MWThreadSnippetForDisplay.react") {
+          nativeSnippetPrefixes.draftLabel = readDraftLabel(
+            Function.prototype.toString.call(factory),
+          );
+        }
         const importModule = factoryArgs[3];
         if (typeof importModule === "function") {
           const react: unknown = importModule("react");

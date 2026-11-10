@@ -1,18 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   badgeIgnoresMutedConversations,
-  conversationMuteFromLabel,
   ignoresMutedConversations,
-  isExplicitUnmuteAction,
   isMutedRowIconShape,
   MutedThreadStore,
   mutedConversationPolicy,
-  muteSignalFromLabels,
-  muteSignalFromSource,
-  muteStateAfterControlAction,
-  muteStateAfterExplicitAction,
-  resolveMuteActionThreadId,
-  resolveMuteObservation,
   suppressMutedDelivery,
   suppressNotificationDelivery,
 } from "./mute";
@@ -49,151 +41,6 @@ describe("ignoresMutedConversations", () => {
   test("honours an explicit off", () => {
     expect(ignoresMutedConversations({ ignore_muted_conversations: false })).toBe(false);
     expect(ignoresMutedConversations({ ignore_muted_conversations: true })).toBe(true);
-  });
-});
-
-describe("conversationMuteFromLabel", () => {
-  test("reads mute status phrases", () => {
-    expect(conversationMuteFromLabel("Muted")).toBe(true);
-    expect(conversationMuteFromLabel("notifications muted")).toBe(true);
-    expect(conversationMuteFromLabel("Muted notifications")).toBe(true);
-    expect(conversationMuteFromLabel("Notifications are off")).toBe(true);
-    expect(conversationMuteFromLabel("Stummgeschaltet")).toBe(true);
-  });
-
-  test("treats Unmute as currently muted and Mute as currently unmuted", () => {
-    expect(conversationMuteFromLabel("Unmute")).toBe(true);
-    expect(conversationMuteFromLabel("Unmute notifications")).toBe(true);
-    expect(conversationMuteFromLabel("Mute")).toBe(false);
-    expect(conversationMuteFromLabel("Mute notifications")).toBe(false);
-    expect(conversationMuteFromLabel("Turn off notifications")).toBe(false);
-  });
-
-  test("ignores names and unrelated chrome", () => {
-    expect(conversationMuteFromLabel("Muted Group")).toBeNull();
-    expect(conversationMuteFromLabel("Mute microphone")).toBeNull();
-    expect(conversationMuteFromLabel("Unmute microphone")).toBeNull();
-    expect(conversationMuteFromLabel("Jane")).toBeNull();
-    expect(conversationMuteFromLabel("Search")).toBeNull();
-    expect(conversationMuteFromLabel("")).toBeNull();
-  });
-});
-
-describe("muteSignalFromSource", () => {
-  test("rejects avatar alt text and content labels", () => {
-    expect(
-      muteSignalFromSource({
-        value: "Muted",
-        tagName: "img",
-        attribute: "alt",
-      }),
-    ).toBeNull();
-    expect(
-      muteSignalFromSource({
-        value: "Muted",
-        tagName: "a",
-        role: "link",
-        attribute: "aria-label",
-      }),
-    ).toBeNull();
-  });
-
-  test("accepts icon status and scoped action controls", () => {
-    expect(
-      muteSignalFromSource({
-        value: "Muted",
-        tagName: "div",
-        attribute: "aria-label",
-        containsSvg: true,
-      }),
-    ).toBe(true);
-    expect(
-      muteSignalFromSource({
-        value: "Unmute notifications",
-        tagName: "div",
-        role: "menuitem",
-        attribute: "aria-label",
-      }),
-    ).toBe(true);
-    expect(
-      muteSignalFromSource({
-        value: "Mute notifications",
-        tagName: "button",
-        attribute: "aria-label",
-      }),
-    ).toBe(false);
-  });
-
-  test("uses aria-checked for stateful mute controls", () => {
-    expect(
-      muteSignalFromSource({
-        value: "Mute notifications",
-        tagName: "div",
-        role: "switch",
-        attribute: "aria-label",
-        ariaChecked: "true",
-      }),
-    ).toBe(true);
-    expect(
-      muteSignalFromSource({
-        value: "Mute notifications",
-        tagName: "div",
-        role: "menuitemcheckbox",
-        attribute: "aria-label",
-        ariaChecked: "false",
-      }),
-    ).toBe(false);
-    expect(
-      muteSignalFromSource({
-        value: "Mute notifications",
-        tagName: "div",
-        role: "switch",
-        attribute: "aria-label",
-      }),
-    ).toBeNull();
-  });
-});
-
-describe("isExplicitUnmuteAction", () => {
-  test("distinguishes an Unmute action from a muted status", () => {
-    expect(isExplicitUnmuteAction("Unmute notifications")).toBe(true);
-    expect(isExplicitUnmuteAction("Muted")).toBe(false);
-    expect(isExplicitUnmuteAction("Mute notifications")).toBe(false);
-  });
-});
-
-describe("muteStateAfterExplicitAction", () => {
-  test("mirrors both mute action directions into cached state", () => {
-    expect(muteStateAfterExplicitAction("Mute notifications")).toBe(true);
-    expect(muteStateAfterExplicitAction("Turn off notifications")).toBe(true);
-    expect(muteStateAfterExplicitAction("Unmute notifications")).toBe(false);
-    expect(muteStateAfterExplicitAction("Mute microphone")).toBeUndefined();
-    expect(muteStateAfterExplicitAction("Unmute microphone")).toBeUndefined();
-    expect(muteStateAfterExplicitAction("Notifications are off")).toBeUndefined();
-    expect(muteStateAfterExplicitAction("Muted")).toBeUndefined();
-  });
-});
-
-describe("muteStateAfterControlAction", () => {
-  test("inverts the current checked state before a toggle click is handled", () => {
-    expect(muteStateAfterControlAction("Mute notifications", "switch", "false")).toBe(true);
-    expect(muteStateAfterControlAction("Mute notifications", "switch", "true")).toBe(false);
-    expect(
-      muteStateAfterControlAction("Mute notifications", "menuitemcheckbox", null),
-    ).toBeUndefined();
-  });
-
-  test("retains ordinary button action semantics", () => {
-    expect(muteStateAfterControlAction("Mute notifications", "button", null)).toBe(true);
-    expect(muteStateAfterControlAction("Unmute notifications", "button", null)).toBe(false);
-  });
-});
-
-describe("muteSignalFromLabels", () => {
-  test("prefers a muted signal when both action kinds are present", () => {
-    expect(muteSignalFromLabels(["Mute", "Unmute"])).toBe(true);
-    expect(muteSignalFromLabels(["Mute"])).toBe(false);
-    expect(muteSignalFromLabels(["Search", "Jane"])).toBeNull();
   });
 });
 
@@ -250,32 +97,6 @@ describe("isMutedRowIconShape", () => {
       }),
     ).toBe(false);
     expect(isMutedRowIconShape({ ...mutedBell, shapeHash: 0x12345678 })).toBe(false);
-  });
-});
-
-describe("resolveMuteActionThreadId", () => {
-  test("uses the row that directly owns an action", () => {
-    expect(resolveMuteActionThreadId("row", "open", "recent", true)).toBe("row");
-  });
-
-  test("prefers the open thread for header and info surfaces", () => {
-    expect(resolveMuteActionThreadId("", "open", "unrelated-recent", true)).toBe("open");
-  });
-
-  test("uses the recent row for its portalled context menu", () => {
-    expect(resolveMuteActionThreadId("", "open", "recent", false)).toBe("recent");
-  });
-});
-
-describe("resolveMuteObservation", () => {
-  test("keeps a row without a scoped mute signal inconclusive", () => {
-    expect(resolveMuteObservation([])).toBeUndefined();
-    expect(resolveMuteObservation(["Jane"])).toBeUndefined();
-  });
-
-  test("an explicit mute signal wins", () => {
-    expect(resolveMuteObservation(["Muted"])).toBe(true);
-    expect(resolveMuteObservation(["Mute"])).toBe(false);
   });
 });
 
