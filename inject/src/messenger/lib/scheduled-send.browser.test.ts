@@ -92,6 +92,8 @@ test.skipIf(!chromium)(
             "--disable-gpu",
             "--no-sandbox",
             "--no-first-run",
+            // The confirm button follows the locale's clock: pin it.
+            "--lang=en-US",
             `--user-data-dir=${join(directory, "profile")}`,
             "--virtual-time-budget=20000",
             "--dump-dom",
@@ -525,8 +527,9 @@ async function fixtures(
         ?.value === "2026-09-23",
     );
     assert(
-      "custom confirm names the send time",
-      document.querySelector(".chatpane-schedule-primary")?.textContent === "Schedule for 18:28",
+      "custom confirm names the send time on the locale's clock",
+      document.querySelector(".chatpane-schedule-primary")?.textContent?.replace(/\s/g, " ") ===
+        "Schedule for 6:28 PM",
     );
     Date.now = realNow;
     const panel = document.querySelector<HTMLElement>(".chatpane-schedule-panel")!;
