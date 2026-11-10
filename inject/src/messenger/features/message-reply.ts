@@ -83,8 +83,16 @@ export function initMessageReply() {
       if (!target || !message) return;
       const control = target.closest(CONTROL);
       if (control && message.contains(control)) return;
-      // The double-click selected a word, or text was already selected.
-      if (getSelection()?.isCollapsed === false) return;
+      // The double-click selected a word, or text in this row was already
+      // selected. A selection elsewhere stays put on Windows; it doesn't count.
+      const selection = getSelection();
+      if (
+        selection &&
+        !selection.isCollapsed &&
+        selection.rangeCount > 0 &&
+        selection.getRangeAt(0).intersectsNode(message)
+      )
+        return;
       if (!besideInk(event.clientX, inkBoxes(message))) return;
       void pressMessageAction(message, "shared.context.reply").then((replied) => {
         if (!replied) return;

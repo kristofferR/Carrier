@@ -12,6 +12,26 @@ export const filenameFromUrl = (u: string, base: string): string => {
   }
 };
 
+/**
+ * The contents of a `data:` URL. Facebook's CSP stops `fetch()` reading one,
+ * and Messenger draws some thumbnails from them. Null when malformed.
+ */
+export function dataUrlBlob(src: string): Blob | null {
+  const match = /^data:([^,]*?)(;base64)?,(.*)$/s.exec(src);
+  if (!match) return null;
+  const [, params = "", base64, data = ""] = match;
+  const type = params.split(";")[0] || "text/plain";
+  try {
+    if (!base64) return new Blob([decodeURIComponent(data)], { type });
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return new Blob([bytes], { type });
+  } catch {
+    return null;
+  }
+}
+
 const GENERIC_DOWNLOAD_STEMS = new Set(["download", "image", "video"]);
 
 export const splitDownloadName = (name: unknown): { stem: string; ext: string } => {

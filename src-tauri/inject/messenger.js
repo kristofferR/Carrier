@@ -57,6 +57,21 @@
       return "";
     }
   };
+  function dataUrlBlob(src) {
+    const match = /^data:([^,]*?)(;base64)?,(.*)$/s.exec(src);
+    if (!match) return null;
+    const [, params = "", base64, data = ""] = match;
+    const type = params.split(";")[0] || "text/plain";
+    try {
+      if (!base64) return new Blob([decodeURIComponent(data)], { type });
+      const binary = atob(data);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return new Blob([bytes], { type });
+    } catch {
+      return null;
+    }
+  }
   var GENERIC_DOWNLOAD_STEMS = /* @__PURE__ */ new Set(["download", "image", "video"]);
   var splitDownloadName = (name) => {
     const file = String(name || "").trim().split(/[\\/]/).pop() || "";
@@ -1110,14 +1125,14 @@ ${button.innerHTML}`)
     const date = new Date(time);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }
-  function formatScheduleTime(time, now = Date.now()) {
+  function formatScheduleTime(time, now = Date.now(), locale = formatLocale()) {
     const midnight = (value) => new Date(value).setHours(0, 0, 0, 0);
     const days = Math.round((midnight(time) - midnight(now)) / 864e5);
-    return new Intl.DateTimeFormat(formatLocale(), {
+    const twelveHour = new Intl.DateTimeFormat(locale, { hour: "numeric" }).resolvedOptions().hour12;
+    return new Intl.DateTimeFormat(locale, {
       ...days === 0 ? {} : days > 0 && days < 7 ? { weekday: "short" } : { month: "short", day: "numeric" },
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23"
+      hour: twelveHour ? "numeric" : "2-digit",
+      minute: "2-digit"
     }).format(time);
   }
   function timeZoneLabel(now = Date.now()) {
@@ -4549,15 +4564,39 @@ ${button.innerHTML}`)
     const { id } = await downloadSrc(src, fallbackName, action2);
     await chatpaneShareDownload(id, fx, fy, action2);
   }
-  var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
+  async function mediaBlob(src, maxSize) {
+    const inline = src.startsWith("data:");
+    const blob = inline ? dataUrlBlob(src) : null;
+    if (inline && !blob) throw new Error("malformed data URL");
+    if (blob) {
+      if (blob.size > maxSize) throw new Error("file too large");
+      return blob;
+    }
+    const res = await fetch(src);
+    if (!res.ok) throw new Error(`fetch failed (${res.status})`);
+    if (Number(res.headers.get("content-length")) > maxSize) throw new Error("file too large");
+    const fetched = await res.blob();
+    if (fetched.size > maxSize) throw new Error("file too large");
+    return fetched;
+  }
+  async function pngBlob(blob) {
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return new Promise(
+      (resolve, reject) => canvas.toBlob(
+        (png) => png ? resolve(png) : reject(new Error("image conversion failed")),
+        "image/png"
+      )
+    );
+  }
   var copyAddress = (text2) => navigator.clipboard?.writeText(cleanSharedUrl(text2)).then(() => toast(t("shared.context.address_copied"))).catch(() => toast(t("shared.context.copy_failed")));
   var copyText = (text2) => navigator.clipboard?.writeText(text2).then(() => toast(t("shared.context.text_copied"))).catch(() => toast(t("shared.context.copy_failed")));
   async function downloadSrc(src, fallbackName, action2) {
-    const res = await fetch(src);
-    if (!res.ok) throw new Error(`download failed (${res.status})`);
-    if (oversizeByHeader(res)) throw new Error("file too large");
-    const blob = await res.blob();
-    if (blob.size > MAX_BLOB) throw new Error("file too large");
+    const blob = await mediaBlob(src, MAX_BLOB);
     const href = URL.createObjectURL(blob);
     let name = friendlyDownloadName(filenameFromUrl(src, location.href) || fallbackName);
     if (!name.includes(".")) {
@@ -4585,16 +4624,10 @@ ${button.innerHTML}`)
   }
   async function copyImageSrc(src, action2) {
     if (action2) await chatpaneClaimContextAction(action2);
-    const res = await fetch(src);
-    if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-    const maxSize = action2 ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
-    if (Number(res.headers.get("content-length")) > maxSize) {
-      throw new Error("image too large");
-    }
-    const blob = await res.blob();
-    if (blob.size > maxSize) throw new Error("image too large");
+    const blob = await mediaBlob(src, action2 ? MAX_CLIPBOARD_IMAGE : MAX_BLOB);
     if (!action2) {
-      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      const image = ClipboardItem.supports?.(blob.type) === false ? await pngBlob(blob) : blob;
+      await navigator.clipboard.write([new ClipboardItem({ [image.type]: image })]);
       return;
     }
     const dataUrl = await new NativePromise2((resolve, reject) => {
@@ -6487,6 +6520,22 @@ ${button.innerHTML}`)
     }
     return wrapped3;
   }
+  function interceptOnce(define, intercept, intercepted) {
+    const chain = intercept(
+      new Proxy(define, {
+        apply(target, thisArg, args) {
+          if (typeof args[2] === "function") intercepted.add(args[2]);
+          return Reflect.apply(target, thisArg, args);
+        }
+      })
+    );
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        const replayed = typeof args[2] === "function" && intercepted.has(args[2]);
+        return Reflect.apply(replayed ? target : chain, thisArg, args);
+      }
+    });
+  }
   function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
   }, onFacebookError = () => {
   }, onWorkerSetup = () => {
@@ -7387,6 +7436,7 @@ ${button.innerHTML}`)
     const page = window;
     const shouldBlockTelemetry = () => window.__CHATPANE_SETTINGS__?.block_telemetry === true;
     const wrappedDefines = /* @__PURE__ */ new WeakSet();
+    const interceptedFactories = /* @__PURE__ */ new WeakSet();
     const searchIndex = new FacebookFTSIdleCoordinator();
     const nicknamePreference = {
       getSnapshot: () => nicknameMode(window.__CHATPANE_SETTINGS__),
@@ -7424,25 +7474,27 @@ ${button.innerHTML}`)
     );
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
-      const wrapped3 = createFacebookModuleDefineInterceptor(
-        interceptNotificationModules(
-          interceptSoundModules(value)
+      const wrapped3 = interceptOnce(
+        value,
+        (define) => createFacebookModuleDefineInterceptor(
+          interceptNotificationModules(interceptSoundModules(define)),
+          shouldBlockTelemetry,
+          (restore2) => searchIndex.register(restore2),
+          (error) => {
+            if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
+          },
+          (exports) => workerRecovery.observeSetupExports(exports),
+          (exports) => syncProcessing.observeLogger(exports),
+          (exports) => {
+            workerRecovery.observeLifecycleExports(exports);
+            workerReplacement.observeLifecycleExports(exports);
+          },
+          // macOS keeps Messenger's encrypted engine per window (#295), unless a
+          // second window moved the session onto Facebook's shared engine.
+          /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
+          nicknamePreference
         ),
-        shouldBlockTelemetry,
-        (restore2) => searchIndex.register(restore2),
-        (error) => {
-          if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
-        },
-        (exports) => workerRecovery.observeSetupExports(exports),
-        (exports) => syncProcessing.observeLogger(exports),
-        (exports) => {
-          workerRecovery.observeLifecycleExports(exports);
-          workerReplacement.observeLifecycleExports(exports);
-        },
-        // macOS keeps Messenger's encrypted engine per window (#295), unless a
-        // second window moved the session onto Facebook's shared engine.
-        /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
-        nicknamePreference
+        interceptedFactories
       );
       wrappedDefines.add(wrapped3);
       return wrapped3;
@@ -9099,7 +9151,9 @@ ${button.innerHTML}`)
         if (!target || !message) return;
         const control2 = target.closest(CONTROL);
         if (control2 && message.contains(control2)) return;
-        if (getSelection()?.isCollapsed === false) return;
+        const selection = getSelection();
+        if (selection && !selection.isCollapsed && selection.rangeCount > 0 && selection.getRangeAt(0).intersectsNode(message))
+          return;
         if (!besideInk(event.clientX, inkBoxes(message))) return;
         void pressMessageAction(message, "shared.context.reply").then((replied) => {
           if (!replied) return;
