@@ -111,10 +111,11 @@ every other language in `docs/i18n/*.json`, and screenshots in
 Skip this step only when nothing in What's New belongs on the page, and say so
 when you hand off the release.
 
-Add a `<release>` entry with a short summary of the draft to
-`src-tauri/linux/app.chatpane.Chatpane.metainfo.xml` in the version-bump
-commit. Linux software centers show it, and CI and the release workflow fail
-until the newest entry matches the version (`scripts/check-metainfo-release.sh`).
+Linux software centers show release notes from the AppStream metadata. The
+release workflow copies the draft's opening paragraph, **What's New** and
+**Bug Fixes** into the packaged metainfo (`scripts/release/metainfo.ts`), so
+don't add `<release>` entries to
+`src-tauri/linux/app.chatpane.Chatpane.metainfo.xml` by hand.
 
 `.github/workflows/release.yml` requires a non-empty curated draft, builds 6
 targets, signs + notarizes macOS, attaches artifacts without rewriting the title
