@@ -6487,6 +6487,22 @@ ${button.innerHTML}`)
     }
     return wrapped3;
   }
+  function interceptOnce(define, intercept, intercepted) {
+    const chain = intercept(
+      new Proxy(define, {
+        apply(target, thisArg, args) {
+          if (typeof args[2] === "function") intercepted.add(args[2]);
+          return Reflect.apply(target, thisArg, args);
+        }
+      })
+    );
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        const replayed = typeof args[2] === "function" && intercepted.has(args[2]);
+        return Reflect.apply(replayed ? target : chain, thisArg, args);
+      }
+    });
+  }
   function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
   }, onFacebookError = () => {
   }, onWorkerSetup = () => {
@@ -7387,6 +7403,7 @@ ${button.innerHTML}`)
     const page = window;
     const shouldBlockTelemetry = () => window.__CHATPANE_SETTINGS__?.block_telemetry === true;
     const wrappedDefines = /* @__PURE__ */ new WeakSet();
+    const interceptedFactories = /* @__PURE__ */ new WeakSet();
     const searchIndex = new FacebookFTSIdleCoordinator();
     const nicknamePreference = {
       getSnapshot: () => nicknameMode(window.__CHATPANE_SETTINGS__),
@@ -7424,25 +7441,27 @@ ${button.innerHTML}`)
     );
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
-      const wrapped3 = createFacebookModuleDefineInterceptor(
-        interceptNotificationModules(
-          interceptSoundModules(value)
+      const wrapped3 = interceptOnce(
+        value,
+        (define) => createFacebookModuleDefineInterceptor(
+          interceptNotificationModules(interceptSoundModules(define)),
+          shouldBlockTelemetry,
+          (restore2) => searchIndex.register(restore2),
+          (error) => {
+            if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
+          },
+          (exports) => workerRecovery.observeSetupExports(exports),
+          (exports) => syncProcessing.observeLogger(exports),
+          (exports) => {
+            workerRecovery.observeLifecycleExports(exports);
+            workerReplacement.observeLifecycleExports(exports);
+          },
+          // macOS keeps Messenger's encrypted engine per window (#295), unless a
+          // second window moved the session onto Facebook's shared engine.
+          /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
+          nicknamePreference
         ),
-        shouldBlockTelemetry,
-        (restore2) => searchIndex.register(restore2),
-        (error) => {
-          if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
-        },
-        (exports) => workerRecovery.observeSetupExports(exports),
-        (exports) => syncProcessing.observeLogger(exports),
-        (exports) => {
-          workerRecovery.observeLifecycleExports(exports);
-          workerReplacement.observeLifecycleExports(exports);
-        },
-        // macOS keeps Messenger's encrypted engine per window (#295), unless a
-        // second window moved the session onto Facebook's shared engine.
-        /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
-        nicknamePreference
+        interceptedFactories
       );
       wrappedDefines.add(wrapped3);
       return wrapped3;
