@@ -5,6 +5,7 @@
 // roles and aria-labels. Every lookup bails quietly when the control is
 // missing — Facebook reshuffles its markup often, and none of these exist on
 // the login page.
+import { emojiGlyph, SYSTEM_EMOJI_GLYPH_ATTR } from "../lib/emoji";
 import { SEPARATOR_RE } from "../lib/threads";
 
 export function isShown(el: Element): boolean {
@@ -32,14 +33,30 @@ export function buttonByLabel(needles: string[], root?: ParentNode): HTMLElement
   return null;
 }
 
+/** An element's text, with Facebook's emoji images read back as emoji. A
+ * group named "Trip 🏔️" otherwise reads as "Trip". System Emoji's glyphs
+ * repeat those images, so they're skipped. */
+function textWithEmoji(el: Element): string {
+  let text = "";
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node instanceof Text) {
+      if (!node.parentElement?.closest(`[${SYSTEM_EMOJI_GLYPH_ATTR}]`)) text += node.data;
+    } else if (node instanceof HTMLImageElement) {
+      text += emojiGlyph(node.getAttribute("alt"));
+    }
+  }
+  return text;
+}
+
 /** A chat-list row's display name, from its link or anything around it.
  * Facebook's class names are hashed and unstable, so take the row's first
  * span with real text: the name renders before the preview and timestamp. */
 export function chatRowName(el: Element): string {
   const row = el.closest('[role="row"]') || el;
   for (const span of row.querySelectorAll("span")) {
-    const text = (span.textContent || "").replace(/\s+/g, " ").trim();
-    if (text && !SEPARATOR_RE.test(text)) return text.slice(0, 60);
+    const text = textWithEmoji(span).replace(/\s+/g, " ").trim();
+    if (text && !SEPARATOR_RE.test(text)) return [...text].slice(0, 60).join("");
   }
   return "";
 }

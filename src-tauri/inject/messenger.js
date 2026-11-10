@@ -886,6 +886,25 @@
     }
   };
 
+  // inject/src/messenger/lib/emoji.ts
+  var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
+  var SYSTEM_EMOJI_GLYPH_ATTR = "data-chatpane-system-emoji-glyph";
+  var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
+  var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
+  var KEYCAP_RE = /[#*0-9]️?⃣/gu;
+  function emojiGlyph(value) {
+    const text2 = String(value || "").trim();
+    if (/^\(y\)$/i.test(text2)) return "👍";
+    if (!text2 || text2.length > 24 || !EMOJI_TEXT_RE.test(text2)) return "";
+    if (LABEL_TEXT_RE.test(text2.replace(KEYCAP_RE, ""))) return "";
+    return text2;
+  }
+  function isReactionMenuShape(children) {
+    if (children.length < 6 || children.length > 9) return false;
+    const addButton = children.at(-1);
+    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
+  }
+
   // inject/src/messenger/features/conversation-actions.ts
   function isShown(el) {
     const r = el.getBoundingClientRect();
@@ -905,11 +924,23 @@
     }
     return null;
   }
+  function textWithEmoji(el) {
+    let text2 = "";
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node instanceof Text) {
+        if (!node.parentElement?.closest(`[${SYSTEM_EMOJI_GLYPH_ATTR}]`)) text2 += node.data;
+      } else if (node instanceof HTMLImageElement) {
+        text2 += emojiGlyph(node.getAttribute("alt"));
+      }
+    }
+    return text2;
+  }
   function chatRowName(el) {
     const row = el.closest('[role="row"]') || el;
     for (const span of row.querySelectorAll("span")) {
-      const text2 = (span.textContent || "").replace(/\s+/g, " ").trim();
-      if (text2 && !SEPARATOR_RE.test(text2)) return text2.slice(0, 60);
+      const text2 = textWithEmoji(span).replace(/\s+/g, " ").trim();
+      if (text2 && !SEPARATOR_RE.test(text2)) return [...text2].slice(0, 60).join("");
     }
     return "";
   }
@@ -3678,25 +3709,6 @@ ${button.innerHTML}`)
   }
   function pointerActivationIsSound(expected, current2, x, y) {
     return rectsMatch(expected, current2) && pointInRect(current2, x, y);
-  }
-
-  // inject/src/messenger/lib/emoji.ts
-  var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
-  var SYSTEM_EMOJI_GLYPH_ATTR = "data-chatpane-system-emoji-glyph";
-  var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
-  var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
-  var KEYCAP_RE = /[#*0-9]️?⃣/gu;
-  function emojiGlyph(value) {
-    const text2 = String(value || "").trim();
-    if (/^\(y\)$/i.test(text2)) return "👍";
-    if (!text2 || text2.length > 24 || !EMOJI_TEXT_RE.test(text2)) return "";
-    if (LABEL_TEXT_RE.test(text2.replace(KEYCAP_RE, ""))) return "";
-    return text2;
-  }
-  function isReactionMenuShape(children) {
-    if (children.length < 6 || children.length > 9) return false;
-    const addButton = children.at(-1);
-    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
   }
 
   // inject/src/messenger/lib/message-menu.ts
