@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { markThreadRead, reactToMessage } from "./notification-actions";
+import { markThreadRead, muteThread, reactToMessage } from "./notification-actions";
 
 // I64 values are strings in these fakes.
 const i64 = {
@@ -64,6 +64,12 @@ function harness({ secure = false, v2 = false } = {}) {
     useIsReactionsV2Enabled: { isReactionsV2Enabled: () => v2 },
     LSFactory: (t: unknown) => ({ factory: t }),
     LSOptimisticUpsertReactionStoredProcedure: record("upsert", Promise.resolve()),
+    LSIntEnum: { ofNumber: (value: number) => `enum:${value}` },
+    LSOptimisticMuteThreadStoredProcedure: (_factory: unknown, args: Record<string, unknown>) => {
+      calls.push({ name: "mute", args: [args] });
+      threads[String(args.threadKey)]!.muteExpireTimeMs = args.muteExpireTimeMs;
+      return Promise.resolve();
+    },
   };
   const load = (name: string) => {
     if (!(name in modules)) throw new Error(`no ${name}`);
@@ -210,5 +216,51 @@ describe("reactToMessage", () => {
     expect(await reactToMessage(h.load, request)).toBe("bridge-refused");
     delete h.modules.MAWBridgeSendAndReceive;
     await expect(reactToMessage(h.load, request)).rejects.toThrow();
+  });
+});
+
+describe("muteThread", () => {
+  test("mutes until the given time through Messenger's procedure, then confirms", async () => {
+    const h = harness();
+    expect(await muteThread(h.load, "123", 5_000, Date.now() + 1000)).toBe("ok");
+    expect(h.calls).toEqual([
+      {
+        name: "mute",
+        args: [{ mailboxType: "enum:0", muteExpireTimeMs: "5000", threadKey: "123" }],
+      },
+    ]);
+  });
+
+  test("keeps a longer or endless mute as it is", async () => {
+    const h = harness();
+    h.threads["123"]!.muteExpireTimeMs = "-1";
+    expect(await muteThread(h.load, "123", 5_000, Date.now() + 1000)).toBe("kept");
+    h.threads["123"]!.muteExpireTimeMs = "9000";
+    expect(await muteThread(h.load, "123", 5_000, Date.now() + 1000)).toBe("kept");
+    expect(h.calls).toEqual([]);
+  });
+
+  test("never mutes past the deadline, and reports a missing chat", async () => {
+    const h = harness();
+    expect(await muteThread(h.load, "123", 5_000, 0)).toBe("expired");
+    expect(h.calls).toEqual([]);
+    expect(await muteThread(h.load, "404", 5_000, Date.now() + 1000)).toBe("thread-missing");
+  });
+
+  test("reports a mute the row never shows", async () => {
+    const h = harness();
+    h.modules.LSOptimisticMuteThreadStoredProcedure = () => Promise.resolve();
+    let now = Date.now();
+    const deadline = now + 1000;
+    const wait = async () => {
+      now += 600;
+    };
+    const realNow = Date.now;
+    Date.now = () => now;
+    try {
+      expect(await muteThread(h.load, "123", 5_000, deadline, wait)).toBe("not-confirmed");
+    } finally {
+      Date.now = realNow;
+    }
   });
 });

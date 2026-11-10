@@ -3868,7 +3868,13 @@
           : links[Number(selector)];
       if (!link) return { found: false, rows: links.length };
       var row = link.closest('[role="row"]');
-      var button = row && row.querySelector('[aria-haspopup="menu"][aria-label^="More options for "]');
+      // The row's menu button sits in a gridcell beside the link's (any language).
+      var linkCell = link.closest('[role="gridcell"]');
+      var button = row
+        ? Array.prototype.find.call(row.querySelectorAll('[aria-haspopup="menu"]'), function (b) {
+            return b.closest('[role="gridcell"]') !== linkCell;
+          }) || null
+        : null;
       var weights = Array.prototype.map.call(link.querySelectorAll("span"), function (span) {
         return Number(getComputedStyle(span).fontWeight) || 0;
       });
