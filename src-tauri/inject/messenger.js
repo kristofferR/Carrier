@@ -4422,6 +4422,12 @@ ${button.innerHTML}`)
     }
     return out;
   }
+  function parsePinnedSnapshot(value) {
+    if (!value || typeof value !== "object") return null;
+    const { revision: revision2, pins } = value;
+    if (typeof revision2 !== "number" || !Number.isSafeInteger(revision2)) return null;
+    return { revision: revision2, pins: parsePinnedChats(pins) };
+  }
   function withPin(list, chat) {
     if (!THREAD_ID_RE.test(chat.id) || list.length >= MAX_PINNED_CHATS) return list;
     if (list.some((pin) => pin.id === chat.id)) return list;
@@ -4966,15 +4972,23 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/pinned-chats.ts
-  var EVENT = "chatpane:pinned-chats";
   var CHANGED_EVENT = "chatpane:pinned-chats-changed";
   var account = null;
+  var revision = 0;
+  function sync(pins) {
+    const owner = account;
+    if (!owner || typeof chatpanePinnedChats !== "function") return;
+    chatpanePinnedChats(pins ? { account: owner, pins: [...pins] } : { account: owner }).then((data) => {
+      const snapshot = parsePinnedSnapshot(data);
+      if (!snapshot || owner !== account || snapshot.revision <= revision) return;
+      revision = snapshot.revision;
+      pinnedChats.replace(snapshot.pins);
+    }).catch(() => diag("pinned-chats.sync", "request failed"));
+  }
   function save(next) {
     if (!account) return;
     pinnedChats.replace(next);
-    invoke("plugin:event|emit", { event: EVENT, payload: { account, pins: next } })?.catch?.(
-      () => diag("pinned-chats.save", "emit failed")
-    );
+    sync(next);
   }
   function isChatPinned(id) {
     return pinnedChats.getIds().has(id);
@@ -5004,15 +5018,8 @@ ${button.innerHTML}`)
     if (!window.__TAURI_INTERNALS__) return;
     account = accountId(document.cookie);
     if (!account) return;
-    window.addEventListener(CHANGED_EVENT, (event) => {
-      const detail = event.detail;
-      if (!detail || typeof detail !== "object") return;
-      const { account: owner, pins } = detail;
-      if (owner === account) pinnedChats.replace(parsePinnedChats(pins));
-    });
-    invoke("plugin:event|emit", { event: EVENT, payload: { account } })?.catch?.(
-      () => diag("pinned-chats.load", "emit failed")
-    );
+    window.addEventListener(CHANGED_EVENT, () => sync());
+    sync();
   }
 
   // inject/src/messenger/features/context-menu.ts
@@ -12973,7 +12980,7 @@ ${button.innerHTML}`)
     };
     let searchedLog = null;
     let sidesStale = true;
-    const sync = () => {
+    const sync2 = () => {
       if (document.hidden || !attachStyles()) return;
       if (!isMessengerContentPath(location.pathname)) {
         edges.list.remove();
@@ -13011,13 +13018,13 @@ ${button.innerHTML}`)
       placeEdge("list", list, main2);
       placeEdge("details", details, row?.firstElementChild ?? null);
     };
-    setInterval(sync, 1e3);
+    setInterval(sync2, 1e3);
     document.addEventListener(
       "click",
       () => {
         searchedLog = null;
-        setTimeout(sync, 50);
-        setTimeout(sync, 400);
+        setTimeout(sync2, 50);
+        setTimeout(sync2, 400);
       },
       { capture: true, passive: true }
     );
@@ -13029,7 +13036,7 @@ ${button.innerHTML}`)
       },
       { passive: true }
     );
-    document.addEventListener("visibilitychange", sync);
+    document.addEventListener("visibilitychange", sync2);
   }
 
   // inject/src/messenger/lib/passkey-login.ts
@@ -14905,7 +14912,7 @@ ${text2}`)) {
   var CHATS_ATTR2 = "data-chatpane-chats";
   function initSelection() {
     const html = document.documentElement;
-    const sync = () => {
+    const sync2 = () => {
       const onChats = isMessengerContentPath(location.pathname);
       if (html.hasAttribute(CHATS_ATTR2) !== onChats) html.toggleAttribute(CHATS_ATTR2, onChats);
     };
@@ -14913,12 +14920,12 @@ ${text2}`)) {
       const original = history[method2];
       history[method2] = function(...args) {
         const result = original.apply(this, args);
-        sync();
+        sync2();
         return result;
       };
     }
-    window.addEventListener("popstate", sync);
-    sync();
+    window.addEventListener("popstate", sync2);
+    sync2();
     const pageSelectAll = (target) => html.hasAttribute(CHATS_ATTR2) && !html.hasAttribute("data-chatpane-login") && (target === document.body || target === html);
     document.addEventListener(
       "selectstart",

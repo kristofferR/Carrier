@@ -47,6 +47,13 @@ declare const chatpaneScheduledSend: (
   request: import("./messenger/lib/scheduled-send").ScheduleRequest,
 ) => Promise<import("./messenger/lib/scheduled-send").ScheduleResponse>;
 
+/** Ask native code for an account's pinned chats, or save them; resolves with
+ * the account's pins as native code keeps them (pinned_chats.rs). */
+declare const chatpanePinnedChats: (request: {
+  account: string;
+  pins?: import("./messenger/lib/pinned-chats").PinnedChat[];
+}) => Promise<unknown>;
+
 declare const chatpaneMediaPlatform: "macos" | "windows" | "linux";
 type ChatpaneMediaPermissionState =
   | "unknown"

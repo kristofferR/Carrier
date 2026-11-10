@@ -4,6 +4,7 @@ import {
   MAX_PINNED_CHATS,
   MAX_PINNED_NAME_CHARS,
   parsePinnedChats,
+  parsePinnedSnapshot,
   withName,
   withoutPin,
   withPin,
@@ -28,6 +29,15 @@ describe("pinned chats", () => {
     expect(parsePinnedChats({ id: "1" })).toEqual([]);
     const many = Array.from({ length: MAX_PINNED_CHATS + 3 }, (_, i) => ({ id: `${i}`, name: "" }));
     expect(parsePinnedChats(many)).toHaveLength(MAX_PINNED_CHATS);
+  });
+
+  test("reads native snapshots only when they carry a revision", () => {
+    expect(
+      parsePinnedSnapshot({ revision: 3, pins: [{ id: "1", name: "Ada" }, { id: "x" }] }),
+    ).toEqual({ revision: 3, pins: [{ id: "1", name: "Ada" }] });
+    expect(parsePinnedSnapshot({ pins: [] })).toBeNull();
+    expect(parsePinnedSnapshot({ revision: "3", pins: [] })).toBeNull();
+    expect(parsePinnedSnapshot(null)).toBeNull();
   });
 
   test("pins last, unpins, and renames without changing what didn't change", () => {

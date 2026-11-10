@@ -1,8 +1,9 @@
 //! Pinned chats (Ref #457): the conversations pinned to the top of the chat
 //! list, per Facebook account, each with the name the chat list last showed.
-//! The page asks for an account's pins, or saves them, on
-//! `chatpane:pinned-chats`; the result goes to every Messenger window on
-//! `chatpane:pinned-chats-changed` (inject/src/messenger/features/pinned-chats.ts).
+//! The page asks for an account's pins, or saves them, with a signed
+//! `chatpane:pinned-chats` request and gets the account's pins back signed;
+//! a change sends the other Messenger windows `chatpane:pinned-chats-changed`
+//! to ask again (inject/src/messenger/features/pinned-chats.ts).
 //! They name conversations, so they live in their own file, which Log Out
 //! deletes, rather than in settings.json.
 
@@ -173,7 +174,10 @@ pub(crate) fn account_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Request {
+    /// The page's token for the signed reply.
+    request: String,
     account: String,
     /// Absent to ask for the account's pins.
     pins: Option<serde_json::Value>,
@@ -182,15 +186,43 @@ struct Request {
 struct PinnedChats {
     path: PathBuf,
     store: Store,
+    /// Rises with every change, so a page can drop a snapshot older than the
+    /// one it has.
+    revision: u64,
 }
 
-fn push_to_messenger_windows(app: &tauri::AppHandle, account: &str, pins: &[Pin]) {
-    let detail = serde_json::json!({ "account": account, "pins": pins });
-    let script = format!(
-        "window.dispatchEvent(new CustomEvent('{CHANGED_EVENT}', {{ detail: {detail} }}));"
-    );
+#[derive(Serialize)]
+struct Reply<'a> {
+    request: &'a str,
+    data: String,
+}
+
+/// Answer the requesting window only, signed with its secret (the page checks
+/// it with `chatpaneVerifyResult`).
+fn reply(app: &tauri::AppHandle, label: &str, request: &str, data: String) {
+    let event = format!("{EVENT}-result");
+    let reply = Reply { request, data };
+    let signature = app
+        .state::<crate::AppState>()
+        .download_reveal_tokens
+        .lock()
+        .unwrap()
+        .get(label)
+        .and_then(|secret| crate::result_signature(secret, &event, &reply));
+    if let (Some(signature), Some(window)) = (signature, app.get_webview_window(label)) {
+        let detail = serde_json::json!({ "request": reply.request, "data": reply.data, "signature": signature });
+        let _ = window.eval(format!(
+            "window.dispatchEvent(new CustomEvent('{event}', {{ detail: {detail} }}));"
+        ));
+    }
+}
+
+/// Tell the other Messenger windows to ask again. It carries nothing, so a
+/// page script faking it only causes a signed request.
+fn announce_change(app: &tauri::AppHandle, except: &str) {
+    let script = format!("window.dispatchEvent(new Event('{CHANGED_EVENT}'));");
     for (label, window) in app.webview_windows() {
-        if crate::window::is_messenger_window_label(&label) {
+        if label != except && crate::window::is_messenger_window_label(&label) {
             let _ = window.eval(&script);
         }
     }
@@ -204,32 +236,54 @@ pub(crate) fn install(app: &tauri::AppHandle) {
     let store = std::fs::read(&path)
         .map(|json| Store::from_json(&json))
         .unwrap_or_default();
-    app.manage(Mutex::new(PinnedChats { path, store }));
+    app.manage(Mutex::new(PinnedChats {
+        path,
+        store,
+        revision: 1,
+    }));
     let handle = app.clone();
     app.listen_any(EVENT, move |event| {
-        // The payload comes from the remote-origin page: untrusted.
-        let Ok(request) = serde_json::from_str::<Request>(event.payload()) else {
+        // Any script on a granted origin can emit this event, so only
+        // Chatpane's signed requests are answered.
+        let Ok(signed) = serde_json::from_str::<crate::SignedAction>(event.payload()) else {
             return;
         };
-        if !crate::scheduled_send::valid_account(&request.account) {
+        let Some(label) = crate::signed_action_window(&handle, EVENT, &signed) else {
+            return;
+        };
+        let Ok(request) = serde_json::from_str::<Request>(&signed.message) else {
+            return;
+        };
+        if request.request.len() != 32
+            || !request.request.bytes().all(|b| b.is_ascii_hexdigit())
+            || !crate::scheduled_send::valid_account(&request.account)
+        {
             return;
         }
         let handle = handle.clone();
         tauri::async_runtime::spawn_blocking(move || {
             let state = handle.state::<Mutex<PinnedChats>>();
-            let pins = {
-                let mut pinned = state.lock().unwrap();
-                if let Some(value) = &request.pins {
-                    let pins = pins_from_value(value);
-                    if pinned.store.set(&request.account, pins)
-                        && let Err(e) = save(&pinned.path, &pinned.store)
-                    {
-                        log::error!("failed to save pinned chats: {e}");
-                    }
+            // Answer under the lock, so snapshots leave in the order they were made.
+            let mut pinned = state.lock().unwrap();
+            let mut changed = false;
+            if let Some(value) = &request.pins
+                && pinned.store.set(&request.account, pins_from_value(value))
+            {
+                changed = true;
+                pinned.revision += 1;
+                if let Err(e) = save(&pinned.path, &pinned.store) {
+                    log::error!("failed to save pinned chats: {e}");
                 }
-                pinned.store.get(&request.account)
-            };
-            push_to_messenger_windows(&handle, &request.account, &pins);
+            }
+            let data = serde_json::json!({
+                "revision": pinned.revision,
+                "pins": pinned.store.get(&request.account),
+            })
+            .to_string();
+            reply(&handle, &label, &request.request, data);
+            if changed {
+                announce_change(&handle, &label);
+            }
         });
     });
 }

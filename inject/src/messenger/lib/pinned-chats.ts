@@ -38,6 +38,16 @@ export function parsePinnedChats(value: unknown): PinnedChat[] {
   return out;
 }
 
+/** A native snapshot of an account's pins, or null when it isn't one. */
+export function parsePinnedSnapshot(
+  value: unknown,
+): { revision: number; pins: PinnedChat[] } | null {
+  if (!value || typeof value !== "object") return null;
+  const { revision, pins } = value as Record<string, unknown>;
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision)) return null;
+  return { revision, pins: parsePinnedChats(pins) };
+}
+
 /** `list` with `chat` pinned last, or `list` itself when it can't be added. */
 export function withPin(list: readonly PinnedChat[], chat: PinnedChat): readonly PinnedChat[] {
   if (!THREAD_ID_RE.test(chat.id) || list.length >= MAX_PINNED_CHATS) return list;
