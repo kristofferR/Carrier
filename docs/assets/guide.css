@@ -30,6 +30,7 @@
   --raised-accent: var(--grad-b);
   --raised-tile: #f2f6fb;
   --raised-icon: #1d2129;
+  --chip: rgba(255, 255, 255, .94);
   color-scheme: light;
   --shadow-soft: 0 8px 30px -12px rgba(15, 60, 130, .18);
   --shadow-card: 0 14px 40px -18px rgba(15, 60, 130, .22);
@@ -64,6 +65,7 @@
     --raised-accent: #5cabff;
     --raised-tile: #1c2a3d;
     --raised-icon: #e6edf6;
+    --chip: rgba(15, 26, 41, .94);
     --shadow-soft: 0 8px 30px -12px rgba(0, 0, 0, .6);
     --shadow-card: 0 14px 40px -18px rgba(0, 0, 0, .7);
   }
@@ -140,7 +142,7 @@ code {
 .crumbs a { color: #fff; }
 .hero-chip {
   display: inline-flex; align-items: center; gap: .45rem; margin-top: 1rem;
-  background: rgba(255,255,255,.94); color: var(--grad-b);
+  background: var(--chip); color: var(--raised-accent);
   font-weight: 700; font-size: .88rem;
   padding: .42rem 1rem; border-radius: 999px;
 }

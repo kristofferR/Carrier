@@ -116,6 +116,7 @@
     --raised-accent: var(--grad-b);
     --raised-tile: #f2f6fb;
     --raised-icon: #1d2129;
+    --chip: rgba(255, 255, 255, .94);
     color-scheme: light;
     --shadow-soft: 0 8px 30px -12px rgba(15, 60, 130, .18);
     --shadow-card: 0 14px 40px -18px rgba(15, 60, 130, .22);
@@ -151,6 +152,7 @@
       --raised-accent: #5cabff;
       --raised-tile: #1c2a3d;
       --raised-icon: #e6edf6;
+      --chip: rgba(15, 26, 41, .94);
       --shadow-soft: 0 8px 30px -12px rgba(0, 0, 0, .6);
       --shadow-card: 0 14px 40px -18px rgba(0, 0, 0, .7);
     }
@@ -288,7 +290,7 @@
   .hero-chip {
     display: inline-flex; align-items: center; gap: .45rem;
     margin-top: 1rem;
-    background: rgba(255,255,255,.94); color: var(--grad-b);
+    background: var(--chip); color: var(--raised-accent);
     font-weight: 700; font-size: .88rem;
     padding: .42rem 1rem; border-radius: 999px;
   }
@@ -1059,22 +1061,32 @@
 
   /* With the window in a dark theme, the notifications switch to the OS's
      dark mode too: macOS dark material, Windows 11 dark, Breeze Dark. */
-  .win-stage[data-win-theme="dark"] .toast {
+  :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast {
     background: rgba(44, 44, 46, .94); border-color: rgba(255, 255, 255, .14); color: #f5f5f7;
   }
-  .win-stage[data-win-theme="dark"] .toast .t-now { color: rgba(235, 235, 245, .6); }
-  .win-stage[data-win-theme="dark"] .toast .t-msg { color: rgba(245, 245, 247, .88); }
-  .win-stage[data-win-theme="dark"] .toast .t-app { box-shadow: 0 0 0 1.5px rgba(44, 44, 46, .94); }
-  html[data-os="windows"] .win-stage[data-win-theme="dark"] .toast { background: #1c1c1c; color: #fff; }
-  html[data-os="windows"] .win-stage[data-win-theme="dark"] .toast::before { color: inherit; }
-  html[data-os="windows"] .win-stage[data-win-theme="dark"] .toast::after { background: rgba(255, 255, 255, .72); }
-  html[data-os="windows"] .win-stage[data-win-theme="dark"] .toast .t-msg { color: #cbcbcb; }
-  html[data-os="windows"] .win-stage[data-win-theme="dark"] .toast .t-app { box-shadow: none; }
-  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast { background: #202326; border-color: rgba(252, 252, 252, .12); color: #fcfcfc; }
-  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast::before { color: rgba(252, 252, 252, .7); }
-  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast::after { color: rgba(252, 252, 252, .6); }
-  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast .t-msg { color: #fcfcfc; }
-  html[data-os="linux"] .win-stage[data-win-theme="dark"] .toast .t-app { box-shadow: none; }
+  :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-now { color: rgba(235, 235, 245, .6); }
+  :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-msg { color: rgba(245, 245, 247, .88); }
+  :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-app { box-shadow: 0 0 0 1.5px rgba(44, 44, 46, .94); }
+  html[data-os="windows"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast { background: #1c1c1c; color: #fff; }
+  html[data-os="windows"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast::before { color: inherit; }
+  html[data-os="windows"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast::after { background: rgba(255, 255, 255, .72); }
+  html[data-os="windows"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-msg { color: #cbcbcb; }
+  html[data-os="windows"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-app { box-shadow: none; }
+  html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast { background: #202326; border-color: rgba(252, 252, 252, .12); color: #fcfcfc; }
+  html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast::before { color: rgba(252, 252, 252, .7); }
+  html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast::after { color: rgba(252, 252, 252, .6); }
+  html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-msg { color: #fcfcfc; }
+  html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-app { box-shadow: none; }
+  /* The demos further down show the app in the visitor's own scheme: the page
+     script sets data-win-theme on them. Only the notifications demo has
+     actions, so these extend the hero's dark toasts. */
+  html:not([data-os]) .notif-demo[data-win-theme="dark"] .toast .t-close { background: rgba(58, 58, 60, .96); color: rgba(255, 255, 255, .75); }
+  html:not([data-os]) .notif-demo[data-win-theme="dark"] .toast .t-options { background: rgba(255, 255, 255, .12); color: #f5f5f7; }
+  html:not([data-os]) .notif-demo[data-win-theme="dark"] .toast .t-menu { background: rgba(40, 40, 42, .96); border-color: rgba(255, 255, 255, .12); color: #f5f5f7; }
+  html[data-os="windows"] .notif-demo[data-win-theme="dark"] .toast .t-input { background: #292929; border-color: #2c2c2c; border-bottom-color: #989898 !important; color: #cecece; }
+  html[data-os="windows"] .notif-demo[data-win-theme="dark"] .toast .t-send { background: #262626; border-color: #2c2c2c; color: #757575; }
+  html[data-os="windows"] .notif-demo[data-win-theme="dark"] .toast .t-actions span { background: #292929; border-color: #383838; border-top-color: #3d3d3d; color: #fff; }
+  html[data-os="linux"] .notif-demo[data-win-theme="dark"] .toast .t-actions span { background: #292c30; border-color: rgba(252, 252, 252, .2); color: #fcfcfc; }
 
   /* ---------- Sections shared ---------- */
   section { padding-block: clamp(2.75rem, 6vw, 4.75rem); }
@@ -1218,6 +1230,13 @@
     display: flex; flex-direction: column;
   }
   .sd-head .who { font-weight: 600; }
+  .sched-demo[data-win-theme="dark"] .sd-chat {
+    --w-surface: #242526; --w-hairline: rgba(255, 255, 255, .10); --w-text: #e4e6eb; --w-text2: #b0b3b8;
+    --w-composer-pill: #333334; --w-pill-text: #b0b3b8;
+    background: #242526; color: #e4e6eb;
+  }
+  .sched-demo[data-win-theme="dark"] .sd-draft { color: #e4e6eb; }
+  .sched-demo[data-win-theme="dark"] .chatpane-schedule-panel { --schedule-surface: #242526; --schedule-text: #e4e6eb; --schedule-muted: #b0b3b8; }
   .sd-body { position: relative; height: 380px; }
   .sd-input { padding-inline-end: 76px; }
   .sd-draft { color: #080809; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1324,6 +1343,11 @@
   .md-row { padding-block: 6px; padding-inline: 6px 14px; border-radius: 999px; }
   .md-row b { font-weight: 600; }
   .md-av { width: 30px; height: 30px; font-size: 11px; }
+  .menu-demo[data-win-theme="dark"] .md-bubble span { background: #303030; color: #e4e6eb; }
+  .menu-demo[data-win-theme="dark"] .md-row { background: #242526; color: #e4e6eb; }
+  .menu-demo[data-win-theme="dark"] .ctx-menu { background: rgba(40, 40, 42, .96); border-color: rgba(255, 255, 255, .14); color: #f5f5f7; }
+  .menu-demo[data-win-theme="dark"] .ctx-menu .chev { color: rgba(255, 255, 255, .5); }
+  .menu-demo[data-win-theme="dark"] .ctx-menu hr { border-top-color: rgba(255, 255, 255, .12); }
   .ctx-menu {
     margin-inline-start: 18px; width: 196px; padding: 5px;
     background: rgba(246, 246, 248, .98);
@@ -1499,7 +1523,7 @@
   .download .sec-sub { color: #fff; margin-inline: auto; }
   .version-pill {
     display: inline-block; margin-top: 1.1rem;
-    background: rgba(255,255,255,.94); color: var(--grad-b);
+    background: var(--chip); color: var(--raised-accent);
     padding: .38rem 1.05rem; border-radius: 999px;
     font-weight: 800; font-size: .88rem;
     font-family: var(--font-display);
@@ -1553,7 +1577,7 @@
   .dl .rec-chip {
     display: none;
     position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
-    background: #fff; color: var(--grad-b);
+    background: var(--raised); color: var(--raised-accent);
     border: 2px solid var(--grad-b);
     font-size: .74rem; font-weight: 800; font-family: var(--font-display);
     padding: .18rem .75rem; border-radius: 999px; white-space: nowrap;
@@ -2746,6 +2770,18 @@
     skins.forEach(function (b) { b.addEventListener('click', function () { setSkin(b.getAttribute('data-skin')); }); });
     // Visitors in dark mode see the window in Dark first.
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) setMode('dark');
+  })();
+
+  // The demos further down show the app in the visitor's own scheme.
+  (function () {
+    var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    var demos = document.querySelectorAll('.notif-demo, .sched-demo, .menu-demo');
+    function follow() {
+      demos.forEach(function (d) { d.setAttribute('data-win-theme', mq.matches ? 'dark' : 'light'); });
+    }
+    follow();
+    if (mq.addEventListener) mq.addEventListener('change', follow);
   })();
 
   // Fit script: the window is built at its native 993×652 and scaled as one
