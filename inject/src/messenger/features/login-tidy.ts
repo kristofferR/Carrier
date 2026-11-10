@@ -75,6 +75,23 @@ function returnToMessengerAfterLogin(): LoginRecoveryState {
   return "settled";
 }
 
+/** The fonts the page's text is set in, as `document.fonts.load` takes them. */
+function pageFonts(): Set<string> {
+  const fonts = new Set<string>();
+  for (const el of document.body?.querySelectorAll("*") ?? []) {
+    if (fonts.size >= 8) break;
+    if (
+      ![...el.childNodes].some(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+      )
+    )
+      continue;
+    const style = getComputedStyle(el);
+    fonts.add(`${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`);
+  }
+  return fonts;
+}
+
 // Chatpane's mark over a fresh login page until its text has rendered
 // (messenger.css). WebKitGTK can hold Facebook's page for about 20 s, so this
 // starts at document start, before the first paint.
@@ -98,14 +115,19 @@ function showLoaderUntilLoginRenders() {
   };
   setTimeout(finish, LOADER_LIMIT_MS);
   // The form's text paints in the first frame after its fonts load; the
-  // frame after that one means it reached the screen.
+  // frame after that one means it reached the screen. Wait for the fonts the
+  // page's text actually uses: `document.fonts.ready` settles at once while
+  // the form has not asked for its web font yet, and WebKitGTK then keeps the
+  // text invisible until that font arrives, which can take seconds.
   const whenRendered = () => {
     if (done) return;
     if (!document.querySelector('input[name="pass"]')) {
       requestAnimationFrame(whenRendered);
       return;
     }
-    document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(finish)));
+    Promise.all([...pageFonts()].map((font) => document.fonts.load(font).catch(() => [])))
+      .then(() => document.fonts.ready)
+      .then(() => requestAnimationFrame(() => requestAnimationFrame(finish)));
   };
   requestAnimationFrame(whenRendered);
 }

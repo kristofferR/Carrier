@@ -69,7 +69,9 @@ describe("PageMessageIndex", () => {
 
   test("a notification tag repeats only after it was raised", () => {
     const index = new PageMessageIndex();
+    expect(index.wasRaised("mid.1")).toBe(false);
     expect(index.repeats("mid.1")).toBe(false);
+    expect(index.wasRaised("mid.1")).toBe(true);
     expect(index.repeats("mid.1")).toBe(true);
     expect(index.repeats("mid.2")).toBe(false);
     expect(index.repeats(undefined)).toBe(false);

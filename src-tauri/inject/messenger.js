@@ -1093,7 +1093,7 @@
       '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]'
     )) {
       const href = a.getAttribute("href");
-      if (!href || seen.has(href)) continue;
+      if (!href || seen.has(href) || !threadIdFromHref(href)) continue;
       const r = a.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;
       seen.add(href);
@@ -5008,6 +5008,10 @@ ${button.innerHTML}`)
     isStale(tag) {
       return typeof tag === "string" && this.stale.has(tag);
     }
+    /** Messenger raised a Notification for this message. */
+    wasRaised(tag) {
+      return typeof tag === "string" && this.raised.has(tag);
+    }
     /**
      * Whether a Notification with this tag was already raised; records it if
      * not. Messenger can notify twice about one message, and a web notification
@@ -6275,6 +6279,7 @@ ${button.innerHTML}`)
   };
   var onFacebookHost = () => /(^|\.)facebook\.com$/i.test(location.hostname);
   var onFacebookLoginSurface = () => onFacebookHost() && (/\/login(?:\.php)?$/i.test(location.pathname) || location.pathname === "/" || !!document.querySelector('input[name="email"], input[name="pass"], input[type="password"]'));
+  var beforeLogin = () => onFacebookLoginSurface() || onFacebookHost() && !/(?:^|;\s*)c_user=/.test(document.cookie);
   var visibleBox = (el) => {
     if (el?.nodeType !== 1) return null;
     const r = el.getBoundingClientRect();
@@ -6353,7 +6358,7 @@ ${button.innerHTML}`)
     ).sort((a, b) => b.bottom - a.bottom)[0]?.items;
   };
   function findOptionalCookieDeclineButton(root = document) {
-    if (!onFacebookLoginSurface()) return null;
+    if (!beforeLogin()) return null;
     const roots = /* @__PURE__ */ new Set();
     for (const button of actionButtonsIn(root)) {
       let node = button.parentElement;
@@ -8474,10 +8479,12 @@ ${button.innerHTML}`)
     const on2 = () => namesHidden() || avatarsHidden();
     const chatNames = /* @__PURE__ */ new Map();
     const loadingNames = /* @__PURE__ */ new Set();
-    function namesFor(id) {
+    function namesFor(id, rowText) {
+      const row = rowText.replace(/\d+/g, "");
       const known = chatNames.get(id);
       const ttl = known?.names ? NAMES_TTL_MS : NAMES_RETRY_MS;
-      if ((!known || Date.now() - known.at > ttl) && !loadingNames.has(id)) {
+      const due = !known || Date.now() - known.at > ttl || known.row !== row;
+      if (due && !loadingNames.has(id)) {
         loadingNames.add(id);
         readConversationNotificationNames(id, pageRequire()).then((info) => {
           const names = info ? info.participants.flatMap((person) => [
@@ -8486,12 +8493,12 @@ ${button.innerHTML}`)
             person.nickname
           ]) : null;
           chatNames.delete(id);
-          chatNames.set(id, { names, at: Date.now() });
+          chatNames.set(id, { names, at: Date.now(), row });
           if (chatNames.size > NAMES_LIMIT) chatNames.delete(chatNames.keys().next().value);
           if (names && String(names) !== String(known?.names)) schedule();
         }).catch(() => {
           chatNames.delete(id);
-          chatNames.set(id, { names: null, at: Date.now() });
+          chatNames.set(id, { names: null, at: Date.now(), row });
         }).finally(() => loadingNames.delete(id));
       }
       return known?.names ?? null;
@@ -8643,7 +8650,7 @@ ${button.innerHTML}`)
         if (!href || seen.has(href) || !visible(row)) continue;
         seen.add(href);
         const id = namesHidden() ? threadIdFromHref(href) : null;
-        const names = id ? namesFor(id) : null;
+        const names = id ? namesFor(id, textValue(row)) : null;
         const rr = row.getBoundingClientRect();
         row.querySelectorAll(VISUAL_SEL).forEach((el) => {
           if (!visible(el)) return;
@@ -8739,13 +8746,31 @@ ${button.innerHTML}`)
       });
       const load = pageRequire();
       const replySnippet = moduleExport(load, "MWReplySnippet.react");
-      if (replySnippet == null) return;
-      for (const icon3 of main2.querySelectorAll("svg")) {
+      for (const icon3 of replySnippet == null ? [] : main2.querySelectorAll("svg")) {
         let line = null;
         for (let el = icon3; el && el !== main2 && isRenderedBy(el, replySnippet, load, 40); el = el.parentElement) {
           line = el;
         }
         if (line && line !== icon3 && visible(line)) mark(line);
+      }
+      markEventLines(main2, load);
+    }
+    function markEventLines(main2, load) {
+      const eventRow = moduleExport(load, "MWMessageRowAdminMessage.react");
+      if (eventRow == null) return;
+      const rows = /* @__PURE__ */ new Map();
+      const walker = document.createTreeWalker(main2, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const host = node.parentElement;
+        if (!host || !node.data.trim() || host.closest('[contenteditable="true"]')) continue;
+        const row = host.closest('[role="row"]') ?? host;
+        let isEvent = rows.get(row);
+        if (isEvent === void 0) {
+          isEvent = isRenderedBy(host, eventRow, load);
+          rows.set(row, isEvent);
+        }
+        if (isEvent && visible(host)) mark(host);
       }
     }
     function scan() {
@@ -9124,6 +9149,19 @@ ${button.innerHTML}`)
     location.replace("https://www.facebook.com/messages");
     return "settled";
   }
+  function pageFonts() {
+    const fonts = /* @__PURE__ */ new Set();
+    for (const el of document.body?.querySelectorAll("*") ?? []) {
+      if (fonts.size >= 8) break;
+      if (![...el.childNodes].some(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()
+      ))
+        continue;
+      const style = getComputedStyle(el);
+      fonts.add(`${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`);
+    }
+    return fonts;
+  }
   function showLoaderUntilLoginRenders() {
     if (!onFacebookHost() || /(?:^|;\s*)c_user=/.test(document.cookie)) return;
     if (!/^\/(?:login(?:\.php)?\/?)?$/i.test(location.pathname)) return;
@@ -9148,7 +9186,7 @@ ${button.innerHTML}`)
         requestAnimationFrame(whenRendered);
         return;
       }
-      document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(finish)));
+      Promise.all([...pageFonts()].map((font) => document.fonts.load(font).catch(() => []))).then(() => document.fonts.ready).then(() => requestAnimationFrame(() => requestAnimationFrame(finish)));
     };
     requestAnimationFrame(whenRendered);
   }
@@ -11664,6 +11702,23 @@ ${button.innerHTML}`)
       timeoutMs
     );
   }
+  async function readNewestMessageId(id, load, timeoutMs = 750) {
+    if (!/^\d+$/.test(id)) return null;
+    const newest = await readMessengerDatabase(
+      load,
+      async ({ db, i64, load: load2 }) => {
+        const q = load2("ReQL");
+        const messages = db.tables.messages;
+        const rows = await q.toArrayAsync(
+          q.fromTableDescending(messages).getKeyRange(i64.of_string(id)).take(1)
+        );
+        const messageId = Array.isArray(rows) ? rows[0]?.messageId : void 0;
+        return typeof messageId === "string" && messageId ? messageId : null;
+      },
+      timeoutMs
+    );
+    return newest ?? null;
+  }
 
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
@@ -12694,13 +12749,16 @@ ${button.innerHTML}`)
       );
       const timer = setTimeout(async () => {
         await learnThreadKind(conversation.key);
-        const fresh = (await readThreadStates([conversation.key], pageRequire(), Date.now()))?.get(
-          conversation.key
-        );
+        const [states, newest] = await Promise.all([
+          readThreadStates([conversation.key], pageRequire(), Date.now()),
+          readNewestMessageId(conversation.key, pageRequire())
+        ]);
+        const fresh = states?.get(conversation.key);
         if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
+        const announced = newest !== null && (pageMessages.wasRaised(newest) || pageMessages.isStale(newest));
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const settings = window.__CHATPANE_SETTINGS__ || {};
-        if (fresh?.unread === false || suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
+        if (fresh?.unread === false || announced || suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
             notificationCorrelations.removeRow(conversation.key);
@@ -13845,6 +13903,7 @@ ${button.innerHTML}`)
               return false;
             }
             insertedReplies.set(id, { path, text: text2 });
+            await pause();
             break;
           }
           case "send":

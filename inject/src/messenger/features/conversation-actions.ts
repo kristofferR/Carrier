@@ -15,7 +15,7 @@ import {
   renderDepth,
   renders,
 } from "../lib/react-fiber";
-import { SEPARATOR_RE } from "../lib/threads";
+import { SEPARATOR_RE, threadIdFromHref } from "../lib/threads";
 
 export function isShown(el: Element): boolean {
   const r = el.getBoundingClientRect();
@@ -87,7 +87,8 @@ export function chatRowName(el: Element): string {
   return "";
 }
 
-// Visible conversation links in the left chat list, in list order.
+// Visible conversation links in the left chat list, in list order. The
+// navigation's own "/messages/t/" link names no conversation and is skipped.
 export function chatRows(): HTMLAnchorElement[] {
   const seen = new Set<string>();
   const out: HTMLAnchorElement[] = [];
@@ -95,7 +96,7 @@ export function chatRows(): HTMLAnchorElement[] {
     '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]',
   )) {
     const href = a.getAttribute("href");
-    if (!href || seen.has(href)) continue;
+    if (!href || seen.has(href) || !threadIdFromHref(href)) continue;
     const r = a.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) continue; // skip hidden
     seen.add(href);

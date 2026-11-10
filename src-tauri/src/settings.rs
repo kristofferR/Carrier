@@ -177,7 +177,8 @@ pub(crate) struct Settings {
     pub(crate) app_icon_variant: Option<String>,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
     pub(crate) menu_bar_only: bool,
-    /// Windows/Linux: hide the native application menu from Messenger windows.
+    /// Linux: hide the native application menu from Messenger windows (on by
+    /// default; Windows never shows it next to Chatpane's window buttons).
     pub(crate) hide_menu_bar: bool,
     /// Windows: hide the main window into the tray when it is minimized.
     pub(crate) hide_on_minimize: bool,
@@ -393,7 +394,7 @@ impl Default for Settings {
             app_icon_style: None,
             app_icon_variant: None,
             menu_bar_only: false,
-            hide_menu_bar: false,
+            hide_menu_bar: true,
             hide_on_minimize: false,
             hide_on_focus_loss: false,
             hide_taskbar_icon: false,
@@ -1104,7 +1105,7 @@ mod tests {
         assert!(!s.attention_on_message);
         assert_eq!(s.theme, ThemeChoice::System);
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
-        assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
+        assert!(s.hide_menu_bar, "hide_menu_bar should default to true");
         assert!(
             !s.hide_on_minimize,
             "hide_on_minimize should default to false"
@@ -1270,10 +1271,10 @@ mod tests {
     }
 
     #[test]
-    fn settings_json_missing_hide_menu_bar_defaults_to_false() {
-        // Pre-existing installs have no `hide_menu_bar` key in settings.json.
+    fn settings_json_missing_hide_menu_bar_hides_it() {
+        // The menu bar is hidden unless someone turned it back on.
         let s: Settings = serde_json::from_str("{}").unwrap();
-        assert!(!s.hide_menu_bar);
+        assert!(s.hide_menu_bar);
     }
 
     #[test]
