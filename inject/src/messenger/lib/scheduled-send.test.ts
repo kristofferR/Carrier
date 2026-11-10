@@ -40,14 +40,20 @@ describe("scheduled sending", () => {
     for (const invalid of ["24:00", "12:60", "9:30", "9:30 PM"])
       expect(localScheduleTime("2026-09-24", invalid)).toBeNull();
     expect(localScheduleTime("2026-02-30", "09:00")).toBeNull();
-    expect(formatScheduleTime(time!)).toContain("23:45");
+    expect(formatScheduleTime(time!, time!, "en-GB")).toBe("23:45");
+  });
+  test("shows a send time on the locale's clock", () => {
+    const evening = new Date(2026, 8, 23, 21, 5).getTime();
+    expect(formatScheduleTime(evening, evening, "en-GB")).toBe("21:05");
+    expect(formatScheduleTime(evening, evening, "en-US")).toBe("9:05 PM");
+    expect(formatScheduleTime(evening - 12 * 3_600_000, evening, "nb-NO")).toBe("09:05");
   });
   test("shows only as much date as a send time needs", () => {
     const at = (day: number, hour = 9) => new Date(2026, 8, day, hour, 0).getTime();
     const now = at(23, 18);
     const name = (time: number, options: Intl.DateTimeFormatOptions) =>
       new Intl.DateTimeFormat(formatLocale(), options).format(time);
-    expect(formatScheduleTime(at(23, 23), now)).toBe("23:00");
+    expect(formatScheduleTime(at(23, 23), now, "en-GB")).toBe("23:00");
     // Tomorrow through six days out name the weekday; a week out names the date.
     for (const day of [24, 29])
       expect(formatScheduleTime(at(day), now)).toContain(name(at(day), { weekday: "short" }));

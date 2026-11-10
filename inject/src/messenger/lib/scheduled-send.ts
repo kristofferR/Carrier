@@ -108,20 +108,26 @@ export function localDateValue(time: number): string {
 }
 
 /** Only as much date as `time` needs: "14:52" today, "Tue 09:00" within the
- * coming week, "Nov 18, 09:00" otherwise (including past days). */
-export function formatScheduleTime(time: number, now = Date.now()): string {
+ * coming week, "Nov 18, 09:00" otherwise (including past days), on the
+ * locale's clock ("2:52 PM" in en-US). */
+export function formatScheduleTime(
+  time: number,
+  now = Date.now(),
+  locale = formatLocale(),
+): string {
   const midnight = (value: number) => new Date(value).setHours(0, 0, 0, 0);
   // Rounded, so a DST change inside the span still counts whole calendar days.
   const days = Math.round((midnight(time) - midnight(now)) / 86_400_000);
-  return new Intl.DateTimeFormat(formatLocale(), {
+  // A leading zero only on a 24-hour clock: "09:00", but "9:00 AM".
+  const twelveHour = new Intl.DateTimeFormat(locale, { hour: "numeric" }).resolvedOptions().hour12;
+  return new Intl.DateTimeFormat(locale, {
     ...(days === 0
       ? {}
       : days > 0 && days < 7
         ? ({ weekday: "short" } as const)
         : ({ month: "short", day: "numeric" } as const)),
-    hour: "2-digit",
+    hour: twelveHour ? "numeric" : "2-digit",
     minute: "2-digit",
-    hourCycle: "h23",
   }).format(time);
 }
 

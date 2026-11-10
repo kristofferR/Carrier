@@ -1110,14 +1110,14 @@ ${button.innerHTML}`)
     const date = new Date(time);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }
-  function formatScheduleTime(time, now = Date.now()) {
+  function formatScheduleTime(time, now = Date.now(), locale = formatLocale()) {
     const midnight = (value) => new Date(value).setHours(0, 0, 0, 0);
     const days = Math.round((midnight(time) - midnight(now)) / 864e5);
-    return new Intl.DateTimeFormat(formatLocale(), {
+    const twelveHour = new Intl.DateTimeFormat(locale, { hour: "numeric" }).resolvedOptions().hour12;
+    return new Intl.DateTimeFormat(locale, {
       ...days === 0 ? {} : days > 0 && days < 7 ? { weekday: "short" } : { month: "short", day: "numeric" },
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23"
+      hour: twelveHour ? "numeric" : "2-digit",
+      minute: "2-digit"
     }).format(time);
   }
   function timeZoneLabel(now = Date.now()) {
