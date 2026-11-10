@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Messenger oppga ikke denne innstillingen.",
   "settings.account.active_status.label": "Aktivitetsstatus",
   "settings.account.active_status.hint": "Vis andre når du er aktiv eller nylig har vært aktiv.",
+  "settings.account.read_receipts.label": "Lesebekreftelser",
+  "settings.account.read_receipts.hint": "La andre se når du har lest meldingene deres. Det gjelder begge veier: Slår du det av, ser du heller ikke når de har lest dine.",
   "settings.account.sounds.label": "Meldingslyder",
   "settings.account.sounds.hint": "Messengers egne lyder for nye meldinger. Varsellyden i {app} er en egen innstilling.",
   "settings.account.dnd.label": "Ikke forstyrr",

@@ -538,6 +538,8 @@
   "settings.account.not_reported": "لم يُبلغ Messenger عن هذا الإعداد.",
   "settings.account.active_status.label": "حالة النشاط",
   "settings.account.active_status.hint": "إظهار ما إذا كنت نشطًا الآن أو مؤخرًا للآخرين.",
+  "settings.account.read_receipts.label": "إيصالات القراءة",
+  "settings.account.read_receipts.hint": "اسمح للآخرين بمعرفة متى قرأت رسائلهم. يعمل هذا في الاتجاهين: إذا أوقفته، فلن ترى متى قرأوا رسائلك.",
   "settings.account.sounds.label": "أصوات الرسائل",
   "settings.account.sounds.hint": "أصوات Messenger الخاصة بالرسائل الجديدة. صوت إشعارات {app} منفصل عنها.",
   "settings.account.dnd.label": "عدم الإزعاج",

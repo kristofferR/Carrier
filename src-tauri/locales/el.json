@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Το Messenger δεν ανέφερε αυτήν τη ρύθμιση.",
   "settings.account.active_status.label": "Κατάσταση δραστηριότητας",
   "settings.account.active_status.hint": "Οι άλλοι βλέπουν πότε είσαι σε σύνδεση ή πότε ήσουν πρόσφατα.",
+  "settings.account.read_receipts.label": "Αποδεικτικά ανάγνωσης",
+  "settings.account.read_receipts.hint": "Οι άλλοι βλέπουν πότε διάβασες τα μηνύματά τους. Ισχύει και αντίστροφα: αν το απενεργοποιήσεις, δεν θα βλέπεις ούτε εσύ πότε διάβασαν τα δικά σου.",
   "settings.account.sounds.label": "Ήχοι μηνυμάτων",
   "settings.account.sounds.hint": "Οι ήχοι του ίδιου του Messenger για νέα μηνύματα. Ο ήχος ειδοποίησης του {app} είναι ξεχωριστός.",
   "settings.account.dnd.label": "Μην ενοχλείτε",

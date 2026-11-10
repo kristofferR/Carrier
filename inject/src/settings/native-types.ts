@@ -270,9 +270,13 @@ export type MessengerAccountState = { activeStatus: boolean | null, sounds: bool
 /**
  * Do Not Disturb end in seconds since 1970: 0 off, -1 until turned off.
  */
-dndUntil: number | null, };
+dndUntil: number | null, 
+/**
+ * Whether people see when you've read their messages, and you theirs.
+ */
+readReceipts: boolean | null, };
 
-export type MessengerAccountChange = { "setting": "activeStatus", "value": boolean } | { "setting": "sounds", "value": boolean } | { "setting": "doNotDisturb", "value": number };
+export type MessengerAccountChange = { "setting": "activeStatus", "value": boolean } | { "setting": "sounds", "value": boolean } | { "setting": "doNotDisturb", "value": number } | { "setting": "readReceipts", "value": boolean };
 
 export type UpdateInstallKind = "built-in" | "manual" | "debug";
 

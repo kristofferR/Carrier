@@ -129,7 +129,7 @@ function installBridge(platform: string, strings: typeof globalThis.__CHATPANE_I
         case "update_install_mode":
           return { kind: "built-in" };
         case "messenger_account":
-          return { activeStatus: true, sounds: false, dndUntil: 0 };
+          return { activeStatus: true, sounds: false, dndUntil: 0, readReceipts: true };
         case "list_themes":
           return [{ id: "default", name: "Default", builtIn: true }];
         case "notification_sounds":

@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Messenger ले यो सेटिङ जनाएन।",
   "settings.account.active_status.label": "सक्रिय स्थिति",
   "settings.account.active_status.hint": "तपाईं कहिले सक्रिय हुनुहुन्छ वा भर्खरै सक्रिय हुनुहुन्थ्यो भनेर मान्छेहरूलाई देखाउनुहोस्।",
+  "settings.account.read_receipts.label": "पढेको जानकारी",
+  "settings.account.read_receipts.hint": "तपाईंले मान्छेहरूका सन्देश कहिले पढ्नुभयो भनेर उनीहरूलाई देखाउनुहोस्। यो दुवैतर्फ लागू हुन्छ: बन्द गर्नुभयो भने उनीहरूले तपाईंका सन्देश कहिले पढे भनेर तपाईं पनि देख्नुहुन्न।",
   "settings.account.sounds.label": "सन्देशका आवाज",
   "settings.account.sounds.hint": "नयाँ सन्देशका लागि Messenger का आफ्नै आवाज। {app} को सूचनाको आवाज छुट्टै हो।",
   "settings.account.dnd.label": "बाधा नपुर्‍याउनुहोस्",

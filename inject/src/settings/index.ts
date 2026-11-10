@@ -1410,7 +1410,7 @@ async function loadMessengerAccount(change?: MessengerAccountChange) {
 }
 
 function accountToggleRow(
-  setting: "activeStatus" | "sounds",
+  setting: "activeStatus" | "sounds" | "readReceipts",
   label: string,
   hint: string,
   value: boolean | null,
@@ -1485,6 +1485,12 @@ function messengerAccountSection() {
       t("settings.account.active_status.label"),
       t("settings.account.active_status.hint"),
       state.activeStatus,
+    ),
+    accountToggleRow(
+      "readReceipts",
+      t("settings.account.read_receipts.label"),
+      t("settings.account.read_receipts.hint"),
+      state.readReceipts,
     ),
     accountToggleRow(
       "sounds",

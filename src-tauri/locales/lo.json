@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Messenger ບໍ່ໄດ້ລາຍງານການຕັ້ງຄ່ານີ້.",
   "settings.account.active_status.label": "ສະຖານະການໃຊ້ງານ",
   "settings.account.active_status.hint": "ໃຫ້ຄົນອື່ນເຫັນເມື່ອເຈົ້າກຳລັງໃຊ້ງານ ຫຼື ຫາກໍໃຊ້ງານ.",
+  "settings.account.read_receipts.label": "ການແຈ້ງວ່າອ່ານແລ້ວ",
+  "settings.account.read_receipts.hint": "ໃຫ້ຄົນອື່ນເຫັນເມື່ອເຈົ້າອ່ານຂໍ້ຄວາມຂອງເຂົາເຈົ້າແລ້ວ. ມັນໃຊ້ໄດ້ທັງສອງທາງ: ຖ້າເຈົ້າປິດມັນ, ເຈົ້າກໍຈະບໍ່ເຫັນເມື່ອເຂົາເຈົ້າອ່ານຂໍ້ຄວາມຂອງເຈົ້າແລ້ວເຊັ່ນກັນ.",
   "settings.account.sounds.label": "ສຽງຂໍ້ຄວາມ",
   "settings.account.sounds.hint": "ສຽງຂອງ Messenger ເອງສຳລັບຂໍ້ຄວາມໃໝ່. ສຽງແຈ້ງເຕືອນຂອງ {app} ແມ່ນແຍກຕ່າງຫາກ.",
   "settings.account.dnd.label": "ຫ້າມລົບກວນ",

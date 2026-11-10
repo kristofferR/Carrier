@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Messenger didn't report this setting.",
   "settings.account.active_status.label": "Active Status",
   "settings.account.active_status.hint": "Show people when you're active or recently active.",
+  "settings.account.read_receipts.label": "Read Receipts",
+  "settings.account.read_receipts.hint": "Let people see when you've read their messages. It works both ways: turn it off, and you won't see when they've read yours.",
   "settings.account.sounds.label": "Message Sounds",
   "settings.account.sounds.hint": "Messenger's own sounds for new messages. {app}'s notification sound is separate.",
   "settings.account.dnd.label": "Do Not Disturb",

@@ -98,6 +98,8 @@ pub(crate) struct MessengerAccountState {
     sounds: Option<bool>,
     /// Do Not Disturb end in seconds since 1970: 0 off, -1 until turned off.
     dnd_until: Option<i64>,
+    /// Whether people see when you've read their messages, and you theirs.
+    read_receipts: Option<bool>,
 }
 
 /// One change Settings asks for.
@@ -109,6 +111,7 @@ pub(crate) enum MessengerAccountChange {
     Sounds(bool),
     /// Minutes: 0 turns it off, -1 until turned off.
     DoNotDisturb(i64),
+    ReadReceipts(bool),
 }
 
 impl MessengerAccountChange {
@@ -116,6 +119,7 @@ impl MessengerAccountChange {
         Ok(match *self {
             Self::ActiveStatus(on) => ("set-active-status", on.into()),
             Self::Sounds(on) => ("set-sounds", on.into()),
+            Self::ReadReceipts(on) => ("set-read-receipts", on.into()),
             Self::DoNotDisturb(minutes)
                 if minutes == -1 || (0..=7 * 24 * 60).contains(&minutes) =>
             {
@@ -163,6 +167,12 @@ mod tests {
         assert_eq!(
             change.page_action().unwrap(),
             ("set-active-status", false.into())
+        );
+        let change: MessengerAccountChange =
+            serde_json::from_str(r#"{"setting":"readReceipts","value":true}"#).unwrap();
+        assert_eq!(
+            change.page_action().unwrap(),
+            ("set-read-receipts", true.into())
         );
         let change: MessengerAccountChange =
             serde_json::from_str(r#"{"setting":"doNotDisturb","value":-1}"#).unwrap();

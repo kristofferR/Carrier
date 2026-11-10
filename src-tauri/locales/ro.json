@@ -538,6 +538,8 @@
   "settings.account.not_reported": "Messenger nu a raportat această setare.",
   "settings.account.active_status.label": "Stare activă",
   "settings.account.active_status.hint": "Arată-le celorlalți când ești activ sau ai fost activ recent.",
+  "settings.account.read_receipts.label": "Confirmări de citire",
+  "settings.account.read_receipts.hint": "Le arată celorlalți când le-ai citit mesajele. Funcționează în ambele sensuri: dacă o dezactivezi, nici tu nu vei vedea când le-au citit pe ale tale.",
   "settings.account.sounds.label": "Sunete pentru mesaje",
   "settings.account.sounds.hint": "Sunetele proprii ale Messenger pentru mesajele noi. Sunetul de notificare din {app} este separat.",
   "settings.account.dnd.label": "Nu deranja",
