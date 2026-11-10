@@ -1228,12 +1228,15 @@ ${button.innerHTML}`);
     }
     return controls;
   }
+  var enabled = (button) => button.getAttribute("aria-disabled") !== "true" && !button.matches(":disabled");
   function findSendButton(box, before) {
     const region = composerRegion(box);
     if (!region) return null;
+    const send = componentButton(["MWV2ComposerSendButton.react"], region);
+    if (send) return enabled(send) ? send : null;
     const changed = [];
     for (const button of region.querySelectorAll('button, [role="button"]')) {
-      if (button.hasAttribute("data-chatpane-schedule") || !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) || !isShown(button) || button.getAttribute("aria-disabled") === "true" || button.matches(":disabled"))
+      if (button.hasAttribute("data-chatpane-schedule") || !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) || !isShown(button) || !enabled(button))
         continue;
       if (before.get(button) !== `${button.getAttribute("aria-label") ?? ""}
 ${button.innerHTML}`)
@@ -4650,7 +4653,7 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/message-menu.ts
-  var MESSAGE = '[data-message-id], [aria-roledescription="message"]';
+  var MESSAGE = "[data-message-id]";
   var TOOLBAR_WAIT_MS = 600;
   var MAX_REACTIONS = 12;
   var messageFor = (target) => target.closest(MESSAGE);
@@ -6706,8 +6709,8 @@ ${button.innerHTML}`)
     const provider = function ChatpaneNicknameProvider(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const group = context2 && useContext ? useContext(context2) : void 0;
-      const enabled = showNicknames(mode, group);
-      if (!enabled && props && typeof props === "object") {
+      const enabled2 = showNicknames(mode, group);
+      if (!enabled2 && props && typeof props === "object") {
         const record4 = props;
         const contact = record4.contact;
         if (typeof record4.nickname === "string" && contact && typeof contact === "object" && typeof contact.name === "string") {
@@ -9392,8 +9395,8 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/lib/media-autoplay.ts
   var MEDIA_ACTIVATION_GRACE_MS = 1500;
-  function shouldSuppressMediaPlay(enabled, lastActivationAt, now, graceMs = MEDIA_ACTIVATION_GRACE_MS) {
-    if (!enabled) return false;
+  function shouldSuppressMediaPlay(enabled2, lastActivationAt, now, graceMs = MEDIA_ACTIVATION_GRACE_MS) {
+    if (!enabled2) return false;
     if (!Number.isFinite(lastActivationAt) || !Number.isFinite(now) || !Number.isFinite(graceMs) || graceMs < 0 || lastActivationAt > now) {
       return true;
     }
@@ -9456,15 +9459,15 @@ ${button.innerHTML}`)
       observer?.disconnect();
       observer = null;
     };
-    let enabled = false;
+    let enabled2 = false;
     const apply2 = () => {
       if (on2()) {
         start();
-        if (!enabled) scan(document, true);
+        if (!enabled2) scan(document, true);
       } else {
         stop();
       }
-      enabled = on2();
+      enabled2 = on2();
     };
     apply2();
     window.addEventListener("chatpane:settings", apply2);
