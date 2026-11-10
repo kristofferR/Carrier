@@ -27,7 +27,7 @@ days: number,
  */
 star_prompt_done: boolean, };
 
-export type NotificationSound = "off" | "default" | { "system": { platform: string, name: string, } } | { "file": string };
+export type NotificationSound = "off" | "default" | { "system": { platform: string, name: string, } } | { "file": string } | "messenger";
 
 export type Settings = { always_on_top: boolean, show_tray: boolean, tray_icon_style: TrayIconStyle, start_to_tray: boolean, autostart: boolean, hide_on_close: boolean, 
 /**
@@ -266,7 +266,7 @@ export type ThemeInfo = { id: string, name: string, author: string | null, mode:
 
 export type SoundOption = { label: string, sound: NotificationSound, };
 
-export type MessengerAccountState = { activeStatus: boolean | null, sounds: boolean | null, 
+export type MessengerAccountState = { activeStatus: boolean | null, 
 /**
  * Do Not Disturb end in seconds since 1970: 0 off, -1 until turned off.
  */
@@ -276,7 +276,7 @@ dndUntil: number | null,
  */
 readReceipts: boolean | null, };
 
-export type MessengerAccountChange = { "setting": "activeStatus", "value": boolean } | { "setting": "sounds", "value": boolean } | { "setting": "doNotDisturb", "value": number } | { "setting": "readReceipts", "value": boolean };
+export type MessengerAccountChange = { "setting": "activeStatus", "value": boolean } | { "setting": "doNotDisturb", "value": number } | { "setting": "readReceipts", "value": boolean };
 
 export type UpdateInstallKind = "built-in" | "manual" | "debug";
 

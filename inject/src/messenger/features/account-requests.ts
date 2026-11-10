@@ -1,13 +1,15 @@
 /* ----------------------- Account requests ------------------------------ */
 // Native asks through `window.__chatpaneAccount(request, action, value)` and
 // reads the answer on `chatpane:account-result`: Messenger's own account
-// settings for Settings → Account (Ref #358), and Log Out (Ref #356).
+// settings for Settings → Account (Ref #358), Log Out (Ref #356), and
+// Messenger's sound for Chatpane's own sound list.
 import { t } from "../../i18n";
 import { diag, invoke } from "../bridge";
 import { pageRequire } from "../lib/facebook-loader";
 import { logOutOfFacebook } from "../lib/log-out";
 import { changeMessengerAccount, readMessengerAccount } from "../lib/messenger-account";
 import { setMessengerDndUntil } from "../lib/messenger-dnd";
+import { messengerSoundWav } from "../lib/messenger-sounds";
 import { accountId } from "../lib/threads";
 
 type Action = (value: unknown) => Promise<unknown>;
@@ -33,11 +35,7 @@ export function initAccountRequests() {
         setting: "activeStatus",
         value: value === true,
       }),
-    "set-sounds": (value) =>
-      changeMessengerAccount(pageRequire(), signedIn(), {
-        setting: "sounds",
-        value: value === true,
-      }),
+    "message-sound": () => messengerSoundWav(pageRequire()),
     "set-read-receipts": (value) =>
       changeMessengerAccount(pageRequire(), signedIn(), {
         setting: "readReceipts",

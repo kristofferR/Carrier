@@ -1231,6 +1231,7 @@ pub fn run() {
             sound::notification_sounds,
             sound::choose_notification_sound,
             sound::preview_notification_sound,
+            sound::copy_messenger_sound,
             page_commands::choose_download,
             page_commands::prepare_download,
             page_commands::share_download,
@@ -1248,6 +1249,7 @@ pub fn run() {
             identity::log_report();
             clear_pending_webview_data(app.handle());
             account::install(app.handle());
+            sound::install(app.handle());
             pane_widths::install(app.handle());
             pinned_chats::install(app.handle());
             growth::install(app.handle());

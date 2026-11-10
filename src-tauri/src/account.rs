@@ -1,6 +1,7 @@
 //! Requests that Messenger's own page answers for Chatpane: reading and
-//! changing the account's Messenger settings (Active Status, message sounds,
-//! Do Not Disturb; Ref #358). Native asks the main Messenger window through
+//! changing the account's Messenger settings (Active Status, read receipts,
+//! Do Not Disturb; Ref #358), and Messenger's own sound for Chatpane's sound
+//! list. Native asks the main Messenger window through
 //! `window.__chatpaneAccount`, and the page reports back on
 //! `chatpane:account-result`.
 
@@ -95,7 +96,6 @@ pub(crate) async fn page_request(
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MessengerAccountState {
     active_status: Option<bool>,
-    sounds: Option<bool>,
     /// Do Not Disturb end in seconds since 1970: 0 off, -1 until turned off.
     dnd_until: Option<i64>,
     /// Whether people see when you've read their messages, and you theirs.
@@ -108,7 +108,6 @@ pub(crate) struct MessengerAccountState {
 #[serde(tag = "setting", content = "value", rename_all = "camelCase")]
 pub(crate) enum MessengerAccountChange {
     ActiveStatus(bool),
-    Sounds(bool),
     /// Minutes: 0 turns it off, -1 until turned off.
     DoNotDisturb(i64),
     ReadReceipts(bool),
@@ -118,7 +117,6 @@ impl MessengerAccountChange {
     fn page_action(&self) -> Result<(&'static str, serde_json::Value), String> {
         Ok(match *self {
             Self::ActiveStatus(on) => ("set-active-status", on.into()),
-            Self::Sounds(on) => ("set-sounds", on.into()),
             Self::ReadReceipts(on) => ("set-read-receipts", on.into()),
             Self::DoNotDisturb(minutes)
                 if minutes == -1 || (0..=7 * 24 * 60).contains(&minutes) =>
@@ -183,8 +181,10 @@ mod tests {
                 .is_err()
         );
         assert!(
-            serde_json::from_str::<MessengerAccountChange>(r#"{"setting":"sounds","value":"on"}"#)
-                .is_err()
+            serde_json::from_str::<MessengerAccountChange>(
+                r#"{"setting":"activeStatus","value":"on"}"#
+            )
+            .is_err()
         );
     }
 }

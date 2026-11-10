@@ -397,7 +397,7 @@
   // inject/src/messenger/lib/messenger-account.ts
   var flag = (value) => typeof value === "boolean" ? value : null;
   function stateFromViewer(viewer, resolveActiveStatus, dndUntil, readReceipts) {
-    if (!viewer) return { activeStatus: null, sounds: null, dndUntil, readReceipts };
+    if (!viewer) return { activeStatus: null, dndUntil, readReceipts };
     const active = resolveActiveStatus(
       flag(viewer.chat_visibility),
       flag(viewer.chat_visibility_on_messenger),
@@ -405,7 +405,6 @@
     );
     return {
       activeStatus: flag(active),
-      sounds: flag(viewer.chat_sounds_on),
       dndUntil,
       readReceipts
     };
@@ -503,16 +502,7 @@
   }
   async function changeMessengerAccount(load, account3, change) {
     await loadPreferencesCode(load);
-    if (change.setting === "sounds") {
-      const [environment, mutation] = await loadFacebookModules(load, [
-        "CometRelayEnvironment",
-        "MWChatChangeSoundsSettingMutation"
-      ]);
-      await mutation.commit(
-        defaultExport(environment),
-        { sounds_on: change.value }
-      );
-    } else if (change.setting === "activeStatus") {
+    if (change.setting === "activeStatus") {
       await setActiveStatus(load, change.value);
     } else if (change.setting === "readReceipts") {
       await setReadReceipts(load, change.value);
@@ -530,8 +520,6 @@
     switch (change.setting) {
       case "activeStatus":
         return state3.activeStatus === change.value;
-      case "sounds":
-        return state3.sounds === change.value;
       case "readReceipts":
         return state3.readReceipts === change.value;
       case "doNotDisturb": {
@@ -601,6 +589,81 @@
     await Promise.all([saved, reported]);
   }
 
+  // inject/src/messenger/lib/messenger-sounds.ts
+  function playsMessageSound(state3) {
+    return state3.focused && !state3.globallyMuted && !state3.oldNews;
+  }
+  var MAX_SECONDS = 10;
+  function encodeWav(channels, sampleRate) {
+    const count = channels.length;
+    const frames = channels[0]?.length ?? 0;
+    const dataBytes = frames * count * 2;
+    const view = new DataView(new ArrayBuffer(44 + dataBytes));
+    const ascii = (offset2, text2) => {
+      for (let i = 0; i < text2.length; i++) view.setUint8(offset2 + i, text2.charCodeAt(i));
+    };
+    ascii(0, "RIFF");
+    view.setUint32(4, 36 + dataBytes, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, count, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * count * 2, true);
+    view.setUint16(32, count * 2, true);
+    view.setUint16(34, 16, true);
+    ascii(36, "data");
+    view.setUint32(40, dataBytes, true);
+    let offset = 44;
+    for (let frame = 0; frame < frames; frame++) {
+      for (const channel of channels) {
+        const sample = Math.max(-1, Math.min(1, channel[frame] ?? 0));
+        view.setInt16(offset, sample < 0 ? sample * 32768 : sample * 32767, true);
+        offset += 2;
+      }
+    }
+    return new Uint8Array(view.buffer);
+  }
+  function dataUrl(bytes, type) {
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 32768) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+    }
+    return `data:${type};base64,${btoa(binary)}`;
+  }
+  async function decodeAudio(data) {
+    const Context = window.OfflineAudioContext;
+    if (typeof Context !== "function") throw new Error("no Web Audio");
+    return new Context(2, 1, 44100).decodeAudioData(data);
+  }
+  async function messengerSoundWav(load, fetchAudio = (url) => fetch(url), decode = decodeAudio) {
+    let config;
+    try {
+      config = defaultExport(load?.("MWChatConfig"));
+    } catch {
+    }
+    const urls = [config?.soundNotifMp3Url, config?.soundNotifOggUrl].filter(
+      (url) => typeof url === "string" && url.startsWith("https://")
+    );
+    for (const url of urls) {
+      try {
+        const response = await fetchAudio(url);
+        if (!response.ok) continue;
+        const audio = await decode(await response.arrayBuffer());
+        const frames = Math.min(audio.length, audio.sampleRate * MAX_SECONDS);
+        const channels = Array.from(
+          { length: Math.min(audio.numberOfChannels, 2) },
+          (_, i) => audio.getChannelData(i).subarray(0, frames)
+        );
+        if (!frames || !channels.length) continue;
+        return dataUrl(encodeWav(channels, audio.sampleRate), "audio/wav");
+      } catch {
+      }
+    }
+    throw new Error(t("page.sound.unavailable"));
+  }
+
   // inject/src/messenger/features/account-requests.ts
   function initAccountRequests() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -621,10 +684,7 @@
         setting: "activeStatus",
         value: value === true
       }),
-      "set-sounds": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
-        setting: "sounds",
-        value: value === true
-      }),
+      "message-sound": () => messengerSoundWav(pageRequire()),
       "set-read-receipts": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
         setting: "readReceipts",
         value: value === true
@@ -5704,7 +5764,7 @@ ${button.innerHTML}`)
       await navigator.clipboard.write([new ClipboardItem({ [image.type]: image })]);
       return;
     }
-    const dataUrl = await new NativePromise2((resolve, reject) => {
+    const dataUrl2 = await new NativePromise2((resolve, reject) => {
       if (!nativeGetFileReaderResult) {
         reject(new Error("native FileReader result getter unavailable"));
         return;
@@ -5726,7 +5786,7 @@ ${button.innerHTML}`)
       ]);
       nativeReflectApply3(nativeReadAsDataURL, reader, [blob]);
     });
-    await chatpaneCopyImage(dataUrl, action2);
+    await chatpaneCopyImage(dataUrl2, action2);
   }
   var ctxMenu = null;
   var ctxMenuReturnFocus = null;
@@ -7699,12 +7759,6 @@ ${button.innerHTML}`)
     }
   }
 
-  // inject/src/messenger/lib/messenger-sounds.ts
-  function playsMessageSound(state3) {
-    if (state3.globallyMuted || state3.oldNews) return false;
-    return state3.focused || !state3.nativeSoundOn;
-  }
-
   // inject/src/messenger/lib/mute.ts
   var MUTE_LABEL_LIMIT = 60;
   var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
@@ -8039,11 +8093,9 @@ ${button.innerHTML}`)
   var RESUME_WAIT_MS = 1e3;
   var pageLoad = () => window.require;
   var soundPlayerCalls = 0;
-  var MESSAGE_SOUND_PENDING_MS = 3e3;
   var MESSAGE_SOUND_RING_MS = 5e3;
-  var pendingMessageSound = null;
   var messageSound = null;
-  function messengerMessageSoundJustPlayed(thread2, messageId = "") {
+  function messageSoundJustPlayed(thread2, messageId = "") {
     const sound = messageSound;
     if (!sound || Date.now() - sound.at >= MESSAGE_SOUND_RING_MS) return false;
     if (messageId) return sound.messageId === messageId;
@@ -8126,11 +8178,6 @@ ${button.innerHTML}`)
       }
       quiet(this);
       if (notificationsGloballyMuted(window.__CHATPANE_SETTINGS__)) return Promise.resolve();
-      if (pendingMessageSound && Date.now() < pendingMessageSound.until) {
-        const { thread: thread2, messageId } = pendingMessageSound;
-        messageSound = { thread: thread2, messageId, at: Date.now() };
-        pendingMessageSound = null;
-      }
       const pausesAtStart = pausesOf(this);
       return playThroughWebAudio(this).catch(() => {
         diag("sound.web-audio", "Web Audio could not play a Messenger sound; using the element");
@@ -8191,23 +8238,23 @@ ${button.innerHTML}`)
     return true;
   }
   function patchChatPopperCommon(exports) {
-    const playChatTabSound = exports.playChatTabSound;
-    if (typeof playChatTabSound !== "function") return false;
-    exports.playChatTabSound = function(...args) {
-      const settings = window.__CHATPANE_SETTINGS__;
+    if (typeof exports.playChatTabSound !== "function") return false;
+    exports.playChatTabSound = (...args) => {
       const load = pageLoad();
       const message = args[0];
       const plays = playsMessageSound({
-        globallyMuted: notificationsGloballyMuted(settings),
+        globallyMuted: notificationsGloballyMuted(window.__CHATPANE_SETTINGS__),
         oldNews: isOldNews(messengerMillis(message?.timestampMs, load), serverNowMs(load), null),
-        focused: document.hasFocus(),
-        nativeSoundOn: settings?.notification_sound !== false
+        focused: document.hasFocus()
       });
       if (!plays) return void 0;
       const thread2 = messageThreadId(message, load);
       const messageId = typeof message?.messageId === "string" ? message.messageId : "";
-      pendingMessageSound = thread2 ? { thread: thread2, messageId, until: Date.now() + MESSAGE_SOUND_PENDING_MS } : null;
-      return Reflect.apply(playChatTabSound, this, args);
+      messageSound = thread2 ? { thread: thread2, messageId, at: Date.now() } : null;
+      invoke("plugin:event|emit", { event: "chatpane:message-sound", payload: null })?.catch?.(
+        () => diag("sound.message", "chatpane:message-sound emit failed")
+      );
+      return void 0;
     };
     return true;
   }
@@ -11990,8 +12037,8 @@ ${button.innerHTML}`)
           account: accountId(document.cookie) || "",
           row,
           sender,
-          // Messenger's own sound just rang for this message (see messenger-sounds).
-          silent: messengerMessageSoundJustPlayed(threadIdFromHref(threadPath), messageId)
+          // The in-front message sound just rang for this message (see messenger-sounds).
+          silent: messageSoundJustPlayed(threadIdFromHref(threadPath), messageId)
         }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
