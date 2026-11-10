@@ -2,18 +2,17 @@
 // Pin a chat from its right-click menu to keep it in a Pinned section above
 // the chat list (Ref #457). facebook.com has no pinning of its own. Pins are
 // per Facebook account and kept by the native side, reached through the signed
-// bridge; a change in one window makes the others ask again. Log Out deletes
+// bridge. Each window sends single changes, so changes from several windows
+// all land, and a change in one makes the others ask again. Log Out deletes
 // them.
 import { t } from "../../i18n";
 import { diag } from "../bridge";
 import {
+  createPinnedChatsSync,
   MAX_PINNED_CHATS,
-  type PinnedChat,
+  type PinChange,
   parsePinnedSnapshot,
   pinnedChats,
-  withName,
-  withoutPin,
-  withPin,
 } from "../lib/pinned-chats";
 import { interceptThreadListModule } from "../lib/pinned-chats-section";
 import { accountId } from "../lib/threads";
@@ -23,28 +22,23 @@ import { chatRowName } from "./conversation-actions";
 const CHANGED_EVENT = "chatpane:pinned-chats-changed";
 
 let account: string | null = null;
-/** The newest native snapshot applied; older answers are dropped. */
-let revision = 0;
 
-/** Ask for the account's pins, or save `pins`, and apply the answer. */
-function sync(pins?: readonly PinnedChat[]) {
+/** Ask native code for the pins, or make `change`. Null when there's no answer. */
+async function request(change?: PinChange) {
   const owner = account;
-  if (!owner || typeof chatpanePinnedChats !== "function") return;
-  chatpanePinnedChats(pins ? { account: owner, pins: [...pins] } : { account: owner })
-    .then((data) => {
-      const snapshot = parsePinnedSnapshot(data);
-      if (!snapshot || owner !== account || snapshot.revision <= revision) return;
-      revision = snapshot.revision;
-      pinnedChats.replace(snapshot.pins);
-    })
-    .catch(() => diag("pinned-chats.sync", "request failed"));
+  if (!owner || typeof chatpanePinnedChats !== "function") return null;
+  try {
+    const snapshot = parsePinnedSnapshot(
+      await chatpanePinnedChats(change ? { account: owner, ...change } : { account: owner }),
+    );
+    return owner === account ? snapshot : null;
+  } catch (_) {
+    diag("pinned-chats.sync", "request failed");
+    return null;
+  }
 }
 
-function save(next: readonly PinnedChat[]) {
-  if (!account) return;
-  pinnedChats.replace(next);
-  sync(next);
-}
+const sync = createPinnedChatsSync(pinnedChats, request);
 
 export function isChatPinned(id: string): boolean {
   return pinnedChats.getIds().has(id);
@@ -56,9 +50,7 @@ export function canPinChat(): boolean {
 }
 
 export function setChatPinned(id: string, name: string, pinned: boolean) {
-  const list = pinnedChats.getSnapshot();
-  const next = pinned ? withPin(list, { id, name }) : withoutPin(list, id);
-  if (next !== list) save(next);
+  if (account) void sync.change(pinned ? { op: "pin", id, name } : { op: "unpin", id });
 }
 
 /** Fill Messenger's pinned-section slot in the chat list (see pinned-chats-section.ts). */
@@ -68,9 +60,7 @@ export function interceptPinnedChatModules(define: (...args: unknown[]) => unkno
     // Keep the remembered name in step with what the chat list shows, for
     // when the chat isn't loaded on a later start.
     onRow(id, row) {
-      const list = pinnedChats.getSnapshot();
-      const next = withName(list, id, chatRowName(row));
-      if (next !== list) save(next);
+      if (account) void sync.change({ op: "rename", id, name: chatRowName(row) });
     },
     onError: (error) =>
       diag("pinned-chats.section", error instanceof Error ? error.name : "render failed"),
@@ -81,6 +71,6 @@ export function initPinnedChats() {
   if (!window.__TAURI_INTERNALS__) return;
   account = accountId(document.cookie);
   if (!account) return;
-  window.addEventListener(CHANGED_EVENT, () => sync());
-  sync();
+  window.addEventListener(CHANGED_EVENT, () => void sync.refresh());
+  void sync.refresh();
 }

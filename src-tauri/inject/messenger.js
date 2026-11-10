@@ -551,16 +551,16 @@
         return state3;
       }
     };
-    const reply = (request, payload) => invoke("plugin:event|emit", {
+    const reply = (request2, payload) => invoke("plugin:event|emit", {
       event: "chatpane:account-result",
-      payload: { request, ...payload }
+      payload: { request: request2, ...payload }
     });
-    window.__chatpaneAccount = (request, action2, value) => {
+    window.__chatpaneAccount = (request2, action2, value) => {
       const run = actions[action2];
-      (run ? Promise.resolve().then(() => run(value)) : Promise.reject(new Error("Unknown request"))).then((state3) => reply(request, { ok: true, state: state3 })).catch((error) => {
+      (run ? Promise.resolve().then(() => run(value)) : Promise.reject(new Error("Unknown request"))).then((state3) => reply(request2, { ok: true, state: state3 })).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         diag(`account.${action2}`, message.slice(0, 200));
-        return reply(request, { ok: false, error: message });
+        return reply(request2, { ok: false, error: message });
       });
     };
   }
@@ -868,15 +868,15 @@
       if (!visible) return { state: "pending", wait_ms: 0 };
       this.lastSample = now;
       if (!this.request) {
-        const request = {
+        const request2 = {
           since: now,
           handle: this.requestFrame(() => {
-            if (this.request !== request) return;
+            if (this.request !== request2) return;
             this.request = void 0;
             this.hasFrame = true;
           })
         };
-        this.request = request;
+        this.request = request2;
       }
       const wait_ms = Math.max(0, Math.round(now - this.request.since));
       return {
@@ -2019,18 +2019,18 @@ ${button.innerHTML}`)
           WORKER_HEARTBEAT_TIMEOUT_MS
         );
       });
-      const request = (route) => sendAndReceive("backend", route, void 0, {
+      const request2 = (route) => sendAndReceive("backend", route, void 0, {
         isLoggingDisabled: true,
         timeoutMs: WORKER_HEARTBEAT_TIMEOUT_MS
       });
       Promise.resolve().then(() => {
         observation?.start();
-        const probe = observation ? Promise.all([request("resendWorkerStateManagerValuesToMainThread"), observation.value]).then(([, connected]) => connected).catch((error) => {
+        const probe = observation ? Promise.all([request2("resendWorkerStateManagerValuesToMainThread"), observation.value]).then(([, connected]) => connected).catch((error) => {
           if (!live || !stillCurrent() || !isMissingWorkerStateRoute(error)) throw error;
           stateRouteUnavailableFor = stillCurrent;
           observation.dispose();
-          return request("getWorkerHeartbeat").then(() => void 0);
-        }) : request("getWorkerHeartbeat").then(() => void 0);
+          return request2("getWorkerHeartbeat").then(() => void 0);
+        }) : request2("getWorkerHeartbeat").then(() => void 0);
         return Promise.race([probe, deadline]);
       }).then((connected) => {
         verified = void 0;
@@ -2168,7 +2168,7 @@ ${button.innerHTML}`)
   async function probeFacebook(fetch2) {
     const controller = new AbortController();
     const timer = nativeSetTimeout2(() => controller.abort(), PROBE_TIMEOUT_MS);
-    const request = (url, init) => fetch2(url, {
+    const request2 = (url, init) => fetch2(url, {
       cache: "no-store",
       credentials: "omit",
       redirect: "manual",
@@ -2179,11 +2179,11 @@ ${button.innerHTML}`)
       return await new Promise((resolve) => {
         let failures2 = 0;
         const probes = [
-          request("/favicon.ico", { method: "HEAD" }),
+          request2("/favicon.ico", { method: "HEAD" }),
           // Cross-origin, so no-cors: an opaque response still proves
           // reachability. Fetch rejects no-cors requests that don't follow
           // redirects, so this one does.
-          request(SECOND_PROBE_URL, { mode: "no-cors", redirect: "follow" })
+          request2(SECOND_PROBE_URL, { mode: "no-cors", redirect: "follow" })
         ];
         for (const probe of probes) {
           probe.then(
@@ -4424,9 +4424,9 @@ ${button.innerHTML}`)
   }
   function parsePinnedSnapshot(value) {
     if (!value || typeof value !== "object") return null;
-    const { revision: revision2, pins } = value;
-    if (typeof revision2 !== "number" || !Number.isSafeInteger(revision2)) return null;
-    return { revision: revision2, pins: parsePinnedChats(pins) };
+    const { revision, pins } = value;
+    if (typeof revision !== "number" || !Number.isSafeInteger(revision)) return null;
+    return { revision, pins: parsePinnedChats(pins) };
   }
   function withPin(list, chat) {
     if (!THREAD_ID_RE.test(chat.id) || list.length >= MAX_PINNED_CHATS) return list;
@@ -4440,6 +4440,11 @@ ${button.innerHTML}`)
     const clean = cleanName(name);
     if (!clean || !list.some((pin) => pin.id === id && pin.name !== clean)) return list;
     return list.map((pin) => pin.id === id ? { id, name: clean } : pin);
+  }
+  function applyPinChange(list, change) {
+    if (change.op === "pin") return withPin(list, change);
+    if (change.op === "unpin") return withoutPin(list, change.id);
+    return withName(list, change.id, change.name);
   }
   function createPinnedChatsStore() {
     let pins = [];
@@ -4458,6 +4463,36 @@ ${button.innerHTML}`)
         pins = next;
         ids = new Set(next.map((pin) => pin.id));
         for (const listener of [...listeners]) listener();
+      }
+    };
+  }
+  function createPinnedChatsSync(store, request2) {
+    let revision = 0;
+    const unconfirmed = [];
+    let sending = false;
+    const show = (snapshot) => {
+      if (!snapshot || snapshot.revision <= revision) return;
+      revision = snapshot.revision;
+      store.replace(unconfirmed.reduce(applyPinChange, snapshot.pins));
+    };
+    return {
+      async refresh() {
+        show(await request2());
+      },
+      async change(change) {
+        const list = store.getSnapshot();
+        const changed = applyPinChange(list, change);
+        if (changed === list) return;
+        store.replace(changed);
+        unconfirmed.push(change);
+        if (sending) return;
+        sending = true;
+        while (unconfirmed[0]) {
+          const snapshot = await request2(unconfirmed[0]);
+          unconfirmed.shift();
+          show(snapshot);
+        }
+        sending = false;
       }
     };
   }
@@ -4974,22 +5009,20 @@ ${button.innerHTML}`)
   // inject/src/messenger/features/pinned-chats.ts
   var CHANGED_EVENT = "chatpane:pinned-chats-changed";
   var account = null;
-  var revision = 0;
-  function sync(pins) {
+  async function request(change) {
     const owner = account;
-    if (!owner || typeof chatpanePinnedChats !== "function") return;
-    chatpanePinnedChats(pins ? { account: owner, pins: [...pins] } : { account: owner }).then((data) => {
-      const snapshot = parsePinnedSnapshot(data);
-      if (!snapshot || owner !== account || snapshot.revision <= revision) return;
-      revision = snapshot.revision;
-      pinnedChats.replace(snapshot.pins);
-    }).catch(() => diag("pinned-chats.sync", "request failed"));
+    if (!owner || typeof chatpanePinnedChats !== "function") return null;
+    try {
+      const snapshot = parsePinnedSnapshot(
+        await chatpanePinnedChats(change ? { account: owner, ...change } : { account: owner })
+      );
+      return owner === account ? snapshot : null;
+    } catch (_) {
+      diag("pinned-chats.sync", "request failed");
+      return null;
+    }
   }
-  function save(next) {
-    if (!account) return;
-    pinnedChats.replace(next);
-    sync(next);
-  }
+  var sync = createPinnedChatsSync(pinnedChats, request);
   function isChatPinned(id) {
     return pinnedChats.getIds().has(id);
   }
@@ -4997,9 +5030,7 @@ ${button.innerHTML}`)
     return account !== null && pinnedChats.getSnapshot().length < MAX_PINNED_CHATS;
   }
   function setChatPinned(id, name, pinned) {
-    const list = pinnedChats.getSnapshot();
-    const next = pinned ? withPin(list, { id, name }) : withoutPin(list, id);
-    if (next !== list) save(next);
+    if (account) void sync.change(pinned ? { op: "pin", id, name } : { op: "unpin", id });
   }
   function interceptPinnedChatModules(define) {
     return interceptThreadListModule(define, pinnedChats, {
@@ -5007,9 +5038,7 @@ ${button.innerHTML}`)
       // Keep the remembered name in step with what the chat list shows, for
       // when the chat isn't loaded on a later start.
       onRow(id, row) {
-        const list = pinnedChats.getSnapshot();
-        const next = withName(list, id, chatRowName(row));
-        if (next !== list) save(next);
+        if (account) void sync.change({ op: "rename", id, name: chatRowName(row) });
       },
       onError: (error) => diag("pinned-chats.section", error instanceof Error ? error.name : "render failed")
     });
@@ -5018,8 +5047,8 @@ ${button.innerHTML}`)
     if (!window.__TAURI_INTERNALS__) return;
     account = accountId(document.cookie);
     if (!account) return;
-    window.addEventListener(CHANGED_EVENT, () => sync());
-    sync();
+    window.addEventListener(CHANGED_EVENT, () => void sync.refresh());
+    void sync.refresh();
   }
 
   // inject/src/messenger/features/context-menu.ts
@@ -5355,7 +5384,7 @@ ${button.innerHTML}`)
         rectOf(message ? messageTextBlock(message) ?? message : target)
       ) : null;
       menuRequest += 1;
-      const request = menuRequest;
+      const request2 = menuRequest;
       const readAbandonably = async (read) => {
         nativeReflectApply3(nativeAddEventListener2, document, ["pointerdown", abandonMenu, true]);
         nativeReflectApply3(nativeAddEventListener2, document, ["keydown", abandonMenu, true]);
@@ -5369,7 +5398,7 @@ ${button.innerHTML}`)
       if (conversation) {
         const href = conversation.getAttribute("href") ?? "";
         const actions = await readAbandonably(() => readChatRowActions(conversation));
-        if (request !== menuRequest) return;
+        if (request2 !== menuRequest) return;
         const threadId = threadIdFromHref(href);
         if (threadId && isChatPinned(threadId)) {
           addItem([CHAT_PIN_CONTEXT_MENU_KEYS[1], () => setChatPinned(threadId, "", false)]);
@@ -5398,7 +5427,7 @@ ${button.innerHTML}`)
       }
       if (message) {
         const offer = await readAbandonably(() => readMessageOffer(message));
-        if (request !== menuRequest) return;
+        if (request2 !== menuRequest) return;
         for (let index = 0; index < offer.reactions.length; index += 1) {
           const reaction = offer.reactions[index];
           if (reaction)
@@ -6617,13 +6646,13 @@ ${button.innerHTML}`)
     const readNames = (key) => {
       const existing = pending.get(key);
       if (existing) return existing;
-      const request = loadNames(key);
-      pending.set(key, request);
-      void request.then(
+      const request2 = loadNames(key);
+      pending.set(key, request2);
+      void request2.then(
         () => pending.delete(key),
         () => pending.delete(key)
       );
-      return request;
+      return request2;
     };
     const hook = function useChatpaneReplyAttribution(...args) {
       const text2 = Reflect.apply(original, this, args);
@@ -9588,11 +9617,11 @@ ${button.innerHTML}`)
       await wait(200);
     }
   }
-  async function reactToMessage(load, request) {
+  async function reactToMessage(load, request2) {
     const { db, i64 } = await database(load);
     const message = record3(
       await db.runInTransaction(
-        (tx) => tx.messages.index("messageId").get(request.messageId),
+        (tx) => tx.messages.index("messageId").get(request2.messageId),
         "readonly",
         void 0,
         void 0,
@@ -9601,9 +9630,9 @@ ${button.innerHTML}`)
     );
     if (!message) return "message-missing";
     const threadKey = message.threadKey;
-    if (String(i64.to_string(threadKey)) !== request.threadId) return "thread-mismatch";
+    if (String(i64.to_string(threadKey)) !== request2.threadId) return "thread-mismatch";
     const sender = String(i64.to_string(message.senderId));
-    if (sender === request.account) return "own-message";
+    if (sender === request2.account) return "own-message";
     const thread2 = record3(await db.tables.threads.get(threadKey));
     if (!thread2) return "thread-missing";
     const types = load("LSMessagingThreadTypeUtil");
@@ -9618,7 +9647,7 @@ ${button.innerHTML}`)
         load,
         "MAWDbMsg",
         "toMsgId"
-      )(request.messageId);
+      )(request2.messageId);
       if (!msgId) return "message-id";
       const ready2 = await exported(load, "MAWMiActOnActThreadReady", "waitForACTThreadReady")(db.tables, threadKey, TRACE);
       const protocolId = await exported(
@@ -9627,7 +9656,7 @@ ${button.innerHTML}`)
         "getProtocolMsgIdByMsgIdUI"
       )(msgId);
       if (!ready2?.chatJid || !protocolId) return "protocol-id";
-      if (Date.now() >= request.deadline) return "expired";
+      if (Date.now() >= request2.deadline) return "expired";
       let qplEventType;
       try {
         qplEventType = exported(
@@ -9641,7 +9670,7 @@ ${button.innerHTML}`)
         args: {
           groupIndex: void 0,
           groupingKey: "",
-          reaction: request.reaction,
+          reaction: request2.reaction,
           reactToAuthor: sender,
           reactToProtocolMsgId: protocolId,
           source
@@ -9659,7 +9688,7 @@ ${button.innerHTML}`)
       "isReactionsV2Enabled"
     );
     if (v2(thread2)) return "reactions-v2";
-    const actorId = i64.of_string(request.account);
+    const actorId = i64.of_string(request2.account);
     const mine = record3(
       await db.runInTransaction(
         (tx) => tx.reactions.get(threadKey, message.messageId, actorId),
@@ -9669,7 +9698,7 @@ ${button.innerHTML}`)
         TRACE
       )
     );
-    if (mine?.reaction === request.reaction) return "ok";
+    if (mine?.reaction === request2.reaction) return "ok";
     const factory = exported(load, "LSFactory");
     const upsert = exported(
       load,
@@ -9677,11 +9706,11 @@ ${button.innerHTML}`)
     );
     return db.runInTransaction(
       async (tx) => {
-        if (Date.now() >= request.deadline) return "expired";
+        if (Date.now() >= request2.deadline) return "expired";
         await upsert(factory(tx), {
           actorId,
           messageId: message.messageId,
-          reaction: request.reaction,
+          reaction: request2.reaction,
           sendAttribution: source,
           threadKey,
           timestampMs: i64.of_float(Date.now())
@@ -12873,7 +12902,7 @@ ${button.innerHTML}`)
       if (!widthStyle.isConnected) root.append(widthStyle);
       return true;
     };
-    const save2 = () => {
+    const save = () => {
       showWidths();
       rememberLocally(widths);
       invoke("plugin:event|emit", {
@@ -12940,7 +12969,7 @@ ${button.innerHTML}`)
         edge.classList.remove("dragging");
         if (width2 !== Math.round(startWidth)) {
           widths = { ...widths, [pane]: width2 };
-          save2();
+          save();
         }
         for (const [prop, value, priority] of inline) {
           if (value) el.style.setProperty(prop, value, priority);
@@ -12963,7 +12992,7 @@ ${button.innerHTML}`)
         event.stopPropagation();
         if (widths[pane] === null) return;
         widths = { ...widths, [pane]: null };
-        save2();
+        save();
       });
       return edge;
     };
@@ -14283,7 +14312,7 @@ ${text2}`)) {
       button?.setAttribute("aria-expanded", "false");
       if (focus) button?.focus();
     };
-    const request = async (operation) => {
+    const request2 = async (operation) => {
       const current2 = account2();
       if (!current2) throw new Error(t("page.schedule.sign_in"));
       const response = await chatpaneScheduledSend({ ...operation, account: current2 });
@@ -14310,7 +14339,7 @@ ${text2}`)) {
         void 0,
         { warning: true }
       );
-      for (const row of missed) await request({ op: "seen", id: row.id });
+      for (const row of missed) await request2({ op: "seen", id: row.id });
     };
     const positionPanel = () => {
       if (!panel || !button) return;
@@ -14328,7 +14357,7 @@ ${text2}`)) {
       if (!panel) return;
       panel.style.setProperty("--schedule-accent", accent);
     };
-    const save2 = async (due) => {
+    const save = async (due) => {
       if (busy2) return;
       const current2 = account2();
       if (!current2 || current2 !== owner || thread() !== panelThread) {
@@ -14363,7 +14392,7 @@ ${text2}`)) {
       try {
         let result;
         try {
-          result = await request({
+          result = await request2({
             op: "save",
             ...editingItem ? { id: editingItem.id } : {},
             thread: editingItem?.thread ?? expectedThread ?? void 0,
@@ -14374,7 +14403,7 @@ ${text2}`)) {
           if (!editingItem || recoveredDraft) throw error;
           let saved;
           try {
-            saved = (await request({ op: "list" })).items.find((row) => row.id === editingItem.id);
+            saved = (await request2({ op: "list" })).items.find((row) => row.id === editingItem.id);
           } catch {
           }
           if (saved?.status !== "scheduled" || saved.account !== current2 || saved.thread !== editingItem.thread || saved.text !== text2 || saved.due !== due) {
@@ -14394,7 +14423,7 @@ ${text2}`)) {
           const textToClear = recoveredDraft ? editingItem?.text ?? "" : expectedText;
           const unchanged = expectedBox?.isConnected && thread() === expectedThread && account2() === current2 && composerText(expectedBox) === textToClear && !hasComposerMedia(expectedBox);
           if (!unchanged || !expectedBox) {
-            if (!editingItem) await request({ op: "cancel", id: result.saved });
+            if (!editingItem) await request2({ op: "cancel", id: result.saved });
             throw new Error(t("page.schedule.draft_changed"));
           }
           const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account2() === current2 && !hasComposerMedia(expectedBox);
@@ -14410,11 +14439,11 @@ ${text2}`)) {
         }
         if (!editingItem || recoveredDraft) {
           try {
-            await request({ op: "arm", id: result.saved });
+            await request2({ op: "arm", id: result.saved });
           } catch (error) {
             let status;
             try {
-              status = (await request({ op: "list" })).items.find(
+              status = (await request2({ op: "list" })).items.find(
                 (row) => row.id === result.saved
               )?.status;
             } catch {
@@ -14486,7 +14515,7 @@ ${text2}`)) {
           preset.label,
           () => {
             const current2 = schedulePresets(Date.now()).find((p) => p.id === preset.id);
-            if (current2) void save2(current2.due);
+            if (current2) void save(current2.due);
           },
           element("span", "chatpane-schedule-time", formatScheduleTime(preset.due, now))
         );
@@ -14547,7 +14576,7 @@ ${text2}`)) {
             toast(t("page.schedule.invalid_time"));
             return;
           }
-          void save2(value);
+          void save(value);
         },
         "chatpane-schedule-primary"
       );
@@ -14595,7 +14624,7 @@ ${text2}`)) {
         if (row.status !== "sending")
           actions.append(
             action(t("page.schedule.cancel"), () => {
-              void request({ op: "cancel", id: row.id }).then(() => {
+              void request2({ op: "cancel", id: row.id }).then(() => {
                 if (page === "list") show("list");
               }).catch(failed);
             })
@@ -14636,7 +14665,7 @@ ${text2}`)) {
       sourceText = composerText(box);
       panelThread = thread();
       try {
-        await request({ op: "list" });
+        await request2({ op: "list" });
       } catch (error) {
         failed(error);
         return;
@@ -14710,7 +14739,7 @@ ${text2}`)) {
         return;
       polling = true;
       try {
-        await request({ op: "list" });
+        await request2({ op: "list" });
         await warning();
         while (canDeliver && ready()) {
           const due = nextDueMessage(rows, Date.now());
@@ -14725,7 +14754,7 @@ ${text2}`)) {
               location.href = `https://www.facebook.com/messages${due.thread}`;
               return false;
             }
-            const claimed = await request({ op: "claim", id: due.id });
+            const claimed = await request2({ op: "claim", id: due.id });
             if (claimed.claimed !== due.id) return false;
             const job = claimed.items.find((row) => row.id === due.id && row.status === "sending");
             if (!job) return false;
@@ -14734,7 +14763,7 @@ ${text2}`)) {
             try {
               outcome = await deliverScheduledMessage(job);
             } finally {
-              if (account2() === job.account) await request({ op: outcome, id: job.id, due: job.due });
+              if (account2() === job.account) await request2({ op: outcome, id: job.id, due: job.due });
             }
             return outcome !== "defer";
           });
@@ -16119,9 +16148,9 @@ ${text2}`)) {
   var TYPING_LABEL = "3";
   var IS_TYPING = /(is_typing(?:\\)*":)1(?![0-9])/g;
   function clearTyping(text2) {
-    const request = parseJson(text2);
-    if (request?.type !== TYPING_REQUEST) return null;
-    const update = nested(request, "payload");
+    const request2 = parseJson(text2);
+    if (request2?.type !== TYPING_REQUEST) return null;
+    const update = nested(request2, "payload");
     if (update?.label !== TYPING_LABEL || !nested(update, "payload")?.is_typing) return null;
     const edited = text2.replace(IS_TYPING, "$10");
     return edited === text2 ? null : edited;
@@ -16142,9 +16171,9 @@ ${text2}`)) {
       if (end > bytes.length) return null;
       let part = bytes.subarray(pos, end);
       const json = bytes[pos] === PART_DATA && end > pos + 8 ? new TextDecoder().decode(bytes.subarray(pos + 8, end)) : null;
-      const request = json && clearTyping(json);
-      if (request) {
-        const encoded = new TextEncoder().encode(request);
+      const request2 = json && clearTyping(json);
+      if (request2) {
+        const encoded = new TextEncoder().encode(request2);
         const length = encoded.length + 2;
         part = new Uint8Array(8 + encoded.length);
         part.set(bytes.subarray(pos, pos + 3));

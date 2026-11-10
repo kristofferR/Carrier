@@ -1,6 +1,6 @@
 //! Pinned chats (Ref #457): the conversations pinned to the top of the chat
 //! list, per Facebook account, each with the name the chat list last showed.
-//! The page asks for an account's pins, or saves them, with a signed
+//! The page asks for an account's pins, or changes one, with a signed
 //! `chatpane:pinned-chats` request and gets the account's pins back signed;
 //! a change sends the other Messenger windows `chatpane:pinned-chats-changed`
 //! to ask again (inject/src/messenger/features/pinned-chats.ts).
@@ -173,14 +173,53 @@ pub(crate) fn account_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// One change to an account's pins. Pages send changes rather than whole
+/// lists, so changes from several windows, or racing a read, all land.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum Change {
+    Pin { id: String, name: String },
+    Unpin { id: String },
+    Rename { id: String, name: String },
+}
+
+impl Change {
+    /// `pins` with this change made, or None when it changes nothing.
+    fn apply(&self, pins: &[Pin]) -> Option<Vec<Pin>> {
+        let (Change::Pin { id, .. } | Change::Unpin { id } | Change::Rename { id, .. }) = self;
+        let index = pins.iter().position(|pin| &pin.id == id);
+        let mut next = pins.to_vec();
+        match (self, index) {
+            (Change::Pin { name, .. }, None) if valid_thread_id(id) && pins.len() < MAX_PINS => {
+                next.push(Pin {
+                    id: id.clone(),
+                    name: clean_name(name),
+                });
+            }
+            (Change::Unpin { .. }, Some(index)) => {
+                next.remove(index);
+            }
+            (Change::Rename { name, .. }, Some(index)) => {
+                let name = clean_name(name);
+                if name.is_empty() || name == pins[index].name {
+                    return None;
+                }
+                next[index].name = name;
+            }
+            _ => return None,
+        }
+        Some(next)
+    }
+}
+
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Request {
     /// The page's token for the signed reply.
     request: String,
     account: String,
     /// Absent to ask for the account's pins.
-    pins: Option<serde_json::Value>,
+    #[serde(flatten)]
+    change: Option<Change>,
 }
 
 struct PinnedChats {
@@ -266,8 +305,11 @@ pub(crate) fn install(app: &tauri::AppHandle) {
             // Answer under the lock, so snapshots leave in the order they were made.
             let mut pinned = state.lock().unwrap();
             let mut changed = false;
-            if let Some(value) = &request.pins
-                && pinned.store.set(&request.account, pins_from_value(value))
+            if let Some(next) = request
+                .change
+                .as_ref()
+                .and_then(|change| change.apply(&pinned.store.get(&request.account)))
+                && pinned.store.set(&request.account, next)
             {
                 changed = true;
                 pinned.revision += 1;
@@ -322,6 +364,54 @@ mod tests {
             .collect();
         assert_eq!(pins_from_value(&serde_json::json!(many)).len(), MAX_PINS);
         assert!(pins_from_value(&serde_json::json!({ "id": "1" })).is_empty());
+    }
+
+    #[test]
+    fn changes_apply_to_the_stored_pins() {
+        let change = |json: serde_json::Value| serde_json::from_value::<Change>(json).unwrap();
+        let pins = vec![pin("1", "Ada")];
+        let pinned = change(serde_json::json!({ "op": "pin", "id": "2", "name": " Grace " }))
+            .apply(&pins)
+            .unwrap();
+        assert_eq!(pinned, vec![pin("1", "Ada"), pin("2", "Grace")]);
+        assert!(
+            change(serde_json::json!({ "op": "pin", "id": "1", "name": "again" }))
+                .apply(&pins)
+                .is_none()
+        );
+        assert!(
+            change(serde_json::json!({ "op": "pin", "id": "x", "name": "" }))
+                .apply(&pins)
+                .is_none()
+        );
+        let full: Vec<_> = (0..MAX_PINS).map(|i| pin(&i.to_string(), "")).collect();
+        assert!(
+            change(serde_json::json!({ "op": "pin", "id": "999", "name": "" }))
+                .apply(&full)
+                .is_none()
+        );
+        assert_eq!(
+            change(serde_json::json!({ "op": "unpin", "id": "1" })).apply(&pins),
+            Some(vec![])
+        );
+        assert!(
+            change(serde_json::json!({ "op": "unpin", "id": "2" }))
+                .apply(&pins)
+                .is_none()
+        );
+        assert_eq!(
+            change(serde_json::json!({ "op": "rename", "id": "1", "name": "Ada L" })).apply(&pins),
+            Some(vec![pin("1", "Ada L")])
+        );
+        assert!(
+            change(serde_json::json!({ "op": "rename", "id": "1", "name": "  " }))
+                .apply(&pins)
+                .is_none()
+        );
+        // A read carries no change.
+        let read: Request =
+            serde_json::from_value(serde_json::json!({ "request": "r", "account": "1" })).unwrap();
+        assert!(read.change.is_none());
     }
 
     #[test]

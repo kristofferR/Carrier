@@ -38,10 +38,14 @@ export function parsePinnedChats(value: unknown): PinnedChat[] {
   return out;
 }
 
+/** An account's pins as native code keeps them. The revision rises with every change. */
+export interface PinnedSnapshot {
+  revision: number;
+  pins: PinnedChat[];
+}
+
 /** A native snapshot of an account's pins, or null when it isn't one. */
-export function parsePinnedSnapshot(
-  value: unknown,
-): { revision: number; pins: PinnedChat[] } | null {
+export function parsePinnedSnapshot(value: unknown): PinnedSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const { revision, pins } = value as Record<string, unknown>;
   if (typeof revision !== "number" || !Number.isSafeInteger(revision)) return null;
@@ -68,6 +72,22 @@ export function withName(
   const clean = cleanName(name);
   if (!clean || !list.some((pin) => pin.id === id && pin.name !== clean)) return list;
   return list.map((pin) => (pin.id === id ? { id, name: clean } : pin));
+}
+
+/** One change to the pins, as the page sends it to native code. */
+export type PinChange =
+  | { op: "pin"; id: string; name: string }
+  | { op: "unpin"; id: string }
+  | { op: "rename"; id: string; name: string };
+
+/** `list` with `change` made; `list` itself when it changes nothing. */
+export function applyPinChange(
+  list: readonly PinnedChat[],
+  change: PinChange,
+): readonly PinnedChat[] {
+  if (change.op === "pin") return withPin(list, change);
+  if (change.op === "unpin") return withoutPin(list, change.id);
+  return withName(list, change.id, change.name);
 }
 
 export interface PinnedChatsStore {
@@ -99,6 +119,46 @@ export function createPinnedChatsStore(): PinnedChatsStore {
       pins = next;
       ids = new Set(next.map((pin) => pin.id));
       for (const listener of [...listeners]) listener();
+    },
+  };
+}
+
+/**
+ * Keeps `store` in step with native code. A change shows at once and goes to
+ * native code after the ones before it. An answer older than the one shown is
+ * dropped, and every answer is shown with the changes still unconfirmed on top,
+ * so a read that was under way during a change can't undo it.
+ */
+export function createPinnedChatsSync(
+  store: PinnedChatsStore,
+  request: (change?: PinChange) => Promise<PinnedSnapshot | null>,
+) {
+  let revision = 0;
+  const unconfirmed: PinChange[] = [];
+  let sending = false;
+  const show = (snapshot: PinnedSnapshot | null) => {
+    if (!snapshot || snapshot.revision <= revision) return;
+    revision = snapshot.revision;
+    store.replace(unconfirmed.reduce(applyPinChange, snapshot.pins));
+  };
+  return {
+    async refresh() {
+      show(await request());
+    },
+    async change(change: PinChange) {
+      const list = store.getSnapshot();
+      const changed = applyPinChange(list, change);
+      if (changed === list) return;
+      store.replace(changed);
+      unconfirmed.push(change);
+      if (sending) return;
+      sending = true;
+      while (unconfirmed[0]) {
+        const snapshot = await request(unconfirmed[0]);
+        unconfirmed.shift();
+        show(snapshot);
+      }
+      sending = false;
     },
   };
 }

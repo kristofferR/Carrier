@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   createPinnedChatsStore,
+  createPinnedChatsSync,
   MAX_PINNED_CHATS,
   MAX_PINNED_NAME_CHARS,
+  type PinChange,
+  type PinnedSnapshot,
   parsePinnedChats,
   parsePinnedSnapshot,
   withName,
@@ -70,5 +73,41 @@ describe("pinned chats", () => {
     expect(calls).toBe(1);
     expect(store.getIds()).toBe(ids);
     expect(store.getSnapshot()).not.toBe(empty);
+  });
+
+  test("a read answered during a change can't undo it, and changes go in order", async () => {
+    const store = createPinnedChatsStore();
+    const sent: (PinChange | undefined)[] = [];
+    const answers: ((snapshot: PinnedSnapshot) => void)[] = [];
+    const sync = createPinnedChatsSync(store, (change) => {
+      sent.push(change);
+      return new Promise((resolve) => answers.push(resolve));
+    });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const ada = { id: "1", name: "Ada" };
+    const bob = { id: "2", name: "Bob" };
+
+    void sync.refresh();
+    void sync.change({ op: "pin", ...ada });
+    expect(store.getSnapshot()).toEqual([ada]);
+    // The read was answered before native code saw the pin.
+    answers[0]?.({ revision: 1, pins: [] });
+    await settle();
+    expect(store.getSnapshot()).toEqual([ada]);
+
+    void sync.change({ op: "pin", ...bob });
+    expect(sent).toEqual([undefined, { op: "pin", ...ada }]);
+    answers[1]?.({ revision: 2, pins: [ada] });
+    await settle();
+    expect(store.getSnapshot()).toEqual([ada, bob]);
+    expect(sent).toEqual([undefined, { op: "pin", ...ada }, { op: "pin", ...bob }]);
+    answers[2]?.({ revision: 3, pins: [ada, bob] });
+    await settle();
+
+    // An older answer arriving late is dropped.
+    void sync.refresh();
+    answers[3]?.({ revision: 2, pins: [ada] });
+    await settle();
+    expect(store.getSnapshot()).toEqual([ada, bob]);
   });
 });
