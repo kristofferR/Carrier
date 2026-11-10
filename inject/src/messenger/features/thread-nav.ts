@@ -11,7 +11,7 @@ const RESTORED_THREAD_KEY = "chatpane-restored-thread";
 let cancelThreadRestore = () => {};
 
 /** The open thread's header "ⓘ" button that shows/hides the details sidebar. */
-export function conversationInfoButton(): HTMLElement | null {
+function conversationInfoButton(): HTMLElement | null {
   const exact = document.querySelector<HTMLElement>(
     '[role="button"][aria-label="Conversation information"]',
   );
