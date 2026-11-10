@@ -1078,8 +1078,8 @@
   html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast::after { color: rgba(252, 252, 252, .6); }
   html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-msg { color: #fcfcfc; }
   html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-app { box-shadow: none; }
-  /* The demos further down show the app in the visitor's own scheme: the page
-     script sets data-win-theme on them. Only the notifications demo has
+  /* The demos further down follow the window preview's Light/Dark switch: the
+     page script sets data-win-theme on them too. Only the notifications demo has
      actions, so these extend the hero's dark toasts. */
   html:not([data-os]) .notif-demo[data-win-theme="dark"] .toast .t-close { background: rgba(58, 58, 60, .96); color: rgba(255, 255, 255, .75); }
   html:not([data-os]) .notif-demo[data-win-theme="dark"] .toast .t-options { background: rgba(255, 255, 255, .12); color: #f5f5f7; }
@@ -2747,8 +2747,11 @@
       });
     }
     var darkOnly = document.querySelectorAll('.wt-btn[data-skin="oled"], .wt-btn[data-skin="terminal"]');
+    // The demos further down follow the same light or dark choice.
+    var demos = document.querySelectorAll('.notif-demo, .sched-demo, .menu-demo');
     function setMode(mode) {
       stage.setAttribute('data-win-theme', mode);
+      demos.forEach(function (d) { d.setAttribute('data-win-theme', mode); });
       press(modes, mode, 'data-theme');
       // OLED Black and Terminal are dark-only themes, so they're only offered in Dark.
       darkOnly.forEach(function (b) { b.hidden = mode !== 'dark'; });
@@ -2760,20 +2763,8 @@
     }
     modes.forEach(function (b) { b.addEventListener('click', function () { setMode(b.getAttribute('data-theme')); }); });
     skins.forEach(function (b) { b.addEventListener('click', function () { setSkin(b.getAttribute('data-skin')); }); });
-    // Visitors in dark mode see the window in Dark first.
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) setMode('dark');
-  })();
-
-  // The demos further down show the app in the visitor's own scheme.
-  (function () {
-    var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
-    if (!mq) return;
-    var demos = document.querySelectorAll('.notif-demo, .sched-demo, .menu-demo');
-    function follow() {
-      demos.forEach(function (d) { d.setAttribute('data-win-theme', mq.matches ? 'dark' : 'light'); });
-    }
-    follow();
-    if (mq.addEventListener) mq.addEventListener('change', follow);
+    // Start from the visitor's own scheme.
+    setMode(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   })();
 
   // Fit script: the window is built at its native 993×652 and scaled as one
