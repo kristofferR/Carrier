@@ -1371,6 +1371,10 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
             ))
             .inner_size(900.0, 720.0)
             .min_inner_size(720.0, 620.0)
+            // On a 1280×800 or 1366×768 screen the default spot puts the
+            // footer under the taskbar: fit the work area and center in it.
+            .prevent_overflow()
+            .center()
             .resizable(true)
             .maximizable(false)
             .minimizable(false)
