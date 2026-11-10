@@ -3699,6 +3699,7 @@ ${button.innerHTML}`)
       if (renders(node, c.unarchive)) return "shared.context.unarchive_chat";
       if (renders(node, c.deleteChat)) return "shared.context.delete_chat";
       if (renders(node, c.leaveGroup)) return "shared.context.leave_group";
+      if (renders(node, c.startEncryptedChat)) return "shared.context.start_encrypted_chat";
       if (renders(node, c.block)) return { blockContact: props.contactId };
     }
     if (icon3 != null && icon3 === c.viewProfileIcon) return "shared.context.view_profile";
@@ -4017,6 +4018,7 @@ ${button.innerHTML}`)
       unarchive: moduleExport(load, archive, "MWV2ArchiveThreadMenuItemUnarchive"),
       deleteChat: moduleExport(load, "MWThreadListHoverButtonDropdownMenuDeleteThreadButton.react"),
       leaveGroup: moduleExport(load, "MWLSLeaveGroupMenuItem.react"),
+      startEncryptedChat: moduleExport(load, "MAWSecureConversationThreadListMenuItem.react"),
       block: moduleExport(load, "MWInboxInfoBlockMessages.react"),
       menu: moduleExport(load, "FDSMenu.react"),
       viewProfileIcon: icons2?.ViewProfile,

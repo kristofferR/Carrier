@@ -77,6 +77,8 @@ export interface ChatRowComponents {
   deleteChat: unknown;
   /** MWLSLeaveGroupMenuItem.react. */
   leaveGroup: unknown;
+  /** MAWSecureConversationThreadListMenuItem.react, on chats that aren't encrypted. */
+  startEncryptedChat: unknown;
   /** MWInboxInfoBlockMessages.react, whose row is Block or Unblock by the contact's state. */
   block: unknown;
   /** FDSMenu.react, where a row's own components end. */
@@ -112,6 +114,7 @@ export function classifyChatRow(fiber: Fiber | null, c: ChatRowComponents): Chat
     if (renders(node, c.unarchive)) return "shared.context.unarchive_chat";
     if (renders(node, c.deleteChat)) return "shared.context.delete_chat";
     if (renders(node, c.leaveGroup)) return "shared.context.leave_group";
+    if (renders(node, c.startEncryptedChat)) return "shared.context.start_encrypted_chat";
     if (renders(node, c.block)) return { blockContact: props.contactId };
   }
   if (icon != null && icon === c.viewProfileIcon) return "shared.context.view_profile";

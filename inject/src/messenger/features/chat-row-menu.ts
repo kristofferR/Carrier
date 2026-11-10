@@ -54,6 +54,7 @@ function chatRowComponents(): ChatRowComponents {
     unarchive: moduleExport(load, archive, "MWV2ArchiveThreadMenuItemUnarchive"),
     deleteChat: moduleExport(load, "MWThreadListHoverButtonDropdownMenuDeleteThreadButton.react"),
     leaveGroup: moduleExport(load, "MWLSLeaveGroupMenuItem.react"),
+    startEncryptedChat: moduleExport(load, "MAWSecureConversationThreadListMenuItem.react"),
     block: moduleExport(load, "MWInboxInfoBlockMessages.react"),
     menu: moduleExport(load, "FDSMenu.react"),
     viewProfileIcon: icons?.ViewProfile,

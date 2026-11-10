@@ -85,6 +85,7 @@ describe("classifyChatRow", () => {
     unarchive: () => null,
     deleteChat: () => null,
     leaveGroup: { $$typeof: "memo", type: () => null },
+    startEncryptedChat: () => null,
     block: () => null,
     menu: () => null,
     viewProfileIcon: () => null,
@@ -126,6 +127,9 @@ describe("classifyChatRow", () => {
     );
     expect(classifyChatRow(row(text, { type: c.deleteChat }), c)).toBe(
       "shared.context.delete_chat",
+    );
+    expect(classifyChatRow(row(text, { type: c.startEncryptedChat }), c)).toBe(
+      "shared.context.start_encrypted_chat",
     );
   });
 
