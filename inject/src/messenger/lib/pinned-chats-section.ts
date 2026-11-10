@@ -29,7 +29,7 @@ const PINNED_UTILS_MODULE = "MWLSPinnedThreadUtils";
 const INBOX_ENTRY_POINT = "inboxThreadList";
 
 export interface PinnedSectionHooks {
-  /** The section's heading. */
+  /** The section's accessible name; the pin on each row is drawn in CSS only. */
   title(): string;
   /** A pinned chat's Messenger row rendered; its name can be refreshed. */
   onRow(id: string, row: Element): void;
@@ -272,14 +272,12 @@ function createParts(load: Load, store: PinnedChatsStore, hooks: PinnedSectionHo
     const pins = useSyncExternalStore(store.subscribe, store.getSnapshot);
     const broken = useSyncExternalStore(subscribeFailure, hasFailed);
     if (!shown || broken || pins.length === 0) return null;
-    const title = hooks.title();
     return h(
       Boundary,
       null,
       h(
         "div",
-        { className: "chatpane-pinned-chats", role: "rowgroup", "aria-label": title },
-        h("div", { className: "chatpane-pinned-chats-title", "aria-hidden": "true" }, title),
+        { className: "chatpane-pinned-chats", role: "rowgroup", "aria-label": hooks.title() },
         ...pins.map((pin) =>
           h(Suspense, { key: pin.id, fallback: null }, h(PinnedRow, { pin, list: props })),
         ),

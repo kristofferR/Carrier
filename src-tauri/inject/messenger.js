@@ -4923,14 +4923,12 @@ ${button.innerHTML}`)
       const pins = useSyncExternalStore(store.subscribe, store.getSnapshot);
       const broken = useSyncExternalStore(subscribeFailure, hasFailed);
       if (!shown || broken || pins.length === 0) return null;
-      const title = hooks.title();
       return h(
         Boundary,
         null,
         h(
           "div",
-          { className: "chatpane-pinned-chats", role: "rowgroup", "aria-label": title },
-          h("div", { className: "chatpane-pinned-chats-title", "aria-hidden": "true" }, title),
+          { className: "chatpane-pinned-chats", role: "rowgroup", "aria-label": hooks.title() },
           ...pins.map(
             (pin) => h(Suspense, { key: pin.id, fallback: null }, h(PinnedRow, { pin, list: props }))
           )
