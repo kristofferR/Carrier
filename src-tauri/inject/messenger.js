@@ -1093,7 +1093,7 @@
       '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]'
     )) {
       const href = a.getAttribute("href");
-      if (!href || seen.has(href)) continue;
+      if (!href || seen.has(href) || !threadIdFromHref(href)) continue;
       const r = a.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;
       seen.add(href);
