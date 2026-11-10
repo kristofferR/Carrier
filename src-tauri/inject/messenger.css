@@ -925,13 +925,24 @@ html[data-chatpane-message-menu-probe] [role="menu"] {
 /* pinned-chats-section.ts draws the Pinned section above the chat list (#457):
    Messenger's own rows, or a plain row for a pinned chat Messenger hasn't
    loaded yet. It disappears when none of its chats can be shown. */
-.chatpane-pinned-chats {
-  container-type: inline-size;
-  margin-bottom: 4px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--divider, rgba(127, 127, 127, 0.3));
-}
+.chatpane-pinned-chats { container-type: inline-size; }
 .chatpane-pinned-chats:not(:has([data-chatpane-pinned-row])) { display: none; }
+/* Facebook's --divider is too faint to mark where the pinned chats end. */
+.chatpane-pinned-chats::after {
+  content: ""; display: block; height: 1px; margin: 8px 16px;
+  background: var(--secondary-text, #65676b); opacity: 0.3;
+}
+/* A red pushpin in the top corner of each pinned chat's picture, which sits
+   16px in and 8px down in Messenger's rows and in the fallback row. */
+[data-chatpane-pinned-row] { position: relative; }
+[data-chatpane-pinned-row]::after {
+  content: ""; position: absolute; inset-inline-start: 54px; top: 2px;
+  width: 22px; height: 22px; pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff6f80'/%3E%3Cstop offset='.55' stop-color='%23ed2645'/%3E%3Cstop offset='1' stop-color='%23c5102c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg transform='rotate(40 12 12)'%3E%3Cpath d='M12 15v7.2' stroke='%239aa0a8' stroke-width='1.9' stroke-linecap='round'/%3E%3Cpath d='M8.6 1.6h6.8a1.6 1.6 0 0 1 0 3.2h-.5l.8 5c2 .7 3.4 2.2 3.4 3.8a.9.9 0 0 1-.9.9H5.8a.9.9 0 0 1-.9-.9c0-1.6 1.4-3.1 3.4-3.8l.8-5h-.5a1.6 1.6 0 0 1 0-3.2z' fill='url(%23g)'/%3E%3Cpath d='M9.4 2.9h3.2' stroke='%23fff' stroke-opacity='.55' stroke-width='1.1' stroke-linecap='round'/%3E%3C/g%3E%3C/svg%3E") center / 22px no-repeat;
+  filter: drop-shadow(0 0 1px var(--surface-background, #fff))
+    drop-shadow(0 0 1px var(--surface-background, #fff))
+    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+}
 .chatpane-pinned-chats-title {
   padding: 8px 16px 4px;
   color: var(--secondary-text, #65676b);
