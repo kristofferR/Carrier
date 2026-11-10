@@ -354,7 +354,7 @@
   }
 
   /* theme tokens - the real Messenger palettes */
-  .win {
+  .win, .sched-demo, .menu-demo {
     --w-window: #f0f2f5;   /* window bg behind the panels (audited: not white) */
     --w-surface: #ffffff;
     --w-titlebar: #f7f8fa;
@@ -375,7 +375,7 @@
     --w-badge: #0866ff;
     --w-green: #31a24c;
   }
-  .win-stage[data-win-theme="dark"] .win {
+  .win-stage[data-win-theme="dark"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="dark"] {
     --w-window: #1c1c1d;
     --w-surface: #242526;
     --w-titlebar: #1e1f20;
@@ -394,7 +394,7 @@
   }
 
   /* Chatpane's built-in themes (src-tauri/themes), drawn on the replica */
-  .win-stage[data-win-theme="dark"][data-win-skin="oled"] .win {
+  .win-stage[data-win-theme="dark"][data-win-skin="oled"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="dark"][data-win-skin="oled"] {
     --w-window: #000000;
     --w-surface: #000000;
     --w-hairline: rgba(255, 255, 255, .09);
@@ -409,7 +409,7 @@
     --w-chip-bg: #1c1c1e;
     --w-chip-text: #75b3ff;
   }
-  .win-stage[data-win-theme="light"][data-win-skin="graphite"] .win {
+  .win-stage[data-win-theme="light"][data-win-skin="graphite"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="light"][data-win-skin="graphite"] {
     --w-window: #e7e8ea;
     --w-surface: #ffffff;
     --w-hairline: rgba(0, 0, 0, .09);
@@ -429,7 +429,7 @@
     --w-out: #2b2d31;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="dark"][data-win-skin="graphite"] .win {
+  .win-stage[data-win-theme="dark"][data-win-skin="graphite"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="dark"][data-win-skin="graphite"] {
     --w-window: #141517;
     --w-surface: #212224;
     --w-hairline: rgba(255, 255, 255, .08);
@@ -449,7 +449,7 @@
     --w-out: #d9dadd;
     --w-out-text: #141516;
   }
-  .win-stage[data-win-theme="light"][data-win-skin="warm"] .win {
+  .win-stage[data-win-theme="light"][data-win-skin="warm"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="light"][data-win-skin="warm"] {
     --w-window: #ece4d6;
     --w-surface: #fffdf9;
     --w-hairline: rgba(60, 40, 20, .12);
@@ -469,7 +469,7 @@
     --w-out: #c4623a;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="dark"][data-win-skin="warm"] .win {
+  .win-stage[data-win-theme="dark"][data-win-skin="warm"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="dark"][data-win-skin="warm"] {
     --w-window: #16120f;
     --w-surface: #241e19;
     --w-hairline: rgba(255, 230, 200, .09);
@@ -490,7 +490,7 @@
     --w-out-text: #ffffff;
   }
   /* 3.0.1 themes (src-tauri/themes): Pink, Lavender, Sage, Slate, Terminal */
-  .win-stage[data-win-theme="light"][data-win-skin="pink"] .win {
+  .win-stage[data-win-theme="light"][data-win-skin="pink"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="light"][data-win-skin="pink"] {
     --w-window: #f8dfe9;
     --w-surface: #fffafc;
     --w-hairline: rgba(180, 40, 100, .12);
@@ -510,7 +510,7 @@
     --w-out: #d1307a;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="dark"][data-win-skin="pink"] .win {
+  .win-stage[data-win-theme="dark"][data-win-skin="pink"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="dark"][data-win-skin="pink"] {
     --w-window: #1a0f15;
     --w-surface: #2a1822;
     --w-hairline: rgba(255, 200, 225, .09);
@@ -530,7 +530,7 @@
     --w-out: #c93a7d;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="light"][data-win-skin="lavender"] .win {
+  .win-stage[data-win-theme="light"][data-win-skin="lavender"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="light"][data-win-skin="lavender"] {
     --w-window: #e6e1f2;
     --w-surface: #fdfcff;
     --w-hairline: rgba(70, 40, 130, .1);
@@ -550,7 +550,7 @@
     --w-out: #7b5cc4;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="dark"][data-win-skin="lavender"] .win {
+  .win-stage[data-win-theme="dark"][data-win-skin="lavender"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="dark"][data-win-skin="lavender"] {
     --w-window: #15121d;
     --w-surface: #221d2e;
     --w-hairline: rgba(220, 210, 255, .09);
@@ -570,7 +570,7 @@
     --w-out: #7356c0;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="light"][data-win-skin="sage"] .win {
+  .win-stage[data-win-theme="light"][data-win-skin="sage"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="light"][data-win-skin="sage"] {
     --w-window: #e1e7dc;
     --w-surface: #fbfcf8;
     --w-hairline: rgba(30, 60, 30, .1);
@@ -590,7 +590,7 @@
     --w-out: #4f7a4a;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="dark"][data-win-skin="sage"] .win {
+  .win-stage[data-win-theme="dark"][data-win-skin="sage"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="dark"][data-win-skin="sage"] {
     --w-window: #121712;
     --w-surface: #1e251e;
     --w-hairline: rgba(210, 240, 200, .09);
@@ -610,7 +610,7 @@
     --w-out: #4f7a4a;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="light"][data-win-skin="slate"] .win {
+  .win-stage[data-win-theme="light"][data-win-skin="slate"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="light"][data-win-skin="slate"] {
     --w-window: #dfe4ec;
     --w-surface: #fbfcfe;
     --w-hairline: rgba(30, 50, 80, .1);
@@ -630,7 +630,7 @@
     --w-out: #4a6fa5;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="dark"][data-win-skin="slate"] .win {
+  .win-stage[data-win-theme="dark"][data-win-skin="slate"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="dark"][data-win-skin="slate"] {
     --w-window: #161b23;
     --w-surface: #222937;
     --w-hairline: rgba(200, 220, 255, .09);
@@ -650,7 +650,7 @@
     --w-out: #4f73a8;
     --w-out-text: #ffffff;
   }
-  .win-stage[data-win-theme="dark"][data-win-skin="terminal"] .win {
+  .win-stage[data-win-theme="dark"][data-win-skin="terminal"] .win, :is(.sched-demo, .menu-demo)[data-win-theme="dark"][data-win-skin="terminal"] {
     --w-window: #000000;
     --w-surface: #050805;
     --w-hairline: rgba(80, 255, 120, .16);
@@ -1077,8 +1077,8 @@
   html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast::after { color: rgba(252, 252, 252, .6); }
   html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-msg { color: #fcfcfc; }
   html[data-os="linux"] :is(.win-stage, .notif-demo)[data-win-theme="dark"] .toast .t-app { box-shadow: none; }
-  /* The demos further down follow the window preview's Light/Dark switch: the
-     page script sets data-win-theme on them too. Only the notifications demo has
+  /* The demos further down follow the window preview's switches: the page
+     script sets data-win-theme and data-win-skin on them too. Only the notifications demo has
      actions, so these extend the hero's dark toasts. */
   html:not([data-os]) .notif-demo[data-win-theme="dark"] .toast .t-close { background: rgba(58, 58, 60, .96); color: rgba(255, 255, 255, .75); }
   html:not([data-os]) .notif-demo[data-win-theme="dark"] .toast .t-options { background: rgba(255, 255, 255, .12); color: #f5f5f7; }
@@ -1223,23 +1223,14 @@
   }
   /* a light Messenger conversation, same tokens as the hero replica */
   .sd-chat {
-    --w-surface: #ffffff; --w-hairline: rgba(0, 0, 0, .10); --w-text: #080809; --w-text2: #65686c;
-    --w-composer: #0070f6; --w-composer-pill: #f0f2f5; --w-pill-text: #65686c;
-    background: #fff; border-radius: 8px; overflow: hidden; text-align: start; color: #080809;
+    background: var(--w-surface); border-radius: 8px; overflow: hidden; text-align: start; color: var(--w-text);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 15px; line-height: 1.34;
     display: flex; flex-direction: column;
   }
   .sd-head .who { font-weight: 600; }
-  .sched-demo[data-win-theme="dark"] .sd-chat {
-    --w-surface: #242526; --w-hairline: rgba(255, 255, 255, .10); --w-text: #e4e6eb; --w-text2: #b0b3b8;
-    --w-composer-pill: #333334; --w-pill-text: #b0b3b8;
-    background: #242526; color: #e4e6eb;
-  }
-  .sched-demo[data-win-theme="dark"] .sd-draft { color: #e4e6eb; }
-  .sched-demo[data-win-theme="dark"] .chatpane-schedule-panel { --schedule-surface: #242526; --schedule-text: #e4e6eb; --schedule-muted: #b0b3b8; }
   .sd-body { position: relative; height: 380px; }
   .sd-input { padding-inline-end: 76px; }
-  .sd-draft { color: #080809; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sd-draft { color: var(--w-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sd-input .chatpane-schedule-button { position: absolute; inset-inline-end: 36px; top: 2px; margin: 0; }
   /* Narrow screens: like Messenger in a narrow window, the composer keeps only
      its first button, and the menu takes the chat's width. */
@@ -1252,13 +1243,14 @@
   @media (max-width: 400px) { .sd-body { height: 460px; } }
   /* Chatpane's scheduling UI, with the rules from src-tauri/inject/messenger.css */
   .chatpane-schedule-button {
-    appearance: none; border: 0; background: transparent; color: #0070f6;
+    appearance: none; border: 0; background: transparent; color: var(--w-composer, #0070f6);
     width: 32px; height: 32px; padding: 6px; border-radius: 50%; cursor: default;
   }
   .chatpane-schedule-button svg { display: block; width: 20px; height: 20px; }
   .chatpane-schedule-button[aria-expanded="true"] { background: color-mix(in srgb, currentColor 13%, transparent); }
   .chatpane-schedule-panel {
-    --schedule-accent: #0070f6; --schedule-surface: #ffffff; --schedule-text: #080809; --schedule-muted: #65686c;
+    /* Like the app, the menu takes Messenger's (here the theme's) colors. */
+    --schedule-accent: var(--w-composer); --schedule-surface: var(--w-surface); --schedule-text: var(--w-text); --schedule-muted: var(--w-text2);
     --schedule-hover: color-mix(in srgb, var(--schedule-text) 7%, transparent);
     --schedule-fill-strong: color-mix(in srgb, var(--schedule-text) 12%, var(--schedule-surface));
     --schedule-divider: color-mix(in srgb, var(--schedule-text) 12%, transparent);
@@ -1337,14 +1329,12 @@
   }
   .md-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
   .md-bubble span, .md-row {
-    display: inline-flex; align-items: center; gap: 8px; background: #fff; color: #1c1e21;
+    display: inline-flex; align-items: center; gap: 8px; background: var(--w-surface); color: var(--w-bubble-in-text);
     padding: 9px 14px; border-radius: 18px; font-size: 15px; white-space: nowrap;
   }
   .md-row { padding-block: 6px; padding-inline: 6px 14px; border-radius: 999px; }
   .md-row b { font-weight: 600; }
   .md-av { width: 30px; height: 30px; font-size: 11px; }
-  .menu-demo[data-win-theme="dark"] .md-bubble span { background: #303030; color: #e4e6eb; }
-  .menu-demo[data-win-theme="dark"] .md-row { background: #242526; color: #e4e6eb; }
   .menu-demo[data-win-theme="dark"] .ctx-menu { background: rgba(40, 40, 42, .96); border-color: rgba(255, 255, 255, .14); color: #f5f5f7; }
   .menu-demo[data-win-theme="dark"] .ctx-menu .chev { color: rgba(255, 255, 255, .5); }
   .menu-demo[data-win-theme="dark"] .ctx-menu hr { border-top-color: rgba(255, 255, 255, .12); }
@@ -2755,7 +2745,7 @@
       });
     }
     var darkOnly = document.querySelectorAll('.wt-btn[data-skin="oled"], .wt-btn[data-skin="terminal"]');
-    // The demos further down follow the same light or dark choice.
+    // The demos further down follow the same mode and theme.
     var demos = document.querySelectorAll('.notif-demo, .sched-demo, .menu-demo');
     function setMode(mode) {
       stage.setAttribute('data-win-theme', mode);
@@ -2767,6 +2757,7 @@
     }
     function setSkin(skin) {
       stage.setAttribute('data-win-skin', skin);
+      demos.forEach(function (d) { d.setAttribute('data-win-skin', skin); });
       press(skins, skin, 'data-skin');
     }
     modes.forEach(function (b) { b.addEventListener('click', function () { setMode(b.getAttribute('data-theme')); }); });
