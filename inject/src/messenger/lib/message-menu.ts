@@ -4,6 +4,7 @@
 
 import type { ConversationTextNode } from "./conversation-row";
 import { SYSTEM_EMOJI_GLYPH_ATTR } from "./emoji";
+import { ancestors, type Fiber, propsOf, renders } from "./react-fiber";
 
 // The message actions in menu order, named by the string keys of their labels.
 // Keep in sync with MESSAGE_CONTEXT_MENU_KEYS in src-tauri/src/menu.rs; a
@@ -26,8 +27,8 @@ const COPY_TEXT = "shared.context.copy_text" satisfies MessageAction;
 /** Actions driven through Messenger's own controls. */
 export type DrivenAction = Exclude<MessageAction, typeof COPY_TEXT>;
 
-/** Each driven action's row text in Messenger's (English) More menu, which
- * finds the row. */
+/** Each driven action's row text in Messenger's English More menu: the
+ * fallback when a row's component isn't recognised (see {@link classifyMoreRow}). */
 const MESSENGER_ROW_TEXT: Record<DrivenAction, string> = {
   "shared.context.reply": "Reply",
   "shared.context.edit": "Edit",
@@ -55,13 +56,85 @@ export const REPLY_ICON_PATH =
   "M6.497 1.035C7.593-.088 9.5.688 9.5 2.257V4.54c1.923.215 3.49 1.246 4.593 2.672C15.328 8.808 16 10.91 16 13v.305c0 .632-.465 1.017-.893 1.127-.422.11-.99.005-1.318-.493-.59-.894-1.2-1.482-1.951-1.859-.611-.307-1.359-.496-2.338-.558v2.23c0 1.57-1.908 2.346-3.003 1.222L.893 9.223a1.75 1.75 0 0 1 .001-2.444l5.603-5.744z";
 
 /** The action a hover-toolbar button performs, by its icon or its English
- * accessible label. Text messages show "Reply to this message"; media
- * messages show "Forward" there and move Reply into More. */
+ * accessible label: the fallback for {@link classifyToolbarButton}. Text
+ * messages show "Reply to this message"; media messages show "Forward" there
+ * and move Reply into More. */
 export function toolbarAction(label: string, iconPath = ""): DrivenAction | null {
   if (iconPath === REPLY_ICON_PATH || /^Reply\b/.test(label)) return "shared.context.reply";
   if (/^Forward\b/.test(label)) return "shared.context.forward";
   return null;
 }
+
+/**
+ * The components behind a message's hover toolbar (MWMessageRowActions.react)
+ * and its More menu (MWV2ContextualActionsMenu.react).
+ */
+export interface MessageMenuComponents {
+  reactButton: unknown;
+  replyButton: unknown;
+  forwardButton: unknown;
+  moreButton: unknown;
+  replyRow: unknown;
+  editRow: unknown;
+  forwardRow: unknown;
+  /** MWPinMessageMenuItem.react: Pin or Unpin by the message's pinned state. */
+  pinRow: unknown;
+  /** MWV2RemoveMenuItem.react: Unsend for your own messages Messenger lets you
+   * remove for everyone, else Remove. */
+  removeRow: unknown;
+  /** Where a More row's own components end. */
+  menu: unknown;
+}
+
+/** A toolbar button: one opening the React or More menu, or an action. */
+export type ToolbarKind = "react" | "more" | DrivenAction;
+
+/** The toolbar button's job, from the component that rendered it: the same in every language. */
+export function classifyToolbarButton(
+  fiber: Fiber | null,
+  c: MessageMenuComponents,
+): ToolbarKind | null {
+  for (const node of ancestors(fiber, 30)) {
+    if (renders(node, c.reactButton)) return "react";
+    if (renders(node, c.moreButton)) return "more";
+    if (renders(node, c.replyButton)) return "shared.context.reply";
+    if (renders(node, c.forwardButton)) return "shared.context.forward";
+  }
+  return null;
+}
+
+/** What a More row offers: an action, or Pin/Unpin for the given message. */
+export type MoreRowKind = DrivenAction | { pinMessage: unknown };
+
+/**
+ * The action behind a More row, from the components that rendered it. Report
+ * rows and unknown components are null. `isOwn` tells whether a sender id is
+ * the signed-in account.
+ */
+export function classifyMoreRow(
+  fiber: Fiber | null,
+  c: MessageMenuComponents,
+  isOwn: (senderId: unknown) => boolean,
+): MoreRowKind | null {
+  for (const node of ancestors(fiber)) {
+    if (renders(node, c.menu)) break;
+    const props = propsOf(node);
+    if (renders(node, c.replyRow)) return "shared.context.reply";
+    if (renders(node, c.editRow)) return "shared.context.edit";
+    if (renders(node, c.forwardRow)) return "shared.context.forward";
+    if (renders(node, c.pinRow)) return { pinMessage: props.message };
+    if (renders(node, c.removeRow)) {
+      const sender = (props.message as { senderId?: unknown } | null | undefined)?.senderId;
+      return props.canRemoveMessageGlobally === true && isOwn(sender)
+        ? "shared.context.unsend"
+        : "shared.context.remove";
+    }
+  }
+  return null;
+}
+
+export const pinAction = (pinned: boolean): DrivenAction =>
+  pinned ? "shared.context.unpin" : "shared.context.pin";
 
 export interface Reaction {
   emoji: string;

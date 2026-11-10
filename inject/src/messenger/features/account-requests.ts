@@ -38,6 +38,11 @@ export function initAccountRequests() {
         setting: "sounds",
         value: value === true,
       }),
+    "set-read-receipts": (value) =>
+      changeMessengerAccount(pageRequire(), signedIn(), {
+        setting: "readReceipts",
+        value: value === true,
+      }),
     "set-dnd": async (value) => {
       const state = await changeMessengerAccount(pageRequire(), signedIn(), {
         setting: "doNotDisturb",

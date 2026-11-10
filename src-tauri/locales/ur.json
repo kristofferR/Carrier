@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger نے یہ سیٹنگ نہیں بتائی۔",
   "settings.account.active_status.label": "ایکٹو اسٹیٹس",
   "settings.account.active_status.hint": "لوگوں کو دکھائیں کہ آپ کب ایکٹو ہیں یا حال ہی میں ایکٹو تھے۔",
+  "settings.account.read_receipts.label": "ریڈ رسیدیں",
+  "settings.account.read_receipts.hint": "لوگوں کو دیکھنے دیں کہ آپ نے ان کے پیغامات کب پڑھے۔ یہ دونوں طرف لاگو ہوتا ہے: بند کرنے پر آپ بھی نہیں دیکھ سکیں گے کہ انہوں نے آپ کے پیغامات کب پڑھے۔",
   "settings.account.sounds.label": "پیغامات کی آوازیں",
   "settings.account.sounds.hint": "نئے پیغامات کے لیے Messenger کی اپنی آوازیں۔ {app} کی نوٹیفیکیشن آواز الگ ہے۔",
   "settings.account.dnd.label": "ڈو ناٹ ڈسٹرب",

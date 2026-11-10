@@ -1363,6 +1363,20 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         let s = state.settings.lock().unwrap();
         (s.always_on_top, theme_for(&s), splash_background(&s))
     };
+    // Tauri fits and centers on the primary monitor. A larger minimum would
+    // undo prevent_overflow when Tao applies the window's size constraints.
+    let (min_width, min_height) = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| {
+            let size = monitor
+                .work_area()
+                .size
+                .to_logical::<f64>(monitor.scale_factor());
+            (720.0_f64.min(size.width), 620.0_f64.min(size.height))
+        })
+        .unwrap_or((720.0, 620.0));
     let builder =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
             .title(crate::i18n::tf(
@@ -1370,7 +1384,11 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
                 &[("title", &APP_TITLE)],
             ))
             .inner_size(900.0, 720.0)
-            .min_inner_size(720.0, 620.0)
+            .min_inner_size(min_width, min_height)
+            // On a 1280×800 or 1366×768 screen the default spot puts the
+            // footer under the taskbar: fit the work area and center in it.
+            .prevent_overflow()
+            .center()
             .resizable(true)
             .maximizable(false)
             .minimizable(false)

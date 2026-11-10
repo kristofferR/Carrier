@@ -57,6 +57,21 @@
       return "";
     }
   };
+  function dataUrlBlob(src) {
+    const match = /^data:([^,]*?)(;base64)?,(.*)$/s.exec(src);
+    if (!match) return null;
+    const [, params = "", base64, data = ""] = match;
+    const type = params.split(";")[0] || "text/plain";
+    try {
+      if (!base64) return new Blob([decodeURIComponent(data)], { type });
+      const binary = atob(data);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return new Blob([bytes], { type });
+    } catch {
+      return null;
+    }
+  }
   var GENERIC_DOWNLOAD_STEMS = /* @__PURE__ */ new Set(["download", "image", "video"]);
   var splitDownloadName = (name) => {
     const file = String(name || "").trim().split(/[\\/]/).pop() || "";
@@ -381,14 +396,26 @@
 
   // inject/src/messenger/lib/messenger-account.ts
   var flag = (value) => typeof value === "boolean" ? value : null;
-  function stateFromViewer(viewer, resolveActiveStatus, dndUntil) {
-    if (!viewer) return { activeStatus: null, sounds: null, dndUntil };
+  function stateFromViewer(viewer, resolveActiveStatus, dndUntil, readReceipts) {
+    if (!viewer) return { activeStatus: null, sounds: null, dndUntil, readReceipts };
     const active = resolveActiveStatus(
       flag(viewer.chat_visibility),
       flag(viewer.chat_visibility_on_messenger),
       flag(viewer.chat_visibility_on_facebook)
     );
-    return { activeStatus: flag(active), sounds: flag(viewer.chat_sounds_on), dndUntil };
+    return {
+      activeStatus: flag(active),
+      sounds: flag(viewer.chat_sounds_on),
+      dndUntil,
+      readReceipts
+    };
+  }
+  var READ_RECEIPTS_DEFAULT = 0;
+  var READ_RECEIPTS_DISABLED = 1;
+  var READ_RECEIPTS_ENABLED = 2;
+  function readReceiptsOn(row, pageDefault) {
+    if (row) return (row.setting ?? READ_RECEIPTS_DEFAULT) !== READ_RECEIPTS_DISABLED;
+    return typeof pageDefault === "number" ? pageDefault !== READ_RECEIPTS_DISABLED : null;
   }
   function dndUntilFor(minutes, nowMs) {
     if (minutes === 0 || minutes === -1) return minutes;
@@ -419,7 +446,59 @@
     return stateFromViewer(
       data.viewer,
       defaultExport(resolve),
-      dndUntil
+      dndUntil,
+      await readReadReceipts(load, account3)
+    );
+  }
+  async function readReadReceipts(load, account3, timeoutMs = 3e3) {
+    let timer;
+    try {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    async function read() {
+      const [i64, database2, intEnum] = await loadFacebookModules(load, [
+        "I64",
+        "LSDatabaseSingleton",
+        "LSIntEnum"
+      ]);
+      const db = await database2.LSDatabaseSingleton;
+      const table = db.tables?.messaging_privacy_settings;
+      const row = typeof table?.get === "function" ? await table.get(i64.of_string(account3)) : null;
+      let pageDefault = null;
+      try {
+        pageDefault = load?.("MessengerWebPrivacySettings")?.read_receipts_disabled;
+      } catch {
+      }
+      return readReceiptsOn(
+        row && typeof row === "object" ? {
+          setting: row.readReceiptsDisabled == null ? null : intEnum.toNumber(row.readReceiptsDisabled)
+        } : null,
+        pageDefault
+      );
+    }
+  }
+  async function setReadReceipts(load, on2) {
+    await loadFacebookModules(load, ["MWInboxSettingsMenu.react"]);
+    const [database2, factory, intEnum, update] = await loadFacebookModules(load, [
+      "LSDatabaseSingleton",
+      "LSFactory",
+      "LSIntEnum",
+      "LSOptimisticallyUpdateMessagingPrivacySettingsStoredProcedure"
+    ]);
+    const db = await database2.LSDatabaseSingleton;
+    const makeFactory = defaultExport(factory);
+    const run = defaultExport(update);
+    const value = intEnum.ofNumber(on2 ? READ_RECEIPTS_ENABLED : READ_RECEIPTS_DISABLED);
+    await db.runInTransaction(
+      (tx) => run(makeFactory(tx), { readReceiptsDisabled: value }),
+      "readwrite"
     );
   }
   async function changeMessengerAccount(load, account3, change) {
@@ -435,6 +514,8 @@
       );
     } else if (change.setting === "activeStatus") {
       await setActiveStatus(load, change.value);
+    } else if (change.setting === "readReceipts") {
+      await setReadReceipts(load, change.value);
     } else {
       await setDoNotDisturb(load, account3, change.value);
     }
@@ -451,6 +532,8 @@
         return state3.activeStatus === change.value;
       case "sounds":
         return state3.sounds === change.value;
+      case "readReceipts":
+        return state3.readReceipts === change.value;
       case "doNotDisturb": {
         if (change.value <= 0) return state3.dndUntil === change.value;
         const expected = dndUntilFor(change.value, Date.now());
@@ -540,6 +623,10 @@
       }),
       "set-sounds": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
         setting: "sounds",
+        value: value === true
+      }),
+      "set-read-receipts": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
+        setting: "readReceipts",
         value: value === true
       }),
       "set-dnd": async (value) => {
@@ -919,8 +1006,8 @@
       '[role="button"][aria-label], button[aria-label]'
     )) {
       if (!isShown(el)) continue;
-      const label2 = (el.getAttribute("aria-label") || "").toLowerCase();
-      if (needles.some((n) => label2.includes(n))) return el;
+      const label = (el.getAttribute("aria-label") || "").toLowerCase();
+      if (needles.some((n) => label.includes(n))) return el;
     }
     return null;
   }
@@ -985,8 +1072,8 @@
     if (!root) return null;
     for (const el of root.querySelectorAll('[role="button"][aria-label]')) {
       if (!isShown(el)) continue;
-      const label2 = (el.getAttribute("aria-label") || "").trim().toLowerCase();
-      if (label2 === "search" || label2 === "search in conversation") return el;
+      const label = (el.getAttribute("aria-label") || "").trim().toLowerCase();
+      if (label === "search" || label === "search in conversation") return el;
     }
     return null;
   }
@@ -1149,14 +1236,14 @@ ${button.innerHTML}`)
     const date = new Date(time);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }
-  function formatScheduleTime(time, now = Date.now()) {
+  function formatScheduleTime(time, now = Date.now(), locale = formatLocale()) {
     const midnight = (value) => new Date(value).setHours(0, 0, 0, 0);
     const days = Math.round((midnight(time) - midnight(now)) / 864e5);
-    return new Intl.DateTimeFormat(formatLocale(), {
+    const twelveHour = new Intl.DateTimeFormat(locale, { hour: "numeric" }).resolvedOptions().hour12;
+    return new Intl.DateTimeFormat(locale, {
       ...days === 0 ? {} : days > 0 && days < 7 ? { weekday: "short" } : { month: "short", day: "numeric" },
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23"
+      hour: twelveHour ? "numeric" : "2-digit",
+      minute: "2-digit"
     }).format(time);
   }
   function timeZoneLabel(now = Date.now()) {
@@ -1225,9 +1312,9 @@ ${button.innerHTML}`)
     }
   }
   function hasSoleMessengerWindow(value) {
-    if (!Array.isArray(value) || value.some((label2) => typeof label2 !== "string")) return false;
-    const messenger = value.filter((label2) => label2 === "main" || /^win-\d+$/.test(label2));
-    return messenger.length === 1 && value.every((label2) => label2 === "settings" || messenger.includes(label2));
+    if (!Array.isArray(value) || value.some((label) => typeof label !== "string")) return false;
+    const messenger = value.filter((label) => label === "main" || /^win-\d+$/.test(label));
+    return messenger.length === 1 && value.every((label) => label === "settings" || messenger.includes(label));
   }
   var FacebookWorkerRecovery = class {
     constructor(load, accountScope, canRestartSharedWorker = async () => false) {
@@ -1589,6 +1676,101 @@ ${button.innerHTML}`)
       this.networkRestorationUsed = false;
     }
   };
+
+  // inject/src/messenger/lib/messenger-error-block.ts
+  var ERROR_BLOCK_MODULE = "MWErrorBlock.react";
+  var ErrorBlockTracker = class {
+    constructor(onChange) {
+      __publicField(this, "onChange", onChange);
+      __publicField(this, "shown", /* @__PURE__ */ new Map());
+    }
+    mount(error) {
+      const token = Symbol(error);
+      this.shown.set(token, error);
+      this.onChange(true, error);
+      return () => {
+        if (!this.shown.delete(token)) return;
+        this.onChange(this.shown.size > 0, error);
+      };
+    }
+    get isShown() {
+      return this.shown.size > 0;
+    }
+  };
+  function errorName(props) {
+    const error = props?.error;
+    const name = error?.name;
+    return typeof name === "string" && /^[\w.:-]{1,80}$/.test(name) ? name : "unknown";
+  }
+  function trackedErrorBlock(original, react2, tracker2) {
+    const tracked = (props) => {
+      const React = react2();
+      if (!React) return original(props);
+      const name = errorName(props);
+      React.useEffect(() => tracker2.mount(name), [name]);
+      return React.createElement(original, props);
+    };
+    Object.defineProperty(tracked, "displayName", { value: "ChatpaneTrackedErrorBlock" });
+    return tracked;
+  }
+  var wrappedComponents = /* @__PURE__ */ new WeakSet();
+  function wrapErrorBlockFactory(factory, react2, tracker2) {
+    const patch = (exports) => {
+      if (!exports || typeof exports !== "object") return false;
+      const record4 = exports;
+      const component = record4.default;
+      if (typeof component !== "function") return false;
+      if (wrappedComponents.has(component)) return true;
+      const tracked = trackedErrorBlock(component, react2, tracker2);
+      wrappedComponents.add(tracked);
+      record4.default = tracked;
+      return true;
+    };
+    const wrapped3 = function(...args) {
+      const result = Reflect.apply(factory, this, args);
+      for (const candidate of [result, ...args.slice(-2)]) {
+        try {
+          if (patch(candidate)) break;
+          const exports = candidate?.exports;
+          if (candidate && typeof candidate === "object" && patch(exports)) break;
+        } catch {
+        }
+      }
+      return result;
+    };
+    try {
+      Object.defineProperty(wrapped3, "length", { value: factory.length });
+    } catch {
+    }
+    return wrapped3;
+  }
+
+  // inject/src/messenger/features/messenger-error-block.ts
+  var ERROR_BLOCK_EVENT = "chatpane:messenger-error-block";
+  var tracker = new ErrorBlockTracker((shown, error) => {
+    diag("recover.error-block", `${shown ? "shown" : "gone"}: ${error}`);
+    window.dispatchEvent(new CustomEvent(ERROR_BLOCK_EVENT));
+  });
+  var messengerErrorBlockShown = () => tracker.isShown;
+  var react = () => {
+    try {
+      const load = window.require;
+      const React = load?.("react");
+      return typeof React?.createElement === "function" && typeof React.useEffect === "function" ? React : null;
+    } catch {
+      return null;
+    }
+  };
+  function interceptErrorBlock(define) {
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        if (args[0] === ERROR_BLOCK_MODULE && typeof args[2] === "function") {
+          args[2] = wrapErrorBlockFactory(args[2], react, tracker);
+        }
+        return Reflect.apply(target, thisArg, args);
+      }
+    });
+  }
 
   // inject/src/messenger/lib/sync-health.ts
   var SYNC_REQUEST_TIMEOUT_MS = 3e4;
@@ -2760,7 +2942,8 @@ ${button.innerHTML}`)
     const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
     const onFacebookErrorPage = () => {
       try {
-        return hasFacebookReloadDialog() || looksLikeFacebookErrorPage({
+        return hasFacebookReloadDialog() || // Messenger's own "Couldn't load chats" screen.
+        messengerErrorBlockShown() || looksLikeFacebookErrorPage({
           hasBackLink: !!document.getElementById("back"),
           hasIconImage: document.getElementById("icon") instanceof HTMLImageElement,
           elementCount: document.getElementsByTagName("*").length
@@ -2850,6 +3033,7 @@ ${button.innerHTML}`)
     };
     window.addEventListener("input", emitProtectionChange, true);
     window.addEventListener("chatpane:protection-change", emitProtectionChange);
+    window.addEventListener(ERROR_BLOCK_EVENT, () => emitHeartbeat());
     emitHeartbeat();
     const processingActive = () => !systemSleeping && !document.hidden && navigator.onLine && rateLimitRemainingMs() <= 0 && isMessengerContentPath(location.pathname);
     const captureRecovery = async () => {
@@ -3560,6 +3744,44 @@ ${button.innerHTML}`)
     document.addEventListener("keydown", onVoiceClipEscape, true);
   }
 
+  // inject/src/messenger/lib/react-fiber.ts
+  function fiberOf(node, load) {
+    try {
+      const reactDOM = load?.("ReactDOM");
+      const events = reactDOM?.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?.Events;
+      if (!Array.isArray(events) || typeof events[0] !== "function") return null;
+      const fiber = events[0](node);
+      if (!fiber || typeof fiber !== "object") return null;
+      return fiber.stateNode === node ? fiber : null;
+    } catch {
+      return null;
+    }
+  }
+  function* ancestors(fiber, limit = 60) {
+    for (let depth = 0; fiber && depth < limit; depth++) {
+      yield fiber;
+      fiber = fiber.return ?? null;
+    }
+  }
+  function renders(fiber, component) {
+    if (component == null) return false;
+    if (fiber.type === component || fiber.elementType === component) return true;
+    if (typeof component !== "object") return false;
+    const inner = component;
+    return inner.type != null && fiber.type === inner.type || inner.render != null && fiber.type === inner.render;
+  }
+  function moduleExport(load, name, member) {
+    try {
+      const value = load?.(name);
+      if (value == null) return void 0;
+      if (member) return value[member];
+      return typeof value === "object" && "default" in value ? value.default : value;
+    } catch {
+      return void 0;
+    }
+  }
+  var propsOf = (fiber) => fiber.memoizedProps && typeof fiber.memoizedProps === "object" ? fiber.memoizedProps : {};
+
   // inject/src/messenger/lib/chat-row-menu.ts
   var CHAT_ROW_CONTEXT_MENU_KEYS = [
     "shared.context.mark_as_read",
@@ -3595,9 +3817,35 @@ ${button.innerHTML}`)
     const normalized = text2.replace(/\s+/g, " ").trim();
     return CHAT_ROW_CONTEXT_MENU_KEYS.find((action2) => MESSENGER_ROW_TEXT[action2] === normalized) ?? null;
   }
-  function chatRowActions(texts) {
-    const offered = new Set(texts.map(chatRowAction));
-    return CHAT_ROW_CONTEXT_MENU_KEYS.filter((action2) => offered.has(action2));
+  function chatRowActions(offered) {
+    const set = new Set(offered);
+    return CHAT_ROW_CONTEXT_MENU_KEYS.filter((action2) => set.has(action2));
+  }
+  function classifyChatRow(fiber, c) {
+    let icon3;
+    for (const node of ancestors(fiber)) {
+      if (renders(node, c.menu)) break;
+      const props = propsOf(node);
+      if (icon3 === void 0 && props.icon != null && "primaryText" in props) icon3 = props.icon;
+      if (renders(node, c.markRead))
+        return props.isUnread === true ? "shared.context.mark_as_read" : "shared.context.mark_as_unread";
+      if (renders(node, c.mute)) return "shared.context.mute_notifications";
+      if (renders(node, c.unmute)) return "shared.context.unmute_notifications";
+      if (renders(node, c.archive)) return "shared.context.archive_chat";
+      if (renders(node, c.unarchive)) return "shared.context.unarchive_chat";
+      if (renders(node, c.deleteChat)) return "shared.context.delete_chat";
+      if (renders(node, c.leaveGroup)) return "shared.context.leave_group";
+      if (renders(node, c.startEncryptedChat)) return "shared.context.start_encrypted_chat";
+      if (renders(node, c.block)) return { blockContact: props.contactId };
+    }
+    if (icon3 != null && icon3 === c.viewProfileIcon) return "shared.context.view_profile";
+    if (icon3 != null && c.reportIcons.includes(icon3)) return "shared.context.report";
+    return null;
+  }
+  var MESSAGE_BLOCKED = 1;
+  var FULLY_BLOCKED = 2;
+  function blockAction(blockedByViewerStatus) {
+    return blockedByViewerStatus === MESSAGE_BLOCKED || blockedByViewerStatus === FULLY_BLOCKED ? "shared.context.unblock" : "shared.context.block";
   }
   var CHAT_PIN_CONTEXT_MENU_KEYS = [
     "shared.context.pin_chat",
@@ -3740,11 +3988,36 @@ ${button.innerHTML}`)
     return DRIVEN_ACTIONS.find((action2) => MESSENGER_ROW_TEXT2[action2] === normalized) ?? null;
   }
   var REPLY_ICON_PATH = "M6.497 1.035C7.593-.088 9.5.688 9.5 2.257V4.54c1.923.215 3.49 1.246 4.593 2.672C15.328 8.808 16 10.91 16 13v.305c0 .632-.465 1.017-.893 1.127-.422.11-.99.005-1.318-.493-.59-.894-1.2-1.482-1.951-1.859-.611-.307-1.359-.496-2.338-.558v2.23c0 1.57-1.908 2.346-3.003 1.222L.893 9.223a1.75 1.75 0 0 1 .001-2.444l5.603-5.744z";
-  function toolbarAction(label2, iconPath = "") {
-    if (iconPath === REPLY_ICON_PATH || /^Reply\b/.test(label2)) return "shared.context.reply";
-    if (/^Forward\b/.test(label2)) return "shared.context.forward";
+  function toolbarAction(label, iconPath = "") {
+    if (iconPath === REPLY_ICON_PATH || /^Reply\b/.test(label)) return "shared.context.reply";
+    if (/^Forward\b/.test(label)) return "shared.context.forward";
     return null;
   }
+  function classifyToolbarButton(fiber, c) {
+    for (const node of ancestors(fiber, 30)) {
+      if (renders(node, c.reactButton)) return "react";
+      if (renders(node, c.moreButton)) return "more";
+      if (renders(node, c.replyButton)) return "shared.context.reply";
+      if (renders(node, c.forwardButton)) return "shared.context.forward";
+    }
+    return null;
+  }
+  function classifyMoreRow(fiber, c, isOwn) {
+    for (const node of ancestors(fiber)) {
+      if (renders(node, c.menu)) break;
+      const props = propsOf(node);
+      if (renders(node, c.replyRow)) return "shared.context.reply";
+      if (renders(node, c.editRow)) return "shared.context.edit";
+      if (renders(node, c.forwardRow)) return "shared.context.forward";
+      if (renders(node, c.pinRow)) return { pinMessage: props.message };
+      if (renders(node, c.removeRow)) {
+        const sender = props.message?.senderId;
+        return props.canRemoveMessageGlobally === true && isOwn(sender) ? "shared.context.unsend" : "shared.context.remove";
+      }
+    }
+    return null;
+  }
+  var pinAction = (pinned) => pinned ? "shared.context.unpin" : "shared.context.pin";
   function messageActions(offer) {
     return MESSAGE_CONTEXT_MENU_KEYS.filter(
       (action2) => action2 === COPY_TEXT ? offer.text.length > 0 : offer.actions.includes(action2)
@@ -3816,7 +4089,7 @@ ${button.innerHTML}`)
       if (!expanded(button)) button.click();
       const menu = await waitFor(() => expanded(button) ? openMenu() : null, MENU_WAIT_MS);
       if (!menu) return null;
-      const result = use(menu);
+      const result = await use(menu);
       if (picks && result) await waitFor(() => !expanded(button), MENU_WAIT_MS);
       return result;
     } finally {
@@ -3831,20 +4104,70 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/chat-row-menu.ts
-  var ROW_MENU_BUTTON = '[aria-haspopup="menu"][aria-label^="More options for "]';
-  var rowMenuButton = (link) => link.closest('[role="row"]')?.querySelector(ROW_MENU_BUTTON) ?? null;
+  var rowMenuButton = (link) => {
+    const row = link.closest('[role="row"]');
+    const linkCell = link.closest('[role="gridcell"]');
+    for (const button of row?.querySelectorAll('[aria-haspopup="menu"]') ?? [])
+      if (button.closest('[role="gridcell"]') !== linkCell) return button;
+    return null;
+  };
   function chatRowFor(anchor) {
     if (!anchor.getAttribute("href")?.includes("/t/")) return null;
     return rowMenuButton(anchor) || anchor.hasAttribute("data-chatpane-pinned-chat") ? anchor : null;
   }
   var menuRows = (menu) => [...menu.querySelectorAll('[role="menuitem"]')];
+  function chatRowComponents() {
+    const load = pageRequire();
+    const icons2 = moduleExport(load, "MWThreadListHoverButtonDropdownMenuIcons");
+    const archive = "MWV2ArchiveThreadMenuItem.react";
+    return {
+      markRead: moduleExport(load, "MAWMarkThreadAsReadMenuItem.react"),
+      mute: moduleExport(load, "MWV2ChatSettingsMute.react"),
+      unmute: moduleExport(load, "MWV2ChatSettingsUnmute.react"),
+      archive: moduleExport(load, archive, "MWV2ArchiveThreadMenuItemArchive"),
+      unarchive: moduleExport(load, archive, "MWV2ArchiveThreadMenuItemUnarchive"),
+      deleteChat: moduleExport(load, "MWThreadListHoverButtonDropdownMenuDeleteThreadButton.react"),
+      leaveGroup: moduleExport(load, "MWLSLeaveGroupMenuItem.react"),
+      startEncryptedChat: moduleExport(load, "MAWSecureConversationThreadListMenuItem.react"),
+      block: moduleExport(load, "MWInboxInfoBlockMessages.react"),
+      menu: moduleExport(load, "FDSMenu.react"),
+      viewProfileIcon: icons2?.ViewProfile,
+      reportIcons: [
+        moduleExport(load, "FBNucleusCautionTriangleOutline20Icon.react"),
+        icons2?.SomethingIsWrong,
+        icons2?.Report
+      ].filter((icon3) => icon3 != null)
+    };
+  }
+  function rowKinds(menu) {
+    const components = chatRowComponents();
+    const load = pageRequire();
+    return menuRows(menu).map((row) => [
+      row,
+      classifyChatRow(fiberOf(row, load), components) ?? chatRowAction(row.textContent ?? "")
+    ]);
+  }
+  async function contactBlockStatus(contactId) {
+    try {
+      const load = pageRequire();
+      const singleton = load?.("LSDatabaseSingleton");
+      const db = await singleton?.LSDatabaseSingleton;
+      const intEnum = load?.("LSIntEnum");
+      const contact = await db?.tables?.contacts?.get(contactId);
+      const status = contact?.blockedByViewerStatus;
+      return status == null || typeof intEnum?.toNumber !== "function" ? null : intEnum.toNumber(status);
+    } catch {
+      return null;
+    }
+  }
+  async function offeredAction(kind) {
+    return kind !== null && typeof kind === "object" ? blockAction(await contactBlockStatus(kind.blockContact)) : kind;
+  }
   async function readChatRowActions(link) {
     const button = rowMenuButton(link);
     if (!button) return [];
-    return await withHiddenMenu(
-      button,
-      (menu) => chatRowActions(menuRows(menu).map((row) => row.textContent ?? ""))
-    ) ?? [];
+    const kinds = await withHiddenMenu(button, (menu) => rowKinds(menu).map(([, kind]) => kind)) ?? [];
+    return chatRowActions(await Promise.all(kinds.map(offeredAction)));
   }
   function currentMenuButton(href) {
     for (const link of document.querySelectorAll('[role="row"] a[href]'))
@@ -3859,10 +4182,15 @@ ${button.innerHTML}`)
     }
     const picked = await withHiddenMenu(
       button,
-      (menu) => {
-        const row = menuRows(menu).find((item) => chatRowAction(item.textContent ?? "") === action2);
-        row?.click();
-        return row !== void 0;
+      // A Block row is checked again here: the contact may have been blocked or
+      // unblocked elsewhere since the menu was read.
+      async (menu) => {
+        for (const [row, kind] of rowKinds(menu))
+          if (await offeredAction(kind) === action2) {
+            row.click();
+            return true;
+          }
+        return false;
       },
       true
     );
@@ -4303,7 +4631,40 @@ ${button.innerHTML}`)
   var TOOLBAR_WAIT_MS = 600;
   var MAX_REACTIONS = 12;
   var messageFor = (target) => target.closest(MESSAGE);
-  var toolbarButton = (message, label2) => message.querySelector(`[role="toolbar"] [role="button"][aria-label^="${label2}"]`);
+  function messageMenuComponents() {
+    const load = pageRequire();
+    const get = (name) => moduleExport(load, name);
+    return {
+      reactButton: get("MWV2MessageReactionButton.react"),
+      replyButton: get("MWV2ReplyButton.react"),
+      forwardButton: get("MWV2ForwardMessageButton.react"),
+      moreButton: get("MWV2ContextualActionsButton.react"),
+      replyRow: get("MWV2ReplyMenuItem.react"),
+      editRow: get("MAWEditMenuItem.react"),
+      forwardRow: get("MWV2ForwardMenuItem.react"),
+      pinRow: get("MWPinMessageMenuItem.react"),
+      removeRow: get("MWV2RemoveMenuItem.react"),
+      menu: get("MWV2ContextualActionsMenu.react")
+    };
+  }
+  function toolbarButtons(message) {
+    const components = messageMenuComponents();
+    const load = pageRequire();
+    return [
+      ...message.querySelectorAll('[role="toolbar"] [role="button"][aria-label]')
+    ].map((button) => {
+      const kind = classifyToolbarButton(fiberOf(button, load), components);
+      if (kind) return [button, kind];
+      const label = button.getAttribute("aria-label") ?? "";
+      if (/^React\b/.test(label)) return [button, "react"];
+      if (/^More\b/.test(label)) return [button, "more"];
+      return [
+        button,
+        toolbarAction(label, button.querySelector("svg path")?.getAttribute("d") ?? "")
+      ];
+    });
+  }
+  var toolbarButton = (message, kind) => toolbarButtons(message).find(([, found]) => found === kind)?.[0] ?? null;
   async function ensureToolbar(message) {
     const mounted = () => message.querySelector('[role="toolbar"] [role="button"][aria-label]');
     if (mounted()) return true;
@@ -4316,6 +4677,44 @@ ${button.innerHTML}`)
   var reactionRows = (menu) => menu.querySelectorAll('[role="menuitemradio"]');
   var reactionEmoji = (row) => (row.querySelector("img[alt]")?.getAttribute("alt") || row.textContent || "").trim();
   var moreRows = (menu) => menu.querySelectorAll('[role="menuitem"]');
+  function isOwnSender(senderId) {
+    const account3 = accountId(document.cookie);
+    try {
+      const i64 = pageRequire()?.("I64");
+      return account3 !== null && senderId != null && String(i64?.to_string?.(senderId)) === account3;
+    } catch {
+      return false;
+    }
+  }
+  function moreRowKinds(menu) {
+    const components = messageMenuComponents();
+    const load = pageRequire();
+    return [...moreRows(menu)].map((row) => [
+      row,
+      classifyMoreRow(fiberOf(row, load), components, isOwnSender) ?? menuRowAction(row.textContent ?? "")
+    ]);
+  }
+  async function isPinned(message) {
+    try {
+      const load = pageRequire();
+      const m = message;
+      const ReQL = load?.("ReQL");
+      const singleton = load?.("LSDatabaseSingleton");
+      const db = await singleton?.LSDatabaseSingleton;
+      if (!m || !db || typeof ReQL?.firstAsync !== "function") return null;
+      const first = (table, ...key) => ReQL.firstAsync(ReQL.fromTableAscending(db.tables[table]).getKeyRange(...key));
+      if (await first("msg_pinned_messages_v2", m.threadKey, m.messageId)) return true;
+      if (m.isUnsent) return false;
+      return !!await first("client_web_pinned_messages", m.threadKey, m.offlineThreadingId);
+    } catch {
+      return null;
+    }
+  }
+  async function offeredMoreAction(kind) {
+    if (kind === null || typeof kind !== "object") return kind;
+    const pinned = await isPinned(kind.pinMessage);
+    return pinned === null ? null : pinAction(pinned);
+  }
   function messageTextBlock(message) {
     const blocks = [
       ...message.querySelectorAll('span[dir="auto"] > div[dir="auto"]')
@@ -4328,37 +4727,30 @@ ${button.innerHTML}`)
   }
   function toolbarActions(message) {
     const found = [];
-    for (const button of message.querySelectorAll(
-      '[role="toolbar"] [role="button"][aria-label]'
-    )) {
-      const action2 = toolbarAction(
-        button.getAttribute("aria-label") ?? "",
-        button.querySelector("svg path")?.getAttribute("d") ?? ""
-      );
-      if (action2) found.push([action2, button]);
-    }
+    for (const [button, kind] of toolbarButtons(message))
+      if (kind && kind !== "react" && kind !== "more") found.push([kind, button]);
     return found;
   }
   async function readMessageOffer(message) {
     const text2 = messageText(message);
     if (!await ensureToolbar(message)) return { reactions: [], text: text2, actions: [] };
-    const react = toolbarButton(message, "React");
-    const reactions = react ? await withHiddenMenu(
-      react,
+    const react2 = toolbarButton(message, "react");
+    const reactions = react2 ? await withHiddenMenu(
+      react2,
       (menu) => [...reactionRows(menu)].map((row) => ({
         emoji: reactionEmoji(row),
         checked: row.getAttribute("aria-checked") === "true"
       }))
     ) ?? [] : [];
     const actions = toolbarActions(message).map(([action2]) => action2);
-    const more = toolbarButton(message, "More");
-    if (more)
-      actions.push(
-        ...await withHiddenMenu(
-          more,
-          (menu) => [...moreRows(menu)].map((row) => menuRowAction(row.textContent ?? "")).filter((action2) => action2 !== null)
-        ) ?? []
-      );
+    const more = toolbarButton(message, "more");
+    if (more) {
+      const kinds = await withHiddenMenu(more, (menu) => moreRowKinds(menu).map(([, kind]) => kind)) ?? [];
+      for (const kind of kinds) {
+        const action2 = await offeredMoreAction(kind);
+        if (action2 !== null) actions.push(action2);
+      }
+    }
     return { reactions: uniqueReactions(reactions).slice(0, MAX_REACTIONS), text: text2, actions };
   }
   async function drive(message, run, what) {
@@ -4373,10 +4765,10 @@ ${button.innerHTML}`)
   var reactTo = (message, emoji) => drive(
     message,
     async () => {
-      const react = await ensureToolbar(message) ? toolbarButton(message, "React") : null;
-      if (!react) return false;
+      const react2 = await ensureToolbar(message) ? toolbarButton(message, "react") : null;
+      if (!react2) return false;
       const picked = await withHiddenMenu(
-        react,
+        react2,
         (menu) => {
           const row = [...reactionRows(menu)].find((item) => reactionEmoji(item) === emoji);
           row?.click();
@@ -4395,16 +4787,19 @@ ${button.innerHTML}`)
       button.click();
       return true;
     }
-    const more = toolbarButton(message, "More");
+    const more = toolbarButton(message, "more");
     if (!more) return false;
     const picked = await withHiddenMenu(
       more,
-      (menu) => {
-        const row = [...moreRows(menu)].find(
-          (item) => menuRowAction(item.textContent ?? "") === action2
-        );
-        row?.click();
-        return row !== void 0;
+      // A Pin row is checked again here: someone may have pinned or unpinned
+      // the message since the menu was read.
+      async (menu) => {
+        for (const [row, kind] of moreRowKinds(menu))
+          if (await offeredMoreAction(kind) === action2) {
+            row.click();
+            return true;
+          }
+        return false;
       },
       true
     );
@@ -4786,7 +5181,7 @@ ${button.innerHTML}`)
   }
   var keepEveryThread = () => true;
   function createParts(load, store, hooks) {
-    const react = load("react");
+    const react2 = load("react");
     const i64 = load("I64");
     const queries = load("ReQL");
     const suspense = load("ReQLSuspense");
@@ -4794,7 +5189,7 @@ ${button.innerHTML}`)
     const ThreadListItem = defaultExport(load("MWThreadListItem.react"));
     const ThreadKeyProvider = load("MWThreadKey.react")?.MWThreadKeyProvider;
     const DialogProvider = defaultExport(load("CometTransientDialogProvider.react"));
-    if (!hasMethods(react, [
+    if (!hasMethods(react2, [
       "createElement",
       "createContext",
       "useContext",
@@ -4802,13 +5197,13 @@ ${button.innerHTML}`)
       "useMemo",
       "useEffect",
       "useRef"
-    ]) || !react.Suspense || typeof react.Component !== "function" || !hasMethods(i64, ["of_string", "to_string", "equal"]) || !hasMethods(queries, ["fromTableAscending"]) || !hasMethods(suspense, ["useFirst"]) || typeof useReStore !== "function" || !ThreadListItem || !ThreadKeyProvider || !DialogProvider)
+    ]) || !react2.Suspense || typeof react2.Component !== "function" || !hasMethods(i64, ["of_string", "to_string", "equal"]) || !hasMethods(queries, ["fromTableAscending"]) || !hasMethods(suspense, ["useFirst"]) || typeof useReStore !== "function" || !ThreadListItem || !ThreadKeyProvider || !DialogProvider)
       return null;
     const int64 = i64;
     const threads = queries;
     const rows = suspense;
-    const h = react.createElement;
-    const { Suspense, useContext, useEffect, useMemo, useRef, useSyncExternalStore } = react;
+    const h = react2.createElement;
+    const { Suspense, useContext, useEffect, useMemo, useRef, useSyncExternalStore } = react2;
     const readStore = useReStore;
     const authority = defaultExport(load("LSAuthorityLevel"));
     const intEnum = load("LSIntEnum");
@@ -4821,8 +5216,8 @@ ${button.innerHTML}`)
       );
     } catch (_) {
     }
-    const router = routerContext?.Provider ? routerContext : react.createContext(null);
-    const ListView = react.createContext(false);
+    const router = routerContext?.Provider ? routerContext : react2.createContext(null);
+    const ListView = react2.createContext(false);
     let failed = false;
     const failureListeners = /* @__PURE__ */ new Set();
     const subscribeFailure = (listener) => {
@@ -4830,7 +5225,7 @@ ${button.innerHTML}`)
       return () => failureListeners.delete(listener);
     };
     const hasFailed = () => failed;
-    const Base = react.Component;
+    const Base = react2.Component;
     class Boundary extends Base {
       constructor() {
         super(...arguments);
@@ -5244,15 +5639,39 @@ ${button.innerHTML}`)
     const { id } = await downloadSrc(src, fallbackName, action2);
     await chatpaneShareDownload(id, fx, fy, action2);
   }
-  var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
+  async function mediaBlob(src, maxSize) {
+    const inline = src.startsWith("data:");
+    const blob = inline ? dataUrlBlob(src) : null;
+    if (inline && !blob) throw new Error("malformed data URL");
+    if (blob) {
+      if (blob.size > maxSize) throw new Error("file too large");
+      return blob;
+    }
+    const res = await fetch(src);
+    if (!res.ok) throw new Error(`fetch failed (${res.status})`);
+    if (Number(res.headers.get("content-length")) > maxSize) throw new Error("file too large");
+    const fetched = await res.blob();
+    if (fetched.size > maxSize) throw new Error("file too large");
+    return fetched;
+  }
+  async function pngBlob(blob) {
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return new Promise(
+      (resolve, reject) => canvas.toBlob(
+        (png) => png ? resolve(png) : reject(new Error("image conversion failed")),
+        "image/png"
+      )
+    );
+  }
   var copyAddress = (text2) => navigator.clipboard?.writeText(cleanSharedUrl(text2)).then(() => toast(t("shared.context.address_copied"))).catch(() => toast(t("shared.context.copy_failed")));
   var copyText = (text2) => navigator.clipboard?.writeText(text2).then(() => toast(t("shared.context.text_copied"))).catch(() => toast(t("shared.context.copy_failed")));
   async function downloadSrc(src, fallbackName, action2) {
-    const res = await fetch(src);
-    if (!res.ok) throw new Error(`download failed (${res.status})`);
-    if (oversizeByHeader(res)) throw new Error("file too large");
-    const blob = await res.blob();
-    if (blob.size > MAX_BLOB) throw new Error("file too large");
+    const blob = await mediaBlob(src, MAX_BLOB);
     const href = URL.createObjectURL(blob);
     let name = friendlyDownloadName(filenameFromUrl(src, location.href) || fallbackName);
     if (!name.includes(".")) {
@@ -5280,16 +5699,10 @@ ${button.innerHTML}`)
   }
   async function copyImageSrc(src, action2) {
     if (action2) await chatpaneClaimContextAction(action2);
-    const res = await fetch(src);
-    if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-    const maxSize = action2 ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
-    if (Number(res.headers.get("content-length")) > maxSize) {
-      throw new Error("image too large");
-    }
-    const blob = await res.blob();
-    if (blob.size > maxSize) throw new Error("image too large");
+    const blob = await mediaBlob(src, action2 ? MAX_CLIPBOARD_IMAGE : MAX_BLOB);
     if (!action2) {
-      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      const image = ClipboardItem.supports?.(blob.type) === false ? await pngBlob(blob) : blob;
+      await navigator.clipboard.write([new ClipboardItem({ [image.type]: image })]);
       return;
     }
     const dataUrl = await new NativePromise2((resolve, reject) => {
@@ -5551,14 +5964,14 @@ ${button.innerHTML}`)
       for (let index = 0; index < items.length; index += 1) {
         const item = items[index];
         if (!item) continue;
-        const label2 = item[0];
-        if (isMac2 && (label2 === IMAGE_CONTEXT_MENU_KEYS[2] || label2 === VIDEO_CONTEXT_MENU_KEYS[1])) {
+        const label = item[0];
+        if (isMac2 && (label === IMAGE_CONTEXT_MENU_KEYS[2] || label === VIDEO_CONTEXT_MENU_KEYS[1])) {
           continue;
         }
         const fn = item[1];
         const rowIndex = menuItems.length;
         const reaction = item[3];
-        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_KEYS.includes(label2) ? 2 : conversation && CHAT_ROW_CONTEXT_MENU_KEYS.includes(label2) ? 3 : conversation && CHAT_EXPORT_CONTEXT_MENU_KEYS.includes(label2) ? 4 : conversation && CHAT_PIN_CONTEXT_MENU_KEYS.includes(label2) ? 5 : 0;
+        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_KEYS.includes(label) ? 2 : conversation && CHAT_ROW_CONTEXT_MENU_KEYS.includes(label) ? 3 : conversation && CHAT_EXPORT_CONTEXT_MENU_KEYS.includes(label) ? 4 : conversation && CHAT_PIN_CONTEXT_MENU_KEYS.includes(label) ? 5 : 0;
         if (previousGroup !== null && previousGroup !== group) {
           const divider = nativeReflectApply3(nativeCreateElement, document, [
             "div"
@@ -5574,7 +5987,7 @@ ${button.innerHTML}`)
         previousGroup = group;
         const el = nativeReflectApply3(nativeCreateElement, document, ["div"]);
         nativeReflectApply3(nativeSetTextContent, el, [
-          reaction ? label2 : ROW_LABELS[label2] ?? label2
+          reaction ? label : ROW_LABELS[label] ?? label
         ]);
         nativeReflectApply3(nativeSetAttribute, el, [
           "role",
@@ -5583,7 +5996,7 @@ ${button.innerHTML}`)
         if (reaction) {
           nativeReflectApply3(nativeSetAttribute, el, [
             "aria-label",
-            t("page.context.react_with", { emoji: label2 })
+            t("page.context.react_with", { emoji: label })
           ]);
           nativeReflectApply3(nativeSetAttribute, el, ["aria-checked", `${reaction.checked}`]);
         }
@@ -6207,23 +6620,23 @@ ${button.innerHTML}`)
     return mode === "all" || mode === "groups" && isGroup !== false || mode === "direct" && isGroup !== true;
   }
   var threadContexts = /* @__PURE__ */ new WeakMap();
-  function threadContext(react, runtime) {
-    let context2 = threadContexts.get(react);
+  function threadContext(react2, runtime) {
+    let context2 = threadContexts.get(react2);
     if (!context2 && runtime.createContext) {
       context2 = runtime.createContext(void 0);
-      threadContexts.set(react, context2);
+      threadContexts.set(react2, context2);
     }
     return context2;
   }
-  function patchNicknameThreadContext(value, react, isGroup) {
-    if (!value || typeof value !== "object" || !react || typeof react !== "object" || typeof isGroup !== "function")
+  function patchNicknameThreadContext(value, react2, isGroup) {
+    if (!value || typeof value !== "object" || !react2 || typeof react2 !== "object" || typeof isGroup !== "function")
       return;
     const exports = value;
-    const runtime = react;
+    const runtime = react2;
     const original = exports.Provider;
     if (typeof original !== "function" || wrappedProviders.has(original) || !runtime.createElement)
       return;
-    const context2 = threadContext(react, runtime);
+    const context2 = threadContext(react2, runtime);
     if (!context2) return;
     const { createElement } = runtime;
     const provider = (props) => {
@@ -6247,15 +6660,15 @@ ${button.innerHTML}`)
     }
   }
   var wrappedProviders = /* @__PURE__ */ new WeakSet();
-  function patchNicknameContext(value, react, preference) {
-    if (!value || typeof value !== "object" || !react || typeof react !== "object") return;
+  function patchNicknameContext(value, react2, preference) {
+    if (!value || typeof value !== "object" || !react2 || typeof react2 !== "object") return;
     const exports = value;
-    const runtime = react;
+    const runtime = react2;
     const original = exports.MWPContactContextProvider;
     if (typeof original !== "function" || wrappedProviders.has(original) || typeof runtime.createElement !== "function" || typeof runtime.useSyncExternalStore !== "function")
       return;
     const { createElement, useSyncExternalStore, useContext } = runtime;
-    const context2 = threadContext(react, runtime);
+    const context2 = threadContext(react2, runtime);
     const provider = function ChatpaneNicknameProvider(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const group = context2 && useContext ? useContext(context2) : void 0;
@@ -6667,11 +7080,11 @@ ${button.innerHTML}`)
     if (!value || typeof value !== "object") return;
     const exports = value, original = exports.default;
     if (typeof original !== "function" || wrapped.has(original)) return;
-    const react = importModule("react");
+    const react2 = importModule("react");
     const i64 = importModule("I64");
-    if (typeof react?.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useEffect !== "function" || typeof i64?.to_string !== "function")
+    if (typeof react2?.useSyncExternalStore !== "function" || typeof react2.useState !== "function" || typeof react2.useEffect !== "function" || typeof i64?.to_string !== "function")
       return;
-    const { useSyncExternalStore, useState, useEffect } = react, { to_string: stringify } = i64;
+    const { useSyncExternalStore, useState, useEffect } = react2, { to_string: stringify } = i64;
     const pending = /* @__PURE__ */ new Map();
     const readNames = (key) => {
       const existing = pending.get(key);
@@ -6742,12 +7155,12 @@ ${button.innerHTML}`)
       const preview = body.replace(/\s+/g, " ").trim();
       const drafts = this.drafts.get(thread2);
       if (!drafts?.size) return false;
-      const label2 = /^(?:Draft|Utkast):\s*/iu.exec(preview)?.[0];
-      if (!label2) return false;
-      if (preview === label2.trim()) return true;
+      const label = /^(?:Draft|Utkast):\s*/iu.exec(preview)?.[0];
+      if (!label) return false;
+      if (preview === label.trim()) return true;
       return [...drafts.values()].some((snippet) => {
         if (snippet.slice(0, 240) === preview) return true;
-        return `${label2}${snippet}`.slice(0, 240) === preview;
+        return `${label}${snippet}`.slice(0, 240) === preview;
       });
     }
     remember(thread2, original, displayed) {
@@ -6772,12 +7185,12 @@ ${button.innerHTML}`)
     const exports = value;
     const original = exports.default;
     if (typeof original !== "function" || wrapped2.has(original)) return;
-    const react = importModule("react");
+    const react2 = importModule("react");
     const i64 = importModule("I64");
     const vault = importModule("ReStoreVaulting");
-    if (typeof react?.createElement !== "function" || typeof react.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useRef !== "function" || typeof react.useEffect !== "function" || typeof react.useLayoutEffect !== "function" || typeof i64?.to_string !== "function" || typeof vault?.maybeUnvault !== "function")
+    if (typeof react2?.createElement !== "function" || typeof react2.useSyncExternalStore !== "function" || typeof react2.useState !== "function" || typeof react2.useRef !== "function" || typeof react2.useEffect !== "function" || typeof react2.useLayoutEffect !== "function" || typeof i64?.to_string !== "function" || typeof vault?.maybeUnvault !== "function")
       return;
-    const { createElement, useSyncExternalStore, useState, useRef, useEffect, useLayoutEffect } = react;
+    const { createElement, useSyncExternalStore, useState, useRef, useEffect, useLayoutEffect } = react2;
     const { to_string: threadKey } = i64;
     const { maybeUnvault } = vault;
     const component = function ChatpaneNicknameSnippet(props) {
@@ -6865,7 +7278,7 @@ ${button.innerHTML}`)
     const exports = value;
     const original = exports.default;
     if (typeof original !== "function" || wrappedHooks.has(original)) return;
-    const react = importModule("react");
+    const react2 = importModule("react");
     const compute = importModule("MWPGetThreadTitle");
     const i64 = importModule("I64");
     const listModule = importModule("intlList");
@@ -6873,9 +7286,9 @@ ${button.innerHTML}`)
     const types = importModule("LSMessagingThreadTypeUtil");
     const computeTitle = compute?.computeThreadTitle;
     const threadKey = i64?.to_string;
-    if (typeof react?.useSyncExternalStore !== "function" || typeof react.useMemo !== "function" || typeof computeTitle !== "function" || typeof threadKey !== "function")
+    if (typeof react2?.useSyncExternalStore !== "function" || typeof react2.useMemo !== "function" || typeof computeTitle !== "function" || typeof threadKey !== "function")
       return;
-    const { useSyncExternalStore, useMemo } = react;
+    const { useSyncExternalStore, useMemo } = react2;
     const wrapped3 = new Proxy(original, {
       apply(target, receiver, args) {
         const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
@@ -7132,7 +7545,7 @@ ${button.innerHTML}`)
         try {
           const importModule = factoryArgs[3];
           if (typeof importModule === "function") {
-            const react = importModule("react");
+            const react2 = importModule("react");
             const patch = (value) => {
               if (moduleName === "useMWReplySnippetContent") {
                 patchNicknameReplies(value, (name) => importModule(name), nicknamePreference);
@@ -7142,8 +7555,8 @@ ${button.innerHTML}`)
                 patchNicknameThreadTitles(value, (name) => importModule(name), nicknamePreference);
               } else if (moduleName === "MWPThreadCapabilitiesContext") {
                 const types = importModule("LSMessagingThreadTypeUtil");
-                patchNicknameThreadContext(value, react, types?.isGroup);
-              } else patchNicknameContext(value, react, nicknamePreference);
+                patchNicknameThreadContext(value, react2, types?.isGroup);
+              } else patchNicknameContext(value, react2, nicknamePreference);
             };
             for (const candidate of [result, ...factoryArgs.slice(-2)]) {
               patch(candidate);
@@ -7187,6 +7600,22 @@ ${button.innerHTML}`)
     } catch (_) {
     }
     return wrapped3;
+  }
+  function interceptOnce(define, intercept, intercepted) {
+    const chain = intercept(
+      new Proxy(define, {
+        apply(target, thisArg, args) {
+          if (typeof args[2] === "function") intercepted.add(args[2]);
+          return Reflect.apply(target, thisArg, args);
+        }
+      })
+    );
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        const replayed = typeof args[2] === "function" && intercepted.has(args[2]);
+        return Reflect.apply(replayed ? target : chain, thisArg, args);
+      }
+    });
   }
   function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
   }, onFacebookError = () => {
@@ -7362,8 +7791,8 @@ ${button.innerHTML}`)
   function muteSignalFromLabels(labels) {
     let muted = false;
     let unmuted = false;
-    for (const label2 of labels) {
-      const signal = conversationMuteFromLabel(label2);
+    for (const label of labels) {
+      const signal = conversationMuteFromLabel(label);
       if (signal === true) muted = true;
       else if (signal === false) unmuted = true;
     }
@@ -7533,9 +7962,9 @@ ${button.innerHTML}`)
           'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
         );
         if (!action2) return;
-        const label2 = action2.getAttribute("aria-label") || action2.getAttribute("title") || action2.textContent || "";
+        const label = action2.getAttribute("aria-label") || action2.getAttribute("title") || action2.textContent || "";
         const nextMuted = muteStateAfterControlAction(
-          label2,
+          label,
           action2.getAttribute("role"),
           action2.getAttribute("aria-checked")
         );
@@ -7573,8 +8002,8 @@ ${button.innerHTML}`)
   function observeOpenThreadMute(id, roots) {
     const labels = [];
     for (const root of roots) {
-      for (const label2 of collectMuteLabels(root)) {
-        if (conversationMuteFromLabel(label2) !== null) labels.push(label2);
+      for (const label of collectMuteLabels(root)) {
+        if (conversationMuteFromLabel(label) !== null) labels.push(label);
       }
     }
     mutedThreads.observe(id, muteSignalFromLabels(labels) ?? void 0);
@@ -7843,6 +8272,7 @@ ${button.innerHTML}`)
     const page = window;
     const shouldBlockTelemetry = () => window.__CHATPANE_SETTINGS__?.block_telemetry === true;
     const wrappedDefines = /* @__PURE__ */ new WeakSet();
+    const interceptedFactories = /* @__PURE__ */ new WeakSet();
     const searchIndex = new FacebookFTSIdleCoordinator();
     const nicknamePreference = {
       getSnapshot: () => nicknameMode(window.__CHATPANE_SETTINGS__),
@@ -7880,25 +8310,29 @@ ${button.innerHTML}`)
     );
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
-      const wrapped3 = createFacebookModuleDefineInterceptor(
-        interceptPinnedChatModules(
-          interceptNotificationModules(interceptSoundModules(value))
+      const wrapped3 = interceptOnce(
+        value,
+        (define) => createFacebookModuleDefineInterceptor(
+          interceptPinnedChatModules(
+            interceptNotificationModules(interceptErrorBlock(interceptSoundModules(define)))
+          ),
+          shouldBlockTelemetry,
+          (restore2) => searchIndex.register(restore2),
+          (error) => {
+            if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
+          },
+          (exports) => workerRecovery.observeSetupExports(exports),
+          (exports) => syncProcessing.observeLogger(exports),
+          (exports) => {
+            workerRecovery.observeLifecycleExports(exports);
+            workerReplacement.observeLifecycleExports(exports);
+          },
+          // macOS keeps Messenger's encrypted engine per window (#295), unless a
+          // second window moved the session onto Facebook's shared engine.
+          /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
+          nicknamePreference
         ),
-        shouldBlockTelemetry,
-        (restore2) => searchIndex.register(restore2),
-        (error) => {
-          if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
-        },
-        (exports) => workerRecovery.observeSetupExports(exports),
-        (exports) => syncProcessing.observeLogger(exports),
-        (exports) => {
-          workerRecovery.observeLifecycleExports(exports);
-          workerReplacement.observeLifecycleExports(exports);
-        },
-        // macOS keeps Messenger's encrypted engine per window (#295), unless a
-        // second window moved the session onto Facebook's shared engine.
-        /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
-        nicknamePreference
+        interceptedFactories
       );
       wrappedDefines.add(wrapped3);
       return wrapped3;
@@ -8628,7 +9062,7 @@ ${button.innerHTML}`)
     "Video calling is not supported on this browser"
   ];
   var CALL_BUTTONS = CALL_BUTTON_LABELS.map(
-    (label2) => `[role="button"][aria-label="${label2}"]`
+    (label) => `[role="button"][aria-label="${label}"]`
   ).join(", ");
   var ISSUE_URL = "https://github.com/kristofferR/Chatpane/issues/345";
   var WIDTH = 280;
@@ -9555,7 +9989,9 @@ ${button.innerHTML}`)
         if (!target || !message) return;
         const control2 = target.closest(CONTROL);
         if (control2 && message.contains(control2)) return;
-        if (getSelection()?.isCollapsed === false) return;
+        const selection = getSelection();
+        if (selection && !selection.isCollapsed && selection.rangeCount > 0 && selection.getRangeAt(0).intersectsNode(message))
+          return;
         if (!besideInk(event.clientX, inkBoxes(message))) return;
         void pressMessageAction(message, "shared.context.reply").then((replied) => {
           if (!replied) return;
@@ -9643,6 +10079,49 @@ ${button.innerHTML}`)
       const thread2 = record3(await db.tables.threads.get(key));
       if (!thread2) return "thread-missing";
       if (!i64.gt(thread2.lastActivityTimestampMs, thread2.lastReadWatermarkTimestampMs)) return "ok";
+      if (Date.now() >= deadline) return "not-confirmed";
+      await wait(200);
+    }
+  }
+  var MESSENGER_MAILBOX = 0;
+  function muteEnd(i64, thread2) {
+    const value = thread2?.muteExpireTimeMs;
+    if (value == null) return thread2 ? 0 : null;
+    const ms = Number(i64.to_string(value));
+    return Number.isFinite(ms) ? ms : null;
+  }
+  async function muteThread(load, threadId, untilMs, deadline, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+    const { db, i64 } = await database(load);
+    const key = i64.of_string(threadId);
+    const current2 = muteEnd(i64, record3(await db.tables.threads.get(key)));
+    if (current2 === null) return "thread-missing";
+    if (current2 === -1 || current2 >= untilMs) return "kept";
+    const factory = exported(load, "LSFactory");
+    const mute2 = exported(
+      load,
+      "LSOptimisticMuteThreadStoredProcedure"
+    );
+    const intEnum = load("LSIntEnum");
+    if (typeof intEnum?.ofNumber !== "function") throw new Error("LSIntEnum changed");
+    const outcome = await db.runInTransaction(
+      async (tx) => {
+        if (Date.now() >= deadline) return "expired";
+        await mute2(factory(tx), {
+          mailboxType: intEnum.ofNumber(MESSENGER_MAILBOX),
+          muteExpireTimeMs: i64.of_float(untilMs),
+          threadKey: key
+        });
+        return "ok";
+      },
+      "readwrite",
+      void 0,
+      void 0,
+      TRACE
+    );
+    if (outcome !== "ok") return outcome;
+    while (true) {
+      const end = muteEnd(i64, record3(await db.tables.threads.get(key)));
+      if (end === -1 || end !== null && end >= untilMs - 1e3) return "ok";
       if (Date.now() >= deadline) return "not-confirmed";
       await wait(200);
     }
@@ -10992,8 +11471,8 @@ ${button.innerHTML}`)
         (span) => !span.closest('[aria-hidden="true"]') && !hasCandidateTextChild(span)
       );
       const labels = (leaves.length ? leaves.map(conversationNodeText) : [conversationNodeText(link)]).map((text2) => text2.replace(/\s+/g, " ").trim()).filter((text2) => {
-        const label2 = text2.toLowerCase().replace(/^www\./, "");
-        return text2 && !linkTarget(text2) && label2 !== target.host && label2 !== target.provider.toLowerCase();
+        const label = text2.toLowerCase().replace(/^www\./, "");
+        return text2 && !linkTarget(text2) && label !== target.host && label !== target.provider.toLowerCase();
       });
       const title = labels[0] || "";
       const image = [...link.querySelectorAll("img")].find((image2) => {
@@ -11882,11 +12361,11 @@ ${button.innerHTML}`)
       if (needle.length < 3) return "unknown";
       const log = document.querySelector('[role="main"] [role="log"][aria-label]');
       if (!log) return "no";
-      const label2 = normalizedText(log.getAttribute("aria-label")).toLowerCase();
-      if (!label2.includes(needle)) return "no";
+      const label = normalizedText(log.getAttribute("aria-label")).toLowerCase();
+      if (!label.includes(needle)) return "no";
       for (const previous of leaving) {
         const other = previous.replace(/[…\s]+$/, "").toLowerCase();
-        if (other && (other === needle || label2.includes(other))) return "unknown";
+        if (other && (other === needle || label.includes(other))) return "unknown";
       }
       return "yes";
     };
@@ -13190,373 +13669,55 @@ ${button.innerHTML}`)
     schedule();
   }
 
-  // inject/src/messenger/lib/quick-mute.ts
-  var QUICK_MUTE_DURATION_MS = "28800000";
-  function decideQuickMute(phase, snapshot, expired) {
-    if (snapshot.threadMatches && (snapshot.muted === true || phase === "chooser" && snapshot.chooser === "unmute" || phase === "confirming" && snapshot.confirmed)) {
-      return { action: "success", phase };
-    }
-    if (expired) return { action: "failure", phase };
-    if (!snapshot.threadMatches) {
-      return phase === "waiting" ? { action: "wait", phase } : { action: "failure", phase };
-    }
-    if (phase === "waiting") {
-      if (snapshot.muted === false) return { action: "open-dialog", phase: "dialog" };
-      if (snapshot.chatNotifications) return { action: "open-chooser", phase: "chooser" };
-      if (!snapshot.infoRequested) return { action: "open-info", phase };
-      return { action: "wait", phase };
-    }
-    if (phase === "chooser") {
-      if (snapshot.chooser === "mute") return { action: "choose-mute", phase: "dialog" };
-      return { action: "wait", phase };
-    }
-    if (phase === "dialog") {
-      if (snapshot.dialog === "unselected") return { action: "select", phase };
-      if (snapshot.dialog === "ready") return { action: "confirm", phase: "confirming" };
-    }
-    return { action: "wait", phase };
-  }
-
-  // inject/src/messenger/lib/thread-restore.ts
-  var THREAD_RESTORE_WAIT_MS = 3e4;
-  function threadRestoreStep(input) {
-    if (input.done || input.onThread) return "done";
-    if (input.waitedMs >= THREAD_RESTORE_WAIT_MS) return "load";
-    return input.rowFound ? "click" : "wait";
-  }
-
-  // inject/src/messenger/lib/thread-viewed.ts
-  var initialThreadViewedState = () => ({
-    visible: false,
-    threadPath: null,
-    lastReportedAt: null
-  });
-  var THREAD_VIEW_RECHECK_MS = 5e3;
-  function advanceThreadViewed(previous, threadPath, visible, now) {
-    const active = visible && threadPath !== null;
-    const changed = !previous.visible || previous.threadPath !== threadPath;
-    const recheckDue = active && previous.lastReportedAt !== null && Number.isFinite(now) && now >= previous.lastReportedAt + THREAD_VIEW_RECHECK_MS;
-    const emit = active && (changed || recheckDue) ? threadPath : null;
-    return {
-      state: {
-        visible,
-        threadPath,
-        lastReportedAt: emit ? now : active ? previous.lastReportedAt : null
-      },
-      emit
-    };
-  }
-
-  // inject/src/messenger/features/thread-nav.ts
-  var RESTORED_THREAD_KEY = "chatpane-restored-thread";
-  var cancelThreadRestore = () => {
-  };
-  function conversationInfoButton() {
-    const exact = document.querySelector(
-      '[role="button"][aria-label="Conversation information"]'
-    );
-    if (exact) return exact;
-    for (const el of document.querySelectorAll("[aria-label]")) {
-      const label2 = (el.getAttribute("aria-label") || "").toLowerCase();
-      if (label2.includes("conversation information") || label2.includes("conversation details"))
-        return el.closest('[role="button"]') || el;
-    }
-    return null;
-  }
-  function openThreadForAction(path) {
-    const wanted = threadPathId(path);
-    if (!wanted) return null;
-    const log = () => document.querySelector('[role="main"] [role="log"]');
-    const onRoute = () => threadIdFromHref(location.pathname) === wanted;
-    if (onRoute()) return onRoute;
-    const staleLog = log();
-    if (window.__chatpaneOpenThread?.(path) !== true) return null;
-    return () => {
-      const current2 = log();
-      return onRoute() && current2 !== null && current2 !== staleLog;
-    };
-  }
-  function stopThreadRestore() {
-    cancelThreadRestore();
-  }
-  function restoreRecycledThread(id) {
-    const startedAt = Date.now();
-    let cancelled = false;
-    let lastThread = threadIdFromHref(location.pathname);
-    const markDone = () => {
-      try {
-        sessionStorage.setItem(RESTORED_THREAD_KEY, id);
-      } catch (_) {
-      }
-    };
-    cancelThreadRestore = () => {
-      cancelled = true;
-      markDone();
-    };
-    const onUserInput = (event) => {
-      if (event.isTrusted) cancelThreadRestore();
-    };
-    for (const type of ["pointerdown", "keydown"]) {
-      window.addEventListener(type, onUserInput, true);
-    }
-    const attempt = () => {
-      if (cancelled) return;
-      const current2 = threadIdFromHref(location.pathname);
-      if (lastThread && current2 !== lastThread && current2 !== id) {
-        cancelThreadRestore();
-        return;
-      }
-      lastThread = current2 ?? lastThread;
-      let done = false;
-      try {
-        done = sessionStorage.getItem(RESTORED_THREAD_KEY) === id;
-      } catch (_) {
-      }
-      const row = [
-        ...document.querySelectorAll('[role="navigation"] a[href*="/t/"]')
-      ].find((a) => threadIdFromHref(a.getAttribute("href")) === id);
-      const step = threadRestoreStep({
-        done,
-        onThread: current2 === id,
-        rowFound: !!row,
-        waitedMs: Date.now() - startedAt
-      });
-      if (step === "done") {
-        if (!done) markDone();
-        return;
-      }
-      if (step === "load") {
-        markDone();
-        location.href = `https://www.facebook.com/messages/t/${id}/`;
-        return;
-      }
-      if (step === "click") row?.click();
-      setTimeout(attempt, 500);
-    };
-    attempt();
-  }
-  function initThreadNav() {
-    setTimeout(() => {
-      const restoreId = window.__CHATPANE_RESTORE_THREAD__;
-      if (typeof restoreId === "string" && /^\d{1,32}$/.test(restoreId)) {
-        restoreRecycledThread(restoreId);
-      }
-    }, 0);
-    window.__chatpaneOpenThread = (href) => {
-      noteExplicitAction();
-      const id = threadPathId(href);
-      if (!id) return false;
-      cancelThreadRestore();
-      for (const a of document.querySelectorAll('a[href*="/t/"]')) {
-        if (threadIdFromHref(a.getAttribute("href")) === id) {
-          a.click();
-          return true;
-        }
-      }
-      location.href = `https://www.facebook.com/messages/t/${id}/`;
-      return true;
-    };
-    let viewed = initialThreadViewedState();
-    const reportViewedThread = () => {
-      const id = threadIdFromHref(location.pathname);
-      const path = id ? `/t/${id}/` : null;
-      const next = advanceThreadViewed(
-        viewed,
-        path,
-        document.hasFocus() && !document.hidden,
-        performance.now()
-      );
-      viewed = next.state;
-      if (next.emit) {
-        invoke("plugin:event|emit", {
-          event: "chatpane:thread-viewed",
-          payload: { thread_path: next.emit }
-        })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
-      }
-    };
-    setInterval(reportViewedThread, 1e3);
-    document.addEventListener("visibilitychange", reportViewedThread);
-    window.addEventListener("focus", reportViewedThread);
-    window.addEventListener("blur", reportViewedThread);
-    reportViewedThread();
-    window.__chatpaneToggleInfo = () => {
-      const btn = conversationInfoButton();
-      if (btn) {
-        btn.click();
-        return true;
-      }
-      toast(t("page.thread.open_first"));
-      return false;
-    };
-  }
-
   // inject/src/messenger/features/quick-mute.ts
-  var POLL_MS2 = 250;
+  var QUICK_MUTE_MS = 8 * 60 * 60 * 1e3;
   var MUTE_BUDGET_MS = 12e3;
   var muteExpiries = /* @__PURE__ */ new Map();
-  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
-  var label = (el) => el.getAttribute("aria-label") || el.textContent || "";
-  var PANE_MUTE_CONTROL = /^(?:(un)?mute notifications?|turn (on|off) notifications)$/i;
-  function threadMuteControl(stale) {
-    let trigger = null;
-    for (const el of document.querySelectorAll(
-      '[role="main"] [role="button"][aria-label], [role="main"] [role="switch"][aria-label], [role="main"] button[aria-label]'
-    )) {
-      if (stale.has(el) || !isShown(el)) continue;
-      const control2 = PANE_MUTE_CONTROL.exec((el.getAttribute("aria-label") || "").trim());
-      if (!control2) continue;
-      const checked = el.getAttribute("aria-checked");
-      if (control2[1] || control2[2]?.toLowerCase() === "on" || checked === "true")
-        return { muted: true, trigger: null };
-      trigger ?? (trigger = el);
+  function serverNow() {
+    try {
+      const time = pageRequire()?.("ServerTime");
+      const now = time?.getMillis?.();
+      if (typeof now === "number" && Number.isFinite(now)) return now;
+    } catch {
     }
-    return { muted: trigger ? false : null, trigger };
+    return Date.now();
   }
-  function chatNotificationsControl(stale) {
-    for (const el of document.querySelectorAll(
-      '[role="main"] [role="button"][aria-label="Chat notifications"]'
-    ))
-      if (!stale.has(el) && isShown(el)) return el;
-    return null;
-  }
-  var visibleButtons = (root) => [...root.querySelectorAll('[role="button"], button')].filter(
-    (button) => isShown(button) && getComputedStyle(button).visibility !== "hidden" && button.getAttribute("aria-disabled") !== "true"
-  );
-  function durationRadio(dialog) {
-    const input = dialog.querySelector(
-      `input[type="radio"][value="${QUICK_MUTE_DURATION_MS}"]`
-    );
-    if (input) return input;
-    for (const radio of dialog.querySelectorAll('[role="radio"]'))
-      if (isShown(radio) && /^for 8 hours$/i.test((radio.textContent || "").trim())) return radio;
-    return null;
-  }
-  function chooserDialog(stale) {
-    for (const dialog of document.querySelectorAll('[role="dialog"]')) {
-      if (stale.has(dialog) || durationRadio(dialog) || !dialog.querySelector('[role="radio"]'))
-        continue;
-      for (const button of visibleButtons(dialog)) {
-        const muted = conversationMuteFromLabel(label(button));
-        if (muted !== null) return { dialog, button, muted };
-      }
-    }
-    return null;
-  }
-  function muteDialog(stale) {
-    for (const dialog of document.querySelectorAll('[role="dialog"]')) {
-      if (stale.has(dialog)) continue;
-      const radio = durationRadio(dialog);
-      if (!radio) continue;
-      const confirm = visibleButtons(dialog).find(
-        (button) => muteStateAfterExplicitAction(label(button)) === true || /^confirm$/i.test(label(button).trim())
-      );
-      if (confirm) return { radio, confirm };
-    }
-    return null;
-  }
-  var radioSelected = (radio) => radio instanceof HTMLInputElement && radio.checked || radio.getAttribute("aria-checked") === "true";
   async function mute(path, deadline) {
-    if (Date.now() >= deadline) return false;
-    const wantedThread = threadPathId(path);
-    const stale = new Set(
-      threadIdFromHref(location.pathname) === wantedThread ? [] : document.querySelectorAll('[role="main"] [role="button"], [role="main"] button')
-    );
-    const paneReady = openThreadForAction(path);
-    if (!wantedThread || !paneReady) {
-      diag("quick-mute.open", "validated thread could not be opened");
+    const thread2 = threadPathId(path);
+    if (!thread2 || Date.now() >= deadline) return false;
+    const load = pageRequire();
+    if (!load) return false;
+    const procedure = "LSOptimisticMuteThreadStoredProcedure";
+    try {
+      load(procedure);
+    } catch {
+      await loadFacebookModules(load, ["MWThreadListHoverButtonDropdownMenu.react"], 5e3).catch(
+        () => {
+        }
+      );
+    }
+    await loadFacebookModules(load, ["LSFactory", "LSIntEnum", procedure], 5e3);
+    const outcome = await muteThread(load, thread2, serverNow() + QUICK_MUTE_MS, deadline);
+    if (outcome !== "ok" && outcome !== "kept") {
+      diag("quick-mute.delivery", `mute stopped: ${outcome}`);
       return false;
     }
-    const staleDialogs = new Set(document.querySelectorAll('[role="dialog"]'));
-    let phase = "waiting";
-    let infoRequested = false;
-    let openedInfo = null;
-    let openedChooser = null;
-    let confirmed = null;
-    try {
-      while (true) {
-        const control2 = threadMuteControl(stale);
-        const chooser = phase === "chooser" ? chooserDialog(staleDialogs) : null;
-        if (chooser) openedChooser = chooser.dialog;
-        const dialog = phase === "dialog" ? muteDialog(staleDialogs) : null;
-        const snapshot = {
-          threadMatches: paneReady(),
-          muted: control2.muted,
-          chatNotifications: chatNotificationsControl(stale) !== null,
-          chooser: !chooser ? "none" : chooser.muted ? "unmute" : "mute",
-          infoRequested,
-          dialog: !dialog ? "none" : radioSelected(dialog.radio) ? "ready" : "unselected",
-          confirmed: confirmed !== null && (!confirmed.isConnected || !isShown(confirmed) || getComputedStyle(confirmed).visibility === "hidden" || mutedThreads.isMuted(wantedThread))
-        };
-        const decision = decideQuickMute(phase, snapshot, Date.now() >= deadline);
-        phase = decision.phase;
-        switch (decision.action) {
-          case "open-info": {
-            const info = conversationInfoButton();
-            if (!info || stale.has(info)) break;
-            infoRequested = true;
-            if (info.getAttribute("aria-expanded") !== "true") {
-              info.click();
-              openedInfo = info;
-            }
-            break;
-          }
-          case "open-dialog":
-            control2.trigger?.click();
-            break;
-          case "open-chooser":
-            chatNotificationsControl(stale)?.click();
-            break;
-          case "choose-mute":
-            chooser?.button.click();
-            break;
-          case "select":
-            dialog?.radio.click();
-            break;
-          case "confirm":
-            confirmed = dialog?.confirm ?? null;
-            dialog?.confirm.click();
-            break;
-          case "success": {
-            mutedThreads.observe(wantedThread, true);
-            const kept = confirmed ? void 0 : muteExpiries.get(wantedThread);
-            if (kept !== void 0) muteExpiries.delete(wantedThread);
-            window.dispatchEvent(
-              new CustomEvent("chatpane:thread-mute", { detail: { id: wantedThread, muted: true } })
-            );
-            if (kept !== void 0) muteExpiries.set(wantedThread, kept);
-            if (confirmed)
-              muteExpiries.set(
-                wantedThread,
-                setTimeout(() => {
-                  muteExpiries.delete(wantedThread);
-                  mutedThreads.invalidateMute(wantedThread);
-                  window.dispatchEvent(
-                    new CustomEvent("chatpane:thread-mute", {
-                      detail: { id: wantedThread, muted: false }
-                    })
-                  );
-                }, Number(QUICK_MUTE_DURATION_MS))
-              );
-            return true;
-          }
-          case "failure":
-            diag(
-              "quick-mute.delivery",
-              `mute flow stopped in ${phase} (${document.visibilityState}; pane ${snapshot.threadMatches}, muted ${snapshot.muted}, chat notifications ${snapshot.chatNotifications}, chooser ${snapshot.chooser}, dialog ${snapshot.dialog})`
-            );
-            return false;
-          case "wait":
-            break;
-        }
-        await pause();
-      }
-    } finally {
-      const chooser = openedChooser?.isConnected ? openedChooser : null;
-      const close = chooser ? visibleButtons(chooser).find((button) => /^(close|done)$/i.test(label(button).trim())) : null;
-      close?.click();
-      if (openedInfo?.isConnected && openedInfo.getAttribute("aria-expanded") === "true" && paneReady())
-        openedInfo.click();
-    }
+    mutedThreads.observe(thread2, true);
+    window.dispatchEvent(
+      new CustomEvent("chatpane:thread-mute", { detail: { id: thread2, muted: true } })
+    );
+    if (outcome === "kept") return true;
+    muteExpiries.set(
+      thread2,
+      setTimeout(() => {
+        muteExpiries.delete(thread2);
+        mutedThreads.invalidateMute(thread2);
+        window.dispatchEvent(
+          new CustomEvent("chatpane:thread-mute", { detail: { id: thread2, muted: false } })
+        );
+      }, QUICK_MUTE_MS)
+    );
+    return true;
   }
   function initQuickMute() {
     window.addEventListener("chatpane:thread-mute", (event) => {
@@ -13575,7 +13736,7 @@ ${button.innerHTML}`)
         return;
       }
       const deadline = Date.now() + Math.min(Number(budgetMs) || 0, MUTE_BUDGET_MS);
-      void withComposerDeliveryWhenAvailable(() => mute(path, deadline)).then((ok) => report(ok)).catch(() => {
+      void mute(path, deadline).then((ok) => report(ok)).catch(() => {
         diag("quick-mute.exception", "mute flow raised an exception");
         void report(false);
       });
@@ -13614,13 +13775,13 @@ ${button.innerHTML}`)
   var composerIncludesReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));
 
   // inject/src/messenger/features/quick-reply.ts
-  var POLL_MS3 = 250;
+  var POLL_MS2 = 250;
   var DELIVERY_BUDGET_MS = 12e3;
   var MAX_REPLY_CHARS = 2e3;
   var COMPOSER_SELECTOR2 = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
   var insertedReplies = /* @__PURE__ */ new Map();
   var replyAttempts = /* @__PURE__ */ new Map();
-  var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS3));
+  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
   var currentThreadId = () => threadIdFromHref(location.pathname);
   var composer = () => firstShown(COMPOSER_SELECTOR2);
   var emitReplyResult = (id, attempt, ok) => {
@@ -13668,7 +13829,7 @@ ${button.innerHTML}`)
         phase = decision.phase;
         switch (decision.action) {
           case "wait":
-            await pause2();
+            await pause();
             break;
           case "insert": {
             if (!box) return false;
@@ -13685,7 +13846,7 @@ ${button.innerHTML}`)
             if (state3.cancelled) return false;
             state3.clicked = true;
             button?.click();
-            await pause2();
+            await pause();
             break;
           case "success":
             insertedReplies.delete(id);
@@ -13740,7 +13901,7 @@ ${text2}`)) {
         insertedReplies.delete(id);
         return true;
       }
-      await pause2();
+      await pause();
     }
     diag("quick-reply.draft", "fallback composer did not become ready");
     return false;
@@ -13866,7 +14027,7 @@ ${text2}`)) {
     "I64",
     "MAWPreloadSecureMessages"
   ];
-  var pause3 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  var pause2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   function initReadAhead() {
     if (window.opener) return;
     let unloading = false;
@@ -13928,10 +14089,10 @@ ${text2}`)) {
               () => true,
               () => false
             ),
-            pause3(READ_AHEAD.chatTimeoutMs).then(() => false)
+            pause2(READ_AHEAD.chatTimeoutMs).then(() => false)
           ]);
           if (done) loaded += 1;
-          await pause3(READ_AHEAD.chatGapMs);
+          await pause2(READ_AHEAD.chatGapMs);
         }
         diag("read-ahead.round", `chats=${threads.length} mapped=${mappedCount} loaded=${loaded}`);
       } catch (error) {
@@ -14183,7 +14344,7 @@ ${text2}`)) {
   window.addEventListener("popstate", () => {
     routeChanged = true;
   });
-  var pause4 = () => new Promise((resolve) => setTimeout(resolve, 100));
+  var pause3 = () => new Promise((resolve) => setTimeout(resolve, 100));
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__chatpaneInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
   var paneThread = () => {
@@ -14225,12 +14386,12 @@ ${text2}`)) {
         const current2 = findComposer();
         if (thread() !== message.thread) {
           if (inserted) break;
-          await pause4();
+          await pause3();
           continue;
         }
         if (!current2 || hasComposerMedia(current2)) {
           if (inserted) break;
-          await pause4();
+          await pause3();
           continue;
         }
         if (paneThread() !== message.thread) return "defer";
@@ -14240,13 +14401,13 @@ ${text2}`)) {
           controls = composerControls(box);
           if (!replaceComposerText(box, message.text)) break;
           inserted = true;
-          await pause4();
+          await pause3();
           continue;
         }
         if (current2 !== box || composerText(current2) !== message.text) break;
         const send = findSendButton(current2, controls);
         if (!send) {
-          await pause4();
+          await pause3();
           continue;
         }
         if (Date.now() > message.due + SEND_GRACE_MS || account2() !== message.account || !connectionReady())
@@ -14258,7 +14419,7 @@ ${text2}`)) {
           if (thread() !== message.thread || account2() !== message.account || !box.isConnected)
             return "uncertain";
           if (!composerText(box).trim()) return "sent";
-          await pause4();
+          await pause3();
         }
         return "uncertain";
       }
@@ -14279,8 +14440,8 @@ ${text2}`)) {
     if (text2 !== void 0) el.textContent = text2;
     return el;
   }
-  var action = (label2, run, className = "chatpane-schedule-action") => {
-    const button = element("button", className, label2);
+  var action = (label, run, className = "chatpane-schedule-action") => {
+    const button = element("button", className, label);
     button.type = "button";
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -14314,9 +14475,9 @@ ${text2}`)) {
     paragraph.append(icon(name), element("span", "", text2));
     return paragraph;
   };
-  var menuRow = (name, label2, run, ...trailing) => {
+  var menuRow = (name, label, run, ...trailing) => {
     const row = action("", run, "chatpane-schedule-row");
-    row.append(icon(name), element("span", "chatpane-schedule-label", label2), ...trailing);
+    row.append(icon(name), element("span", "chatpane-schedule-label", label), ...trailing);
     return row;
   };
   function initScheduledSend() {
@@ -14459,7 +14620,7 @@ ${text2}`)) {
           const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account2() === current2 && !hasComposerMedia(expectedBox);
           replaceComposerText(expectedBox, "");
           for (let attempt = 0; attempt < 10; attempt++) {
-            await pause4();
+            await pause3();
             if (!sameComposer() || composerText(expectedBox) !== textToClear) break;
           }
           if (!sameComposer() || composerText(expectedBox).trim()) {
@@ -14525,10 +14686,10 @@ ${text2}`)) {
       row.append(element("h2", "", title), closeButton);
       return row;
     };
-    const pageRow = (name, label2, target, count = 0) => {
+    const pageRow = (name, label, target, count = 0) => {
       const row = menuRow(
         name,
-        label2,
+        label,
         () => show(target),
         ...count ? [element("span", "chatpane-schedule-count", count.toLocaleString(formatLocale()))] : [],
         icon("next", "chatpane-schedule-chevron")
@@ -14610,13 +14771,13 @@ ${text2}`)) {
         },
         "chatpane-schedule-primary"
       );
-      const label2 = () => {
+      const label = () => {
         const value = localScheduleTime(date.value, time.value);
         confirm.textContent = value !== null && value > Date.now() ? t("page.schedule.schedule_for", { time: formatScheduleTime(value) }) : item ? t("page.schedule.reschedule_message") : t("page.schedule.schedule_message");
       };
       for (const field of [date, time])
-        for (const type of ["input", "change"]) field.addEventListener(type, label2);
-      label2();
+        for (const type of ["input", "change"]) field.addEventListener(type, label);
+      label();
       container.append(fields, note("zone", timeZoneLabel()), confirm);
     };
     const listPage = (container) => {
@@ -15275,6 +15436,166 @@ ${text2}`)) {
     });
   }
 
+  // inject/src/messenger/lib/thread-restore.ts
+  var THREAD_RESTORE_WAIT_MS = 3e4;
+  function threadRestoreStep(input) {
+    if (input.done || input.onThread) return "done";
+    if (input.waitedMs >= THREAD_RESTORE_WAIT_MS) return "load";
+    return input.rowFound ? "click" : "wait";
+  }
+
+  // inject/src/messenger/lib/thread-viewed.ts
+  var initialThreadViewedState = () => ({
+    visible: false,
+    threadPath: null,
+    lastReportedAt: null
+  });
+  var THREAD_VIEW_RECHECK_MS = 5e3;
+  function advanceThreadViewed(previous, threadPath, visible, now) {
+    const active = visible && threadPath !== null;
+    const changed = !previous.visible || previous.threadPath !== threadPath;
+    const recheckDue = active && previous.lastReportedAt !== null && Number.isFinite(now) && now >= previous.lastReportedAt + THREAD_VIEW_RECHECK_MS;
+    const emit = active && (changed || recheckDue) ? threadPath : null;
+    return {
+      state: {
+        visible,
+        threadPath,
+        lastReportedAt: emit ? now : active ? previous.lastReportedAt : null
+      },
+      emit
+    };
+  }
+
+  // inject/src/messenger/features/thread-nav.ts
+  var RESTORED_THREAD_KEY = "chatpane-restored-thread";
+  var cancelThreadRestore = () => {
+  };
+  function conversationInfoButton() {
+    const exact = document.querySelector(
+      '[role="button"][aria-label="Conversation information"]'
+    );
+    if (exact) return exact;
+    for (const el of document.querySelectorAll("[aria-label]")) {
+      const label = (el.getAttribute("aria-label") || "").toLowerCase();
+      if (label.includes("conversation information") || label.includes("conversation details"))
+        return el.closest('[role="button"]') || el;
+    }
+    return null;
+  }
+  function stopThreadRestore() {
+    cancelThreadRestore();
+  }
+  function restoreRecycledThread(id) {
+    const startedAt = Date.now();
+    let cancelled = false;
+    let lastThread = threadIdFromHref(location.pathname);
+    const markDone = () => {
+      try {
+        sessionStorage.setItem(RESTORED_THREAD_KEY, id);
+      } catch (_) {
+      }
+    };
+    cancelThreadRestore = () => {
+      cancelled = true;
+      markDone();
+    };
+    const onUserInput = (event) => {
+      if (event.isTrusted) cancelThreadRestore();
+    };
+    for (const type of ["pointerdown", "keydown"]) {
+      window.addEventListener(type, onUserInput, true);
+    }
+    const attempt = () => {
+      if (cancelled) return;
+      const current2 = threadIdFromHref(location.pathname);
+      if (lastThread && current2 !== lastThread && current2 !== id) {
+        cancelThreadRestore();
+        return;
+      }
+      lastThread = current2 ?? lastThread;
+      let done = false;
+      try {
+        done = sessionStorage.getItem(RESTORED_THREAD_KEY) === id;
+      } catch (_) {
+      }
+      const row = [
+        ...document.querySelectorAll('[role="navigation"] a[href*="/t/"]')
+      ].find((a) => threadIdFromHref(a.getAttribute("href")) === id);
+      const step = threadRestoreStep({
+        done,
+        onThread: current2 === id,
+        rowFound: !!row,
+        waitedMs: Date.now() - startedAt
+      });
+      if (step === "done") {
+        if (!done) markDone();
+        return;
+      }
+      if (step === "load") {
+        markDone();
+        location.href = `https://www.facebook.com/messages/t/${id}/`;
+        return;
+      }
+      if (step === "click") row?.click();
+      setTimeout(attempt, 500);
+    };
+    attempt();
+  }
+  function initThreadNav() {
+    setTimeout(() => {
+      const restoreId = window.__CHATPANE_RESTORE_THREAD__;
+      if (typeof restoreId === "string" && /^\d{1,32}$/.test(restoreId)) {
+        restoreRecycledThread(restoreId);
+      }
+    }, 0);
+    window.__chatpaneOpenThread = (href) => {
+      noteExplicitAction();
+      const id = threadPathId(href);
+      if (!id) return false;
+      cancelThreadRestore();
+      for (const a of document.querySelectorAll('a[href*="/t/"]')) {
+        if (threadIdFromHref(a.getAttribute("href")) === id) {
+          a.click();
+          return true;
+        }
+      }
+      location.href = `https://www.facebook.com/messages/t/${id}/`;
+      return true;
+    };
+    let viewed = initialThreadViewedState();
+    const reportViewedThread = () => {
+      const id = threadIdFromHref(location.pathname);
+      const path = id ? `/t/${id}/` : null;
+      const next = advanceThreadViewed(
+        viewed,
+        path,
+        document.hasFocus() && !document.hidden,
+        performance.now()
+      );
+      viewed = next.state;
+      if (next.emit) {
+        invoke("plugin:event|emit", {
+          event: "chatpane:thread-viewed",
+          payload: { thread_path: next.emit }
+        })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
+      }
+    };
+    setInterval(reportViewedThread, 1e3);
+    document.addEventListener("visibilitychange", reportViewedThread);
+    window.addEventListener("focus", reportViewedThread);
+    window.addEventListener("blur", reportViewedThread);
+    reportViewedThread();
+    window.__chatpaneToggleInfo = () => {
+      const btn = conversationInfoButton();
+      if (btn) {
+        btn.click();
+        return true;
+      }
+      toast(t("page.thread.open_first"));
+      return false;
+    };
+  }
+
   // inject/src/messenger/lib/zoom.ts
   var clampZoom = (p) => Math.min(200, Math.max(30, Math.round(p) || 100));
 
@@ -15452,7 +15773,7 @@ ${text2}`)) {
   // inject/src/messenger/features/sync-health.ts
   var SYNC_CHECK_INTERVAL_MS = 1e4;
   function initSyncHealth() {
-    const tracker = new SyncHealthTracker();
+    const tracker2 = new SyncHealthTracker();
     const serverDelays = new RetryAfterWindow();
     const emitSyncAlert = (kind) => invoke("plugin:event|emit", { event: "chatpane:sync-alert", payload: { kind } })?.catch?.(
       () => {
@@ -15464,9 +15785,9 @@ ${text2}`)) {
     const observeResponse = (id, status, retryHeader, syncOperation) => {
       const now = Date.now();
       const delay = status === 429 && navigator.onLine ? serverDelays.observe(retryHeader, now) : void 0;
-      if (tracker.response(id, status, now, navigator.onLine)) {
+      if (tracker2.response(id, status, now, navigator.onLine)) {
         reportRateLimit("http-429", delay);
-      } else if (syncOperation && syncResponseSucceeded(status) && rateLimitRemainingMs() <= 0 && !tracker.degraded(now)) {
+      } else if (syncOperation && syncResponseSucceeded(status) && rateLimitRemainingMs() <= 0 && !tracker2.degraded(now)) {
         recoveryObservedAt ?? (recoveryObservedAt = now);
       } else if (!syncResponseSucceeded(status)) {
         recoveryObservedAt = null;
@@ -15482,7 +15803,7 @@ ${text2}`)) {
             const input = args[0];
             const url = typeof input === "string" || input instanceof URL ? String(input) : input instanceof Request ? input.url : "";
             if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
-              tracked = tracker.started(Date.now());
+              tracked = tracker2.started(Date.now());
               const headers = new Headers(
                 args[1]?.headers ?? (input instanceof Request ? input.headers : void 0)
               );
@@ -15507,8 +15828,8 @@ ${text2}`)) {
               },
               (error) => {
                 const aborted = error?.name === "AbortError";
-                if (navigator.onLine && !aborted) tracker.failed(id, Date.now());
-                else tracker.abandoned(id);
+                if (navigator.onLine && !aborted) tracker2.failed(id, Date.now());
+                else tracker2.abandoned(id);
               }
             );
           }
@@ -15538,9 +15859,9 @@ ${text2}`)) {
         try {
           const url = xhrUrls.get(this);
           if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
-            const id = tracker.started(Date.now());
+            const id = tracker2.started(Date.now());
             const syncOperation = isMessengerSyncOperation(args[0]);
-            this.addEventListener("abort", () => tracker.abandoned(id), { once: true });
+            this.addEventListener("abort", () => tracker2.abandoned(id), { once: true });
             this.addEventListener(
               "loadend",
               () => {
@@ -15601,14 +15922,14 @@ ${text2}`)) {
         const existing = document.getElementById(SYNC_BANNER_ID);
         const banner = existing || document.createElement("div");
         banner.id = SYNC_BANNER_ID;
-        let label2 = banner.querySelector("span");
-        if (!label2) {
-          label2 = document.createElement("span");
-          label2.setAttribute("role", "alert");
-          banner.appendChild(label2);
+        let label = banner.querySelector("span");
+        if (!label) {
+          label = document.createElement("span");
+          label.setAttribute("role", "alert");
+          banner.appendChild(label);
         }
         const message = limited ? rateLimitRemainingMs() > 0 ? tn("page.sync.rate_limited", Math.max(1, Math.ceil(rateLimitRemainingMs() / 6e4))) : t("page.sync.cooldown_ended") : recoveryFailed ? t("page.sync.reconnect_failed") : syncProcessingStalled ? t("page.sync.slow") : t("page.sync.broken");
-        if (label2.textContent !== message) label2.textContent = message;
+        if (label.textContent !== message) label.textContent = message;
         const buttonStyle = {
           background: "#1c1e21",
           color: "#fff",
@@ -15701,14 +16022,14 @@ ${text2}`)) {
       else if (recoveryFailed || degraded || syncProcessingStalled) showSyncBanner();
       else hideSyncBanner();
     });
-    window.addEventListener("offline", () => tracker.abandonOutstanding());
+    window.addEventListener("offline", () => tracker2.abandonOutstanding());
     let degraded = false;
     const showRateLimit = () => {
       if (rateLimitRemainingMs() > 0) {
         recoveryObservedAt = null;
         if (!sawRateLimit) emitSyncAlert("rate-limited");
         sawRateLimit = true;
-        tracker.abandonOutstanding();
+        tracker2.abandonOutstanding();
         stuckLoading.observe(false);
       }
       if (sawRateLimit) showSyncBanner(true);
@@ -15721,12 +16042,12 @@ ${text2}`)) {
         return;
       }
       if (!navigator.onLine) {
-        tracker.abandonOutstanding();
+        tracker2.abandonOutstanding();
         return;
       }
       const now = Date.now();
-      tracker.sweep(now);
-      if (recoveryObservedAt !== null && now - recoveryObservedAt >= SYNC_CHECK_INTERVAL_MS && !tracker.degraded(now)) {
+      tracker2.sweep(now);
+      if (recoveryObservedAt !== null && now - recoveryObservedAt >= SYNC_CHECK_INTERVAL_MS && !tracker2.degraded(now)) {
         sawRateLimit = false;
         recoveryObservedAt = null;
         if (clearRateLimitOnRecovery()) {
@@ -15737,10 +16058,10 @@ ${text2}`)) {
       if (!document.hidden && isMessengerContentPath(location.pathname)) {
         stuckLoading.observe(loadingSpinnerVisible());
       }
-      const degradedNow = tracker.degraded(now) || stuckLoading.persistent() || syncProcessingStalled;
+      const degradedNow = tracker2.degraded(now) || stuckLoading.persistent() || syncProcessingStalled;
       if (degradedNow && !degraded) {
         degraded = true;
-        const reason = syncProcessingStalled ? "message processing stalled" : stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
+        const reason = syncProcessingStalled ? "message processing stalled" : stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker2.summary(now)})`;
         diag("sync.stalled", `messenger sync degraded: ${reason}`);
         emitSyncAlert("degraded");
       } else if (!degradedNow && degraded) {
@@ -15775,10 +16096,10 @@ ${text2}`)) {
         return emojiGlyph(img.getAttribute("alt"));
       }
       if (el.matches?.(INTERACTIVE_SEL)) return "";
-      const label2 = emojiGlyph(el.getAttribute("aria-label"));
-      if (!label2) return "";
+      const label = emojiGlyph(el.getAttribute("aria-label"));
+      if (!label) return "";
       const bg = getComputedStyle(el).backgroundImage || "";
-      return EMOJI_SOURCE_RE.test(bg) ? label2 : "";
+      return EMOJI_SOURCE_RE.test(bg) ? label : "";
     }
     function clearGlyph(el) {
       el.__chatpaneSystemEmojiGlyph?.remove?.();
@@ -16022,12 +16343,12 @@ ${text2}`)) {
     box.id = CONTROLS_ID;
     box.setAttribute("role", "group");
     box.setAttribute("aria-label", t("page.window.controls"));
-    const button = (name, label2, action2) => {
+    const button = (name, label, action2) => {
       const b = document.createElement("button");
       b.type = "button";
       b.dataset.control = name;
-      b.setAttribute("aria-label", label2);
-      b.title = label2;
+      b.setAttribute("aria-label", label);
+      b.title = label;
       b.addEventListener("click", () => control(action2));
       return b;
     };
@@ -16097,9 +16418,9 @@ ${text2}`)) {
       if (maximize.dataset.icon !== name) {
         maximize.dataset.icon = name;
         maximize.innerHTML = icon2(name);
-        const label2 = next.maximized ? t("page.window.restore") : t("page.window.maximize");
-        maximize.setAttribute("aria-label", label2);
-        maximize.title = label2;
+        const label = next.maximized ? t("page.window.restore") : t("page.window.maximize");
+        maximize.setAttribute("aria-label", label);
+        maximize.title = label;
       }
     }
     placeStrip();

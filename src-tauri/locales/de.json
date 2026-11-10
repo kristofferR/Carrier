@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger hat diese Einstellung nicht übermittelt.",
   "settings.account.active_status.label": "Aktivitätsstatus",
   "settings.account.active_status.hint": "Anderen zeigen, wenn du aktiv bist oder kürzlich aktiv warst.",
+  "settings.account.read_receipts.label": "Lesebestätigungen",
+  "settings.account.read_receipts.hint": "Andere sehen, wann du ihre Nachrichten gelesen hast. Das gilt in beide Richtungen: Schaltest du es aus, siehst du auch nicht, wann sie deine gelesen haben.",
   "settings.account.sounds.label": "Nachrichtentöne",
   "settings.account.sounds.hint": "Messengers eigene Töne für neue Nachrichten. Der Benachrichtigungston von {app} ist davon unabhängig.",
   "settings.account.dnd.label": "Nicht stören",

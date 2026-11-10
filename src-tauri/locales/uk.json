@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger не повідомив значення цього параметра.",
   "settings.account.active_status.label": "Статус активності",
   "settings.account.active_status.hint": "Показувати іншим, коли ви активні або були активні нещодавно.",
+  "settings.account.read_receipts.label": "Звіти про прочитання",
+  "settings.account.read_receipts.hint": "Інші бачать, коли ви прочитали їхні повідомлення. Це працює в обидва боки: якщо вимкнути, ви теж не бачитимете, коли вони прочитали ваші.",
   "settings.account.sounds.label": "Звуки повідомлень",
   "settings.account.sounds.hint": "Власні звуки Messenger для нових повідомлень. Звук сповіщень {app} налаштовується окремо.",
   "settings.account.dnd.label": "Не турбувати",

@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger bu ayarı bildirmedi.",
   "settings.account.active_status.label": "Aktiflik durumu",
   "settings.account.active_status.hint": "Aktif olduğunu veya yakın zamanda aktif olduğunu başkalarına göster.",
+  "settings.account.read_receipts.label": "Okundu bilgisi",
+  "settings.account.read_receipts.hint": "Mesajlarını okuduğunda başkalarının bunu görmesine izin ver. Bu iki yönlü çalışır: kapatırsan onların seninkileri ne zaman okuduğunu da göremezsin.",
   "settings.account.sounds.label": "Mesaj sesleri",
   "settings.account.sounds.hint": "Messenger'ın yeni mesajlar için kendi sesleri. {app} bildirim sesi bundan ayrıdır.",
   "settings.account.dnd.label": "Rahatsız Etme",

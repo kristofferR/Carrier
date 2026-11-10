@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger nie przekazał tego ustawienia.",
   "settings.account.active_status.label": "Status aktywności",
   "settings.account.active_status.hint": "Pokazuj innym Twoją bieżącą i niedawną aktywność.",
+  "settings.account.read_receipts.label": "Potwierdzenia odczytu",
+  "settings.account.read_receipts.hint": "Pozwól innym widzieć, kiedy przeczytasz ich wiadomości. Działa to w obie strony: po wyłączeniu nie zobaczysz też, kiedy przeczytali Twoje.",
   "settings.account.sounds.label": "Dźwięki wiadomości",
   "settings.account.sounds.hint": "Własne dźwięki Messengera dla nowych wiadomości. Dźwięk powiadomień aplikacji {app} ustawia się osobno.",
   "settings.account.dnd.label": "Nie przeszkadzać",

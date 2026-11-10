@@ -582,7 +582,9 @@ pub(crate) fn load_settings_early() -> Settings {
 
 fn load_settings_from_path(path: &Path) -> Settings {
     match std::fs::read_to_string(path) {
-        Ok(json) => match serde_json::from_str::<Settings>(&json) {
+        // Windows editors such as PowerShell's `Set-Content -Encoding UTF8`
+        // start the file with a byte order mark, which serde_json rejects.
+        Ok(json) => match serde_json::from_str::<Settings>(json.trim_start_matches('\u{feff}')) {
             Ok(settings) => settings.sanitized(),
             Err(error) => {
                 log::warn!(
@@ -1633,6 +1635,18 @@ mod tests {
             "the dropped write must leave no temporary file behind"
         );
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn settings_with_a_byte_order_mark_load() {
+        let path = std::env::temp_dir().join(format!(
+            "chatpane-bom-settings-{}-{}.json",
+            std::process::id(),
+            SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, "\u{feff}{\"zoom\": 130}").unwrap();
+        assert_eq!(load_settings_from_path(&path).zoom, 130);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

@@ -3,6 +3,7 @@ import {
   createFacebookModuleDefineInterceptor,
   FacebookFTSIdleCoordinator,
   type FacebookModuleDefine,
+  interceptOnce,
   isConversationSearchInput,
 } from "./facebook-modules";
 
@@ -570,4 +571,29 @@ test("observes ErrorPubSub once, preserves exports, and isolates listener failur
   expect(observed).toBe(1);
   expect(() => emit?.({})).not.toThrow();
   expect(observed).toBe(2);
+});
+
+test("intercepts a definition once when the loader replays its stub queue", () => {
+  const intercepted = new WeakSet<object>();
+  let passes = 0;
+  // Each pass wraps the factory, as Chatpane's notification and sound hooks do.
+  const intercept =
+    (define: FacebookModuleDefine): FacebookModuleDefine =>
+    (name, dependencies, factory) => {
+      passes++;
+      return define(name, dependencies, () => (factory as ModuleFactory)());
+    };
+  const queued: unknown[][] = [];
+  const stub = interceptOnce((...args) => queued.push(args), intercept, intercepted);
+  const factory = () => "exports";
+  stub("Module", [], factory);
+
+  const { define, definitions } = definitionHarness();
+  const loader = interceptOnce(define, intercept, intercepted);
+  for (const args of queued) loader(...args);
+  loader("Later", [], factory);
+
+  expect(passes).toBe(2);
+  expect(definitions.get("Module")?.factory).toBe(queued[0]?.[2] as ModuleFactory);
+  expect(definitions.get("Module")?.factory()).toBe("exports");
 });

@@ -2,10 +2,12 @@ import {
   createFacebookModuleDefineInterceptor,
   FacebookFTSIdleCoordinator,
   type FacebookModuleDefine,
+  interceptOnce,
   isConversationSearchInput,
 } from "../lib/facebook-modules";
 import { nicknameMode } from "../lib/nicknames";
 import { isFacebookRateLimitError } from "../lib/rate-limit";
+import { interceptErrorBlock } from "./messenger-error-block";
 import { installMessengerSoundPlayback, interceptSoundModules } from "./messenger-sounds";
 import { interceptNotificationModules } from "./page-notifications";
 import { interceptPinnedChatModules } from "./pinned-chats";
@@ -24,6 +26,7 @@ export function initFacebookModuleInterception() {
   const page = window as unknown as Record<string, unknown>;
   const shouldBlockTelemetry = () => window.__CHATPANE_SETTINGS__?.block_telemetry === true;
   const wrappedDefines = new WeakSet<object>();
+  const interceptedFactories = new WeakSet<object>();
   const searchIndex = new FacebookFTSIdleCoordinator();
   const nicknamePreference = {
     getSnapshot: () => nicknameMode(window.__CHATPANE_SETTINGS__),
@@ -69,25 +72,30 @@ export function initFacebookModuleInterception() {
 
   const wrap = (value: unknown): unknown => {
     if (typeof value !== "function" || wrappedDefines.has(value)) return value;
-    const wrapped = createFacebookModuleDefineInterceptor(
-      interceptPinnedChatModules(
-        interceptNotificationModules(interceptSoundModules(value as FacebookModuleDefine)),
-      ) as FacebookModuleDefine,
-      shouldBlockTelemetry,
-      (restore) => searchIndex.register(restore),
-      (error) => {
-        if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
-      },
-      (exports) => workerRecovery.observeSetupExports(exports),
-      (exports) => syncProcessing.observeLogger(exports),
-      (exports) => {
-        workerRecovery.observeLifecycleExports(exports);
-        workerReplacement.observeLifecycleExports(exports);
-      },
-      // macOS keeps Messenger's encrypted engine per window (#295), unless a
-      // second window moved the session onto Facebook's shared engine.
-      /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
-      nicknamePreference,
+    const wrapped = interceptOnce(
+      value as FacebookModuleDefine,
+      (define) =>
+        createFacebookModuleDefineInterceptor(
+          interceptPinnedChatModules(
+            interceptNotificationModules(interceptErrorBlock(interceptSoundModules(define))),
+          ) as FacebookModuleDefine,
+          shouldBlockTelemetry,
+          (restore) => searchIndex.register(restore),
+          (error) => {
+            if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
+          },
+          (exports) => workerRecovery.observeSetupExports(exports),
+          (exports) => syncProcessing.observeLogger(exports),
+          (exports) => {
+            workerRecovery.observeLifecycleExports(exports);
+            workerReplacement.observeLifecycleExports(exports);
+          },
+          // macOS keeps Messenger's encrypted engine per window (#295), unless a
+          // second window moved the session onto Facebook's shared engine.
+          /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
+          nicknamePreference,
+        ),
+      interceptedFactories,
     );
     wrappedDefines.add(wrapped);
     return wrapped;

@@ -1,7 +1,7 @@
 /*
- * Messenger's own account settings (Ref #358): Active Status, message sounds
- * and Do Not Disturb, read and changed the way Messenger's Preferences dialog
- * does, so they sync to the account. Idea from fMess
+ * Messenger's own account settings (Ref #358): Active Status, message sounds,
+ * Do Not Disturb and read receipts, read and changed the way Messenger's own
+ * dialogs and menus do, so they sync to the account. Idea from fMess
  * (github.com/toanbku/fmess, MIT).
  */
 import { t } from "../../i18n";
@@ -13,13 +13,16 @@ export interface MessengerAccountState {
   sounds: boolean | null;
   /** Seconds since 1970 when Do Not Disturb ends: 0 off, -1 until turned off. */
   dndUntil: number | null;
+  /** Whether people see when you've read their messages (and you theirs). */
+  readReceipts: boolean | null;
 }
 
 export type MessengerAccountChange =
   | { setting: "activeStatus"; value: boolean }
   | { setting: "sounds"; value: boolean }
   /** Minutes: 0 turns it off, -1 until turned off. */
-  | { setting: "doNotDisturb"; value: number };
+  | { setting: "doNotDisturb"; value: number }
+  | { setting: "readReceipts"; value: boolean };
 
 interface Relay {
   fetchQuery(
@@ -44,14 +47,39 @@ export function stateFromViewer(
   viewer: ChatSettingsViewer | null | undefined,
   resolveActiveStatus: (all: unknown, messenger: unknown, facebook: unknown) => unknown,
   dndUntil: number | null,
+  readReceipts: boolean | null,
 ): MessengerAccountState {
-  if (!viewer) return { activeStatus: null, sounds: null, dndUntil };
+  if (!viewer) return { activeStatus: null, sounds: null, dndUntil, readReceipts };
   const active = resolveActiveStatus(
     flag(viewer.chat_visibility),
     flag(viewer.chat_visibility_on_messenger),
     flag(viewer.chat_visibility_on_facebook),
   );
-  return { activeStatus: flag(active), sounds: flag(viewer.chat_sounds_on), dndUntil };
+  return {
+    activeStatus: flag(active),
+    sounds: flag(viewer.chat_sounds_on),
+    dndUntil,
+    readReceipts,
+  };
+}
+
+/** Messenger's LSReadReceiptSettingState. */
+const READ_RECEIPTS_DEFAULT = 0;
+const READ_RECEIPTS_DISABLED = 1;
+const READ_RECEIPTS_ENABLED = 2;
+
+/**
+ * Whether read receipts are on, decided as useMWIsReadReceiptsDisabledForUser
+ * does: the account's `messaging_privacy_settings` row when there is one (its
+ * unset or default value means on), else the page's own
+ * MessengerWebPrivacySettings. Null when neither is known.
+ */
+export function readReceiptsOn(
+  row: { setting: number | null } | null,
+  pageDefault: unknown,
+): boolean | null {
+  if (row) return (row.setting ?? READ_RECEIPTS_DEFAULT) !== READ_RECEIPTS_DISABLED;
+  return typeof pageDefault === "number" ? pageDefault !== READ_RECEIPTS_DISABLED : null;
 }
 
 /** Do Not Disturb end for a change of `minutes` (0 off, -1 until turned off). */
@@ -98,6 +126,97 @@ export async function readMessengerAccount(
     data.viewer,
     defaultExport(resolve) as (all: unknown, messenger: unknown, facebook: unknown) => unknown,
     dndUntil,
+    await readReadReceipts(load, account),
+  );
+}
+
+interface I64Module {
+  zero: unknown;
+  neg_one: unknown;
+  of_float(value: number): unknown;
+  of_string(value: string): unknown;
+  to_float(value: unknown): number;
+}
+
+interface LSIntEnum {
+  ofNumber(value: number): unknown;
+  toNumber(value: unknown): number;
+}
+
+interface Database {
+  runInTransaction(run: (tx: unknown) => unknown, mode: string): Promise<unknown>;
+  tables?: { messaging_privacy_settings?: { get(key: unknown): Promise<unknown> } };
+}
+
+/** The account's read receipts setting, read where Messenger's own switch reads it. */
+export async function readReadReceipts(
+  load: Load | null,
+  account: string,
+  timeoutMs = 3000,
+): Promise<boolean | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  async function read(): Promise<boolean | null> {
+    const [i64, database, intEnum] = (await loadFacebookModules(load, [
+      "I64",
+      "LSDatabaseSingleton",
+      "LSIntEnum",
+    ])) as [I64Module, { LSDatabaseSingleton: Promise<Database> }, LSIntEnum];
+    const db = await database.LSDatabaseSingleton;
+    const table = db.tables?.messaging_privacy_settings;
+    const row = (
+      typeof table?.get === "function" ? await table.get(i64.of_string(account)) : null
+    ) as { readReceiptsDisabled?: unknown } | null;
+    let pageDefault: unknown = null;
+    try {
+      // A server-sent configuration module; absent on some pages.
+      pageDefault = (load?.("MessengerWebPrivacySettings") as { read_receipts_disabled?: unknown })
+        ?.read_receipts_disabled;
+    } catch {}
+    return readReceiptsOn(
+      row && typeof row === "object"
+        ? {
+            setting:
+              row.readReceiptsDisabled == null ? null : intEnum.toNumber(row.readReceiptsDisabled),
+          }
+        : null,
+      pageDefault,
+    );
+  }
+}
+
+/**
+ * Read receipts the way Messenger's own "Show read receipts" switch
+ * (MWReadReceiptsMenuItem) saves them: in the account's privacy settings,
+ * which also tells Facebook's servers.
+ */
+async function setReadReceipts(load: Load | null, on: boolean) {
+  // The stored procedure comes with the code of Messenger's settings menu
+  // (the chat list's gear), which loads when that menu first opens.
+  await loadFacebookModules(load, ["MWInboxSettingsMenu.react"]);
+  const [database, factory, intEnum, update] = (await loadFacebookModules(load, [
+    "LSDatabaseSingleton",
+    "LSFactory",
+    "LSIntEnum",
+    "LSOptimisticallyUpdateMessagingPrivacySettingsStoredProcedure",
+  ])) as [{ LSDatabaseSingleton: Promise<Database> }, unknown, LSIntEnum, unknown];
+  const db = await database.LSDatabaseSingleton;
+  const makeFactory = defaultExport(factory) as (tx: unknown) => unknown;
+  const run = defaultExport(update) as (factory: unknown, input: object) => unknown;
+  const value = intEnum.ofNumber(on ? READ_RECEIPTS_ENABLED : READ_RECEIPTS_DISABLED);
+  await db.runInTransaction(
+    (tx) => run(makeFactory(tx), { readReceiptsDisabled: value }),
+    "readwrite",
   );
 }
 
@@ -119,6 +238,8 @@ export async function changeMessengerAccount(
     );
   } else if (change.setting === "activeStatus") {
     await setActiveStatus(load, change.value);
+  } else if (change.setting === "readReceipts") {
+    await setReadReceipts(load, change.value);
   } else {
     await setDoNotDisturb(load, account, change.value);
   }
@@ -137,6 +258,8 @@ export function applied(state: MessengerAccountState, change: MessengerAccountCh
       return state.activeStatus === change.value;
     case "sounds":
       return state.sounds === change.value;
+    case "readReceipts":
+      return state.readReceipts === change.value;
     case "doNotDisturb": {
       if (change.value <= 0) return state.dndUntil === change.value;
       // A timed one ends about `value` minutes from now.
@@ -144,13 +267,6 @@ export function applied(state: MessengerAccountState, change: MessengerAccountCh
       return state.dndUntil !== null && Math.abs(state.dndUntil - expected) <= 120;
     }
   }
-}
-
-interface I64Module {
-  zero: unknown;
-  neg_one: unknown;
-  of_float(value: number): unknown;
-  to_float(value: unknown): number;
 }
 
 /**
@@ -169,11 +285,7 @@ async function setDoNotDisturb(load: Load | null, account: string, minutes: numb
   ])) as [
     I64Module,
     { getMillis(): number },
-    {
-      LSDatabaseSingleton: Promise<{
-        runInTransaction(run: (tx: unknown) => unknown, mode: string): Promise<unknown>;
-      }>;
-    },
+    { LSDatabaseSingleton: Promise<Database> },
     unknown,
     { updateMute(account: string, until: number): void },
     unknown,

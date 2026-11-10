@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger 未报告此设置。",
   "settings.account.active_status.label": "在线状态",
   "settings.account.active_status.hint": "让别人看到你在线或最近在线。",
+  "settings.account.read_receipts.label": "已读回执",
+  "settings.account.read_receipts.hint": "让对方看到你何时读了他们的消息。此设置是双向的：关闭后，你也看不到对方何时读了你的消息。",
   "settings.account.sounds.label": "消息提示音",
   "settings.account.sounds.hint": "Messenger 自带的新消息提示音。{app} 的通知声音需另外设置。",
   "settings.account.dnd.label": "勿扰模式",

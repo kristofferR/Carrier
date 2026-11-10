@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger មិនបានរាយការណ៍ការកំណត់នេះទេ។",
   "settings.account.active_status.label": "ស្ថានភាពសកម្ម",
   "settings.account.active_status.hint": "បង្ហាញឱ្យអ្នកដទៃឃើញពេលអ្នកសកម្ម ឬទើបតែសកម្ម។",
+  "settings.account.read_receipts.label": "បង្កាន់ដៃបានអាន",
+  "settings.account.read_receipts.hint": "អនុញ្ញាតឱ្យអ្នកដទៃឃើញពេលអ្នកបានអានសាររបស់ពួកគេ។ វាដំណើរការទាំងសងខាង៖ បើអ្នកបិទវា អ្នកក៏នឹងមិនឃើញពេលពួកគេបានអានសាររបស់អ្នកដែរ។",
   "settings.account.sounds.label": "សំឡេងសារ",
   "settings.account.sounds.hint": "សំឡេងរបស់ Messenger ផ្ទាល់សម្រាប់សារថ្មី។ សំឡេងជូនដំណឹងរបស់ {app} គឺដាច់ដោយឡែក។",
   "settings.account.dnd.label": "កុំរំខាន",

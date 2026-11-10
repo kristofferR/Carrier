@@ -38,7 +38,7 @@ function openMenu(): Element | null {
  */
 export async function withHiddenMenu<T>(
   button: HTMLElement,
-  use: (menu: Element) => T,
+  use: (menu: Element) => T | Promise<T>,
   picks = false,
 ): Promise<T | null> {
   const root = document.documentElement;
@@ -48,7 +48,7 @@ export async function withHiddenMenu<T>(
     if (!expanded(button)) button.click();
     const menu = await waitFor(() => (expanded(button) ? openMenu() : null), MENU_WAIT_MS);
     if (!menu) return null;
-    const result = use(menu);
+    const result = await use(menu);
     if (picks && result) await waitFor(() => !expanded(button), MENU_WAIT_MS);
     return result;
   } finally {

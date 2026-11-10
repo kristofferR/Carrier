@@ -388,6 +388,33 @@ function wrapFactory(
 }
 
 /**
+ * Run each module definition through `intercept` once. Until Facebook's loader
+ * arrives, a stub queues definitions, and the loader replays them with the
+ * factories Chatpane already wrapped; a second pass would wrap the wrapper.
+ * `intercepted` is shared by every define this wraps, the stub and the loader.
+ */
+export function interceptOnce(
+  define: FacebookModuleDefine,
+  intercept: (define: FacebookModuleDefine) => FacebookModuleDefine,
+  intercepted: WeakSet<object>,
+): FacebookModuleDefine {
+  const chain = intercept(
+    new Proxy(define, {
+      apply(target, thisArg, args: unknown[]) {
+        if (typeof args[2] === "function") intercepted.add(args[2]);
+        return Reflect.apply(target, thisArg, args);
+      },
+    }),
+  );
+  return new Proxy(define, {
+    apply(target, thisArg, args: unknown[]) {
+      const replayed = typeof args[2] === "function" && intercepted.has(args[2]);
+      return Reflect.apply(replayed ? target : chain, thisArg, args);
+    },
+  });
+}
+
+/**
  * Wrap Facebook's Haste module registration function. Exact module names keep
  * the optimization fail-open when Facebook changes its internals: unknown
  * names and loader shapes pass through untouched.

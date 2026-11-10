@@ -541,6 +541,8 @@
   "settings.account.not_reported": "O Messenger não informou esta configuração.",
   "settings.account.active_status.label": "Status de atividade",
   "settings.account.active_status.hint": "Mostra às pessoas quando você está ativo ou esteve ativo recentemente.",
+  "settings.account.read_receipts.label": "Confirmações de leitura",
+  "settings.account.read_receipts.hint": "Deixa as pessoas verem quando você leu as mensagens delas. Funciona nos dois sentidos: se desativar, você também não verá quando elas leram as suas.",
   "settings.account.sounds.label": "Sons de mensagem",
   "settings.account.sounds.hint": "Os sons do próprio Messenger para novas mensagens. O som de notificação do {app} é separado.",
   "settings.account.dnd.label": "Não perturbe",

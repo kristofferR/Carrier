@@ -541,6 +541,8 @@
   "settings.account.not_reported": "A Messenger nem jelezte ezt a beállítást.",
   "settings.account.active_status.label": "Aktivitási állapot",
   "settings.account.active_status.hint": "Mások láthatják, ha aktív vagy, vagy nemrég aktív voltál.",
+  "settings.account.read_receipts.label": "Olvasási visszaigazolás",
+  "settings.account.read_receipts.hint": "Mások láthatják, mikor olvastad el az üzeneteiket. Ez mindkét irányban érvényes: ha kikapcsolod, te sem látod, mikor olvasták el a tieidet.",
   "settings.account.sounds.label": "Üzenethangok",
   "settings.account.sounds.hint": "A Messenger saját hangjai új üzeneteknél. A {app} értesítési hangja ettől független.",
   "settings.account.dnd.label": "Ne zavarjanak",

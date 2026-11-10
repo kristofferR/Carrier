@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger n'a pas transmis ce réglage.",
   "settings.account.active_status.label": "Statut En ligne",
   "settings.account.active_status.hint": "Montre aux autres quand tu es en ligne ou l'as été récemment.",
+  "settings.account.read_receipts.label": "Confirmations de lecture",
+  "settings.account.read_receipts.hint": "Permet aux autres de voir quand tu as lu leurs messages. Cela vaut dans les deux sens : si tu le désactives, tu ne verras pas non plus quand ils ont lu les tiens.",
   "settings.account.sounds.label": "Sons des messages",
   "settings.account.sounds.hint": "Les sons propres à Messenger pour les nouveaux messages. Le son de notification de {app} est distinct.",
   "settings.account.dnd.label": "Ne pas déranger",

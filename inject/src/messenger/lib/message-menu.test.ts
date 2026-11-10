@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import type { ConversationTextNode } from "./conversation-row";
 import {
+  classifyMoreRow,
+  classifyToolbarButton,
   keyboardMenuPoint,
+  type MessageMenuComponents,
   menuRowAction,
   messageActions,
   messageNodeText,
+  pinAction,
   REPLY_ICON_PATH,
   reactionLabel,
   toolbarAction,
   uniqueReactions,
 } from "./message-menu";
+import type { Fiber } from "./react-fiber";
 
 describe("message actions", () => {
   test("reads Messenger's More rows and toolbar buttons", () => {
@@ -129,5 +134,78 @@ describe("message text", () => {
       element("SPAN", { "data-chatpane-system-emoji-glyph": "" }, [text("😀")]),
     ]);
     expect(messageNodeText(block)).toBe("Hello 😀");
+  });
+});
+
+describe("message menu components", () => {
+  const c: MessageMenuComponents = {
+    reactButton: () => null,
+    replyButton: () => null,
+    forwardButton: () => null,
+    moreButton: { render: () => null },
+    replyRow: () => null,
+    editRow: () => null,
+    forwardRow: () => null,
+    pinRow: () => null,
+    removeRow: () => null,
+    menu: () => null,
+  };
+  /** A DOM node's fiber under one component, inside the menu. */
+  const under = (type: unknown, props: Record<string, unknown> = {}): Fiber => ({
+    type: "div",
+    return: {
+      type: () => null,
+      return: { type, memoizedProps: props, return: { type: c.menu, return: null } },
+    },
+  });
+
+  test("names toolbar buttons by component, forwardRef included", () => {
+    expect(classifyToolbarButton(under(c.reactButton), c)).toBe("react");
+    expect(classifyToolbarButton(under((c.moreButton as { render: unknown }).render), c)).toBe(
+      "more",
+    );
+    expect(classifyToolbarButton(under(c.replyButton), c)).toBe("shared.context.reply");
+    expect(classifyToolbarButton(under(c.forwardButton), c)).toBe("shared.context.forward");
+    expect(
+      classifyToolbarButton(
+        under(() => null),
+        c,
+      ),
+    ).toBeNull();
+  });
+
+  test("names More rows by component, whatever their text", () => {
+    const own = (sender: unknown) => sender === "me";
+    expect(classifyMoreRow(under(c.replyRow), c, own)).toBe("shared.context.reply");
+    expect(classifyMoreRow(under(c.editRow), c, own)).toBe("shared.context.edit");
+    expect(classifyMoreRow(under(c.forwardRow), c, own)).toBe("shared.context.forward");
+    expect(classifyMoreRow(under(c.pinRow, { message: { messageId: "m" } }), c, own)).toEqual({
+      pinMessage: { messageId: "m" },
+    });
+    expect(
+      classifyMoreRow(
+        under(() => null),
+        c,
+        own,
+      ),
+    ).toBeNull();
+  });
+
+  test("offers Unsend only for your own message Messenger lets you remove for everyone", () => {
+    const own = (sender: unknown) => sender === "me";
+    const remove = (sender: string, everyone: boolean) =>
+      classifyMoreRow(
+        under(c.removeRow, { canRemoveMessageGlobally: everyone, message: { senderId: sender } }),
+        c,
+        own,
+      );
+    expect(remove("me", true)).toBe("shared.context.unsend");
+    expect(remove("me", false)).toBe("shared.context.remove");
+    expect(remove("them", true)).toBe("shared.context.remove");
+  });
+
+  test("Pin rows perform Pin or Unpin, whichever their state shows", () => {
+    expect(pinAction(true)).toBe("shared.context.unpin");
+    expect(pinAction(false)).toBe("shared.context.pin");
   });
 });

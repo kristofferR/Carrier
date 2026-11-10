@@ -22,6 +22,7 @@ import { hasComposerDraft } from "../lib/scheduled-composer";
 import { isComposerDeliveryActive } from "../lib/scheduled-send";
 import { isMessengerContentPath } from "../lib/threads";
 import { SILENT_RECOVERY_EVENT, SILENT_RECOVERY_RELOAD_EVENT } from "../lib/worker-recovery";
+import { ERROR_BLOCK_EVENT, messengerErrorBlockShown } from "./messenger-error-block";
 import {
   hasRateLimitEpisode,
   RATE_LIMIT_EVENT,
@@ -87,6 +88,8 @@ export function initAutoRefresh() {
     try {
       return (
         hasFacebookReloadDialog() ||
+        // Messenger's own "Couldn't load chats" screen.
+        messengerErrorBlockShown() ||
         looksLikeFacebookErrorPage({
           hasBackLink: !!document.getElementById("back"),
           hasIconImage: document.getElementById("icon") instanceof HTMLImageElement,
@@ -203,6 +206,8 @@ export function initAutoRefresh() {
   };
   window.addEventListener("input", emitProtectionChange, true);
   window.addEventListener("chatpane:protection-change", emitProtectionChange);
+  // Report the error screen at once rather than at the next heartbeat.
+  window.addEventListener(ERROR_BLOCK_EVENT, () => emitHeartbeat());
   emitHeartbeat();
   const processingActive = () =>
     !systemSleeping &&

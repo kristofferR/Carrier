@@ -1,9 +1,12 @@
 /*
- * Notification quick actions through Messenger's own code (Ref #368). Neither
- * navigates nor needs the window, so both work while Chatpane is hidden.
+ * Notification quick actions through Messenger's own code (Ref #368). None
+ * navigates or needs the window, so all work while Chatpane is hidden.
  *
  * - Mark as Read calls `MWLSMarkThreadAsRead`, the function behind the inbox's
  *   "Mark as read", which handles encrypted and regular chats alike.
+ * - Mute runs `LSOptimisticMuteThreadStoredProcedure`, the procedure behind
+ *   Messenger's own mute and unmute (`useMWChatUnmuteThread`), for encrypted
+ *   and regular chats alike.
  * - React follows `MAWPSendOrRemoveReaction`: an encrypted chat sends through
  *   the MAW bridge's `sendReactionMsg` (as `MAWSendOrRemoveReaction` does), a
  *   regular chat runs `LSOptimisticUpsertReaction` (as
@@ -95,6 +98,66 @@ export async function markThreadRead(
     const thread = record(await db.tables.threads.get(key));
     if (!thread) return "thread-missing";
     if (!i64.gt(thread.lastActivityTimestampMs, thread.lastReadWatermarkTimestampMs)) return "ok";
+    if (Date.now() >= deadline) return "not-confirmed";
+    await wait(200);
+  }
+}
+
+/** Messenger's LSMailboxType.MESSENGER, the mailbox its mute and unmute use for every chat. */
+const MESSENGER_MAILBOX = 0;
+
+/** A thread row's mute end in ms since 1970: 0 not muted, -1 until turned off. */
+function muteEnd(i64: I64, thread: Record<string, unknown> | null): number | null {
+  const value = thread?.muteExpireTimeMs;
+  if (value == null) return thread ? 0 : null;
+  const ms = Number(i64.to_string(value));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Mute a conversation's notifications until `untilMs` (ms since 1970), as
+ * Messenger's own mute does, then confirm from its row. A conversation
+ * already muted at least that long is left as it is ("kept").
+ */
+export async function muteThread(
+  load: Load,
+  threadId: string,
+  untilMs: number,
+  deadline: number,
+  wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+): Promise<ActionOutcome> {
+  const { db, i64 } = await database(load);
+  const key = i64.of_string(threadId);
+  const current = muteEnd(i64, record(await db.tables.threads.get(key)));
+  if (current === null) return "thread-missing";
+  if (current === -1 || current >= untilMs) return "kept";
+  const factory = exported<(tx: Transaction) => unknown>(load, "LSFactory");
+  const mute = exported<(factory: unknown, args: unknown) => Promise<unknown>>(
+    load,
+    "LSOptimisticMuteThreadStoredProcedure",
+  );
+  const intEnum = load("LSIntEnum") as { ofNumber(value: number): unknown };
+  if (typeof intEnum?.ofNumber !== "function") throw new Error("LSIntEnum changed");
+  // Checked inside the transaction, which may wait behind others.
+  const outcome = await db.runInTransaction(
+    async (tx): Promise<ActionOutcome> => {
+      if (Date.now() >= deadline) return "expired";
+      await mute(factory(tx), {
+        mailboxType: intEnum.ofNumber(MESSENGER_MAILBOX),
+        muteExpireTimeMs: i64.of_float(untilMs),
+        threadKey: key,
+      });
+      return "ok";
+    },
+    "readwrite",
+    undefined,
+    undefined,
+    TRACE,
+  );
+  if (outcome !== "ok") return outcome;
+  while (true) {
+    const end = muteEnd(i64, record(await db.tables.threads.get(key)));
+    if (end === -1 || (end !== null && end >= untilMs - 1000)) return "ok";
     if (Date.now() >= deadline) return "not-confirmed";
     await wait(200);
   }

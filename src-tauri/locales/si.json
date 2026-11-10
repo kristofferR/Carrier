@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger මෙම සැකසුම වාර්තා කළේ නැත.",
   "settings.account.active_status.label": "ක්‍රියාකාරී තත්ත්වය",
   "settings.account.active_status.hint": "ඔබ ක්‍රියාකාරීව හෝ මෑතකදී ක්‍රියාකාරීව සිටින විට අනෙක් අයට පෙන්වන්න.",
+  "settings.account.read_receipts.label": "කියවූ බවට දැනුම්දීම්",
+  "settings.account.read_receipts.hint": "ඔබ ඔවුන්ගේ පණිවිඩ කියවූ විට එය අනෙක් අයට දැකීමට ඉඩ දෙන්න. මෙය දෙපැත්තටම අදාළයි: ඔබ එය අක්‍රිය කළහොත්, ඔවුන් ඔබේ පණිවිඩ කියවූ විටද ඔබට නොපෙනේ.",
   "settings.account.sounds.label": "පණිවිඩ ශබ්ද",
   "settings.account.sounds.hint": "නව පණිවිඩ සඳහා Messenger හිම ශබ්ද. {app} හි දැනුම්දීම් ශබ්දය වෙනම ය.",
   "settings.account.dnd.label": "Do Not Disturb",

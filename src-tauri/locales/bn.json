@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger এই সেটিংটি জানায়নি।",
   "settings.account.active_status.label": "অ্যাক্টিভ স্ট্যাটাস",
   "settings.account.active_status.hint": "আপনি কখন অ্যাক্টিভ আছেন বা সম্প্রতি অ্যাক্টিভ ছিলেন, তা অন্যদের দেখান।",
+  "settings.account.read_receipts.label": "রিড রিসিপ্ট",
+  "settings.account.read_receipts.hint": "আপনি কখন অন্যদের মেসেজ পড়েছেন, তা তাদের দেখতে দিন। এটি দুই দিকেই কাজ করে: বন্ধ করলে তারা কখন আপনার মেসেজ পড়েছেন, তা-ও আপনি দেখতে পাবেন না।",
   "settings.account.sounds.label": "মেসেজের সাউন্ড",
   "settings.account.sounds.hint": "নতুন মেসেজের জন্য Messenger-এর নিজস্ব সাউন্ড। {app}-এর নোটিফিকেশন সাউন্ড আলাদা।",
   "settings.account.dnd.label": "বিরক্ত করবেন না",

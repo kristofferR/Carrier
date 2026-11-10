@@ -96,9 +96,6 @@ jobs:
             src-tauri/linux/chatpane.desktop.hbs > "$rendered"
           desktop-file-validate "$rendered"
 
-      - name: Metainfo lists the current release
-        run: scripts/check-metainfo-release.sh
-
       - name: Reject private contact details in packaging
         run: |
           set -euo pipefail

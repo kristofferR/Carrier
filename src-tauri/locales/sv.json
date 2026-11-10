@@ -541,6 +541,8 @@
   "settings.account.not_reported": "Messenger angav inte den här inställningen.",
   "settings.account.active_status.label": "Aktivitetsstatus",
   "settings.account.active_status.hint": "Visa andra när du är aktiv eller nyligen har varit aktiv.",
+  "settings.account.read_receipts.label": "Läskvitton",
+  "settings.account.read_receipts.hint": "Låt andra se när du har läst deras meddelanden. Det gäller åt båda hållen: stänger du av det ser du inte heller när de har läst dina.",
   "settings.account.sounds.label": "Meddelandeljud",
   "settings.account.sounds.hint": "Messengers egna ljud för nya meddelanden. Aviseringsljudet i {app} är en separat inställning.",
   "settings.account.dnd.label": "Stör ej",
