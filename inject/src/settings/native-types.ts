@@ -82,7 +82,8 @@ app_icon_dark: string,
  */
 menu_bar_only: boolean, 
 /**
- * Windows/Linux: hide the native application menu from Messenger windows.
+ * Linux: hide the native application menu from Messenger windows (on by
+ * default; Windows never shows it next to Chatpane's window buttons).
  */
 hide_menu_bar: boolean, 
 /**
