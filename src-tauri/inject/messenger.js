@@ -57,6 +57,21 @@
       return "";
     }
   };
+  function dataUrlBlob(src) {
+    const match = /^data:([^,]*?)(;base64)?,(.*)$/s.exec(src);
+    if (!match) return null;
+    const [, params = "", base64, data = ""] = match;
+    const type = params.split(";")[0] || "text/plain";
+    try {
+      if (!base64) return new Blob([decodeURIComponent(data)], { type });
+      const binary = atob(data);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return new Blob([bytes], { type });
+    } catch {
+      return null;
+    }
+  }
   var GENERIC_DOWNLOAD_STEMS = /* @__PURE__ */ new Set(["download", "image", "video"]);
   var splitDownloadName = (name) => {
     const file = String(name || "").trim().split(/[\\/]/).pop() || "";
@@ -4549,15 +4564,25 @@ ${button.innerHTML}`)
     const { id } = await downloadSrc(src, fallbackName, action2);
     await chatpaneShareDownload(id, fx, fy, action2);
   }
-  var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
+  async function mediaBlob(src, maxSize) {
+    const inline = src.startsWith("data:");
+    const blob = inline ? dataUrlBlob(src) : null;
+    if (inline && !blob) throw new Error("malformed data URL");
+    if (blob) {
+      if (blob.size > maxSize) throw new Error("file too large");
+      return blob;
+    }
+    const res = await fetch(src);
+    if (!res.ok) throw new Error(`fetch failed (${res.status})`);
+    if (Number(res.headers.get("content-length")) > maxSize) throw new Error("file too large");
+    const fetched = await res.blob();
+    if (fetched.size > maxSize) throw new Error("file too large");
+    return fetched;
+  }
   var copyAddress = (text2) => navigator.clipboard?.writeText(cleanSharedUrl(text2)).then(() => toast(t("shared.context.address_copied"))).catch(() => toast(t("shared.context.copy_failed")));
   var copyText = (text2) => navigator.clipboard?.writeText(text2).then(() => toast(t("shared.context.text_copied"))).catch(() => toast(t("shared.context.copy_failed")));
   async function downloadSrc(src, fallbackName, action2) {
-    const res = await fetch(src);
-    if (!res.ok) throw new Error(`download failed (${res.status})`);
-    if (oversizeByHeader(res)) throw new Error("file too large");
-    const blob = await res.blob();
-    if (blob.size > MAX_BLOB) throw new Error("file too large");
+    const blob = await mediaBlob(src, MAX_BLOB);
     const href = URL.createObjectURL(blob);
     let name = friendlyDownloadName(filenameFromUrl(src, location.href) || fallbackName);
     if (!name.includes(".")) {
@@ -4585,14 +4610,7 @@ ${button.innerHTML}`)
   }
   async function copyImageSrc(src, action2) {
     if (action2) await chatpaneClaimContextAction(action2);
-    const res = await fetch(src);
-    if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-    const maxSize = action2 ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
-    if (Number(res.headers.get("content-length")) > maxSize) {
-      throw new Error("image too large");
-    }
-    const blob = await res.blob();
-    if (blob.size > maxSize) throw new Error("image too large");
+    const blob = await mediaBlob(src, action2 ? MAX_CLIPBOARD_IMAGE : MAX_BLOB);
     if (!action2) {
       await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
       return;

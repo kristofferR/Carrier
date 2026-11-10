@@ -15,7 +15,7 @@ import {
 } from "../bridge";
 import { CHAT_EXPORT_CONTEXT_MENU_KEYS, CHAT_ROW_CONTEXT_MENU_KEYS } from "../lib/chat-row-menu";
 import { waitForNativeDownload } from "../lib/download-completion";
-import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
+import { dataUrlBlob, filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 import { cssPropertyName, type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
 import {
   keyboardMenuPoint,
@@ -262,9 +262,24 @@ async function shareSrc(src: string, fallbackName: string, fx: number, fy: numbe
   await chatpaneShareDownload(id, fx, fy, action);
 }
 
-// True when the response advertises a Content-Length over the cap. Absent or
-// unparseable headers yield 0 (falsy), so callers fall back to the blob check.
-const oversizeByHeader = (res: Response) => Number(res.headers.get("content-length")) > MAX_BLOB;
+/** The media at `src`, up to `maxSize` bytes. */
+async function mediaBlob(src: string, maxSize: number): Promise<Blob> {
+  const inline = src.startsWith("data:");
+  const blob = inline ? dataUrlBlob(src) : null;
+  if (inline && !blob) throw new Error("malformed data URL");
+  if (blob) {
+    if (blob.size > maxSize) throw new Error("file too large");
+    return blob;
+  }
+  const res = await fetch(src);
+  if (!res.ok) throw new Error(`fetch failed (${res.status})`);
+  // Best-effort early reject before buffering the whole body into memory (a
+  // response can omit or misreport Content-Length, so keep the post-read cap).
+  if (Number(res.headers.get("content-length")) > maxSize) throw new Error("file too large");
+  const fetched = await res.blob();
+  if (fetched.size > maxSize) throw new Error("file too large");
+  return fetched;
+}
 
 const copyAddress = (text: string) =>
   navigator.clipboard
@@ -288,13 +303,7 @@ export async function downloadSrc(
 ): Promise<{ id: string; url: string }> {
   // Fetch into a same-origin blob so the `download` attribute is honoured (it's
   // ignored for cross-origin URLs) and so we can derive the real extension.
-  const res = await fetch(src);
-  if (!res.ok) throw new Error(`download failed (${res.status})`);
-  // Best-effort early reject before buffering the whole body into memory (a
-  // response can omit or misreport Content-Length, so keep the post-read cap).
-  if (oversizeByHeader(res)) throw new Error("file too large");
-  const blob = await res.blob();
-  if (blob.size > MAX_BLOB) throw new Error("file too large");
+  const blob = await mediaBlob(src, MAX_BLOB);
   const href = URL.createObjectURL(blob);
   let name = friendlyDownloadName(filenameFromUrl(src, location.href) || fallbackName);
   if (!name.includes(".")) {
@@ -323,14 +332,7 @@ export async function downloadSrc(
 
 async function copyImageSrc(src: string, action?: string) {
   if (action) await chatpaneClaimContextAction(action);
-  const res = await fetch(src);
-  if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-  const maxSize = action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
-  if (Number(res.headers.get("content-length")) > maxSize) {
-    throw new Error("image too large");
-  }
-  const blob = await res.blob();
-  if (blob.size > maxSize) throw new Error("image too large");
+  const blob = await mediaBlob(src, action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB);
   if (!action) {
     await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
     return;

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DOWNLOAD_ACCESS_DENIED,
+  dataUrlBlob,
   downloadAccessDeniedToast,
   downloadRevealLabel,
   filenameFromUrl,
@@ -92,4 +93,15 @@ describe("downloadAccessDeniedToast", () => {
     expect(isDownloadAccessDenied(new Error(DOWNLOAD_ACCESS_DENIED))).toBe(true);
     expect(isDownloadAccessDenied(new Error("native download failed"))).toBe(false);
   });
+});
+
+test("reads data: URLs without fetch", async () => {
+  const png = dataUrlBlob("data:image/png;base64,iVBORw==");
+  expect(png?.type).toBe("image/png");
+  expect([...new Uint8Array(await png!.arrayBuffer())]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  const svg = dataUrlBlob("data:image/svg+xml;charset=utf-8,%3Csvg%2F%3E");
+  expect(svg?.type).toBe("image/svg+xml");
+  expect(await svg!.text()).toBe("<svg/>");
+  expect(dataUrlBlob("data:image/png;base64,***")).toBeNull();
+  expect(dataUrlBlob("https://example.com/a.png")).toBeNull();
 });
