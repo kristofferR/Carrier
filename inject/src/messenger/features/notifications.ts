@@ -69,7 +69,7 @@ import { reactionKey } from "../lib/reaction-notifications";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, isAvatarSize, SenderAvatarStore } from "../lib/sender-avatars";
 import { readThreadIsGroup, suppressGroupChat, ThreadKindCache } from "../lib/thread-kind";
-import { readNewestMessageId, readThreadStates } from "../lib/thread-state";
+import { readNewestMessage, readThreadStates } from "../lib/thread-state";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
@@ -1409,15 +1409,20 @@ export function initNotificationBridge() {
       // elsewhere meanwhile) and muted, in any UI language.
       const [states, newest] = await Promise.all([
         readThreadStates([conversation.key], pageRequire(), Date.now()),
-        readNewestMessageId(conversation.key, pageRequire()),
+        readNewestMessage(conversation.key, pageRequire()),
       ]);
       const fresh = states?.get(conversation.key);
       if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
       // Messenger already notified about this chat's newest message (or left
       // it out as old news): the row only caught up with it, as a photo's
-      // preview does a moment later.
+      // preview does a moment later. Or the newest message is your own, so
+      // nothing new arrived: someone reacted to it ("Reacted 👍 to your
+      // message", which watchReactions announces) and the chat went unread.
       const announced =
-        newest !== null && (pageMessages.wasRaised(newest) || pageMessages.isStale(newest));
+        newest !== null &&
+        (pageMessages.wasRaised(newest.id) ||
+          pageMessages.isStale(newest.id) ||
+          (newest.sender !== null && newest.sender === accountId(document.cookie)));
       // A newer preview may own this conversation now; it decides, not us.
       if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
       const settings = window.__CHATPANE_SETTINGS__ || {};

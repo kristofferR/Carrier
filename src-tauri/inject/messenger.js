@@ -11787,7 +11787,7 @@ ${button.innerHTML}`)
       timeoutMs
     );
   }
-  async function readNewestMessageId(id, load, timeoutMs = 750) {
+  async function readNewestMessage(id, load, timeoutMs = 750) {
     if (!/^\d+$/.test(id)) return null;
     const newest = await readMessengerDatabase(
       load,
@@ -11797,8 +11797,9 @@ ${button.innerHTML}`)
         const rows = await q.toArrayAsync(
           q.fromTableDescending(messages).getKeyRange(i64.of_string(id)).take(1)
         );
-        const messageId = Array.isArray(rows) ? rows[0]?.messageId : void 0;
-        return typeof messageId === "string" && messageId ? messageId : null;
+        const row = Array.isArray(rows) ? rows[0] : void 0;
+        const messageId = row?.messageId;
+        return typeof messageId === "string" && messageId ? { id: messageId, sender: pageId(row?.senderId, load2) } : null;
       },
       timeoutMs
     );
@@ -12836,11 +12837,11 @@ ${button.innerHTML}`)
         await learnThreadKind(conversation.key);
         const [states, newest] = await Promise.all([
           readThreadStates([conversation.key], pageRequire(), Date.now()),
-          readNewestMessageId(conversation.key, pageRequire())
+          readNewestMessage(conversation.key, pageRequire())
         ]);
         const fresh = states?.get(conversation.key);
         if (fresh) observeDatabaseMute(conversation.key, fresh.muted);
-        const announced = newest !== null && (pageMessages.wasRaised(newest) || pageMessages.isStale(newest));
+        const announced = newest !== null && (pageMessages.wasRaised(newest.id) || pageMessages.isStale(newest.id) || newest.sender !== null && newest.sender === accountId(document.cookie));
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const settings = window.__CHATPANE_SETTINGS__ || {};
         if (fresh?.unread === false || announced || suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
