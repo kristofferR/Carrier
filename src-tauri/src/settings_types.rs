@@ -39,8 +39,9 @@ fn settings_types_match_native() {
     if std::env::var_os("CHATPANE_UPDATE_SETTINGS_TYPES").is_some() {
         std::fs::write(&path, &source).unwrap();
     }
+    // Git may check the file out with CRLF line endings on Windows.
     assert_eq!(
-        std::fs::read_to_string(path).unwrap(),
+        std::fs::read_to_string(path).unwrap().replace("\r\n", "\n"),
         source,
         "native Settings types changed; run bun run build:settings-types"
     );
