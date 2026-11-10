@@ -1100,6 +1100,14 @@ pub fn run() {
         let socket_path = mcp_socket_override
             .clone()
             .unwrap_or_else(|| DEFAULT_MCP_SOCKET.into());
+        // The plugin writes its auth token to `<socket path>.token`, a plain
+        // file even on Windows, where the socket is a named pipe and the
+        // default path's folder (C:\tmp) usually doesn't exist.
+        if let Some(dir) = socket_path.parent()
+            && let Err(error) = std::fs::create_dir_all(dir)
+        {
+            log::warn!("failed to create the MCP token folder: {error}");
+        }
         builder = builder.plugin(tauri_plugin_mcp::init_with_config(
             tauri_plugin_mcp::PluginConfig::new(APP_TITLE.to_string())
                 .start_socket_server(true)
