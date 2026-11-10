@@ -5,7 +5,6 @@ import {
   chatRowAction,
   chatRowActions,
   classifyChatRow,
-  rowPerforms,
 } from "./chat-row-menu";
 import type { Fiber } from "./react-fiber";
 
@@ -162,8 +161,6 @@ describe("classifyChatRow", () => {
     expect(blockAction(null)).toBe("shared.context.block");
     expect(blockAction(1)).toBe("shared.context.unblock");
     expect(blockAction(2)).toBe("shared.context.unblock");
-    expect(rowPerforms(kind, "shared.context.unblock")).toBe(true);
-    expect(rowPerforms(kind, "shared.context.delete_chat")).toBe(false);
   });
 
   test("stops at the menu, so components outside a row never count", () => {

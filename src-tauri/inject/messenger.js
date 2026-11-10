@@ -3711,12 +3711,6 @@ ${button.innerHTML}`)
   function blockAction(blockedByViewerStatus) {
     return blockedByViewerStatus === MESSAGE_BLOCKED || blockedByViewerStatus === FULLY_BLOCKED ? "shared.context.unblock" : "shared.context.block";
   }
-  function rowPerforms(kind, action2) {
-    if (kind === null) return false;
-    if (typeof kind === "object")
-      return action2 === "shared.context.block" || action2 === "shared.context.unblock";
-    return kind === action2;
-  }
   var CHAT_EXPORT_CONTEXT_MENU_KEYS = [
     "shared.context.export_chat_html",
     "shared.context.export_chat_json"
@@ -3980,7 +3974,7 @@ ${button.innerHTML}`)
       if (!expanded(button)) button.click();
       const menu = await waitFor(() => expanded(button) ? openMenu() : null, MENU_WAIT_MS);
       if (!menu) return null;
-      const result = use(menu);
+      const result = await use(menu);
       if (picks && result) await waitFor(() => !expanded(button), MENU_WAIT_MS);
       return result;
     } finally {
@@ -4050,16 +4044,14 @@ ${button.innerHTML}`)
       return null;
     }
   }
+  async function offeredAction(kind) {
+    return kind !== null && typeof kind === "object" ? blockAction(await contactBlockStatus(kind.blockContact)) : kind;
+  }
   async function readChatRowActions(link) {
     const button = rowMenuButton(link);
     if (!button) return [];
     const kinds = await withHiddenMenu(button, (menu) => rowKinds(menu).map(([, kind]) => kind)) ?? [];
-    const offered = await Promise.all(
-      kinds.map(
-        async (kind) => kind !== null && typeof kind === "object" ? blockAction(await contactBlockStatus(kind.blockContact)) : kind
-      )
-    );
-    return chatRowActions(offered);
+    return chatRowActions(await Promise.all(kinds.map(offeredAction)));
   }
   function currentMenuButton(href) {
     for (const link of document.querySelectorAll('[role="row"] a[href]'))
@@ -4074,10 +4066,15 @@ ${button.innerHTML}`)
     }
     const picked = await withHiddenMenu(
       button,
-      (menu) => {
-        const row = rowKinds(menu).find(([, kind]) => rowPerforms(kind, action2))?.[0];
-        row?.click();
-        return row !== void 0;
+      // A Block row is checked again here: the contact may have been blocked or
+      // unblocked elsewhere since the menu was read.
+      async (menu) => {
+        for (const [row, kind] of rowKinds(menu))
+          if (await offeredAction(kind) === action2) {
+            row.click();
+            return true;
+          }
+        return false;
       },
       true
     );

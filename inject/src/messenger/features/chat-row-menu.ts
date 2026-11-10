@@ -17,7 +17,6 @@ import {
   chatRowAction,
   chatRowActions,
   classifyChatRow,
-  rowPerforms,
 } from "../lib/chat-row-menu";
 import { pageRequire } from "../lib/facebook-loader";
 import { fiberOf, moduleExport } from "../lib/react-fiber";
@@ -101,20 +100,20 @@ async function contactBlockStatus(contactId: unknown): Promise<number | null> {
   }
 }
 
+/** The action a row offers; a Block row's follows the contact's current state. */
+async function offeredAction(kind: ChatRowKind | null): Promise<ChatRowAction | null> {
+  return kind !== null && typeof kind === "object"
+    ? blockAction(await contactBlockStatus(kind.blockContact))
+    : kind;
+}
+
 /** What the row's menu offers right now, in Chatpane's menu order. */
 export async function readChatRowActions(link: HTMLAnchorElement): Promise<ChatRowAction[]> {
   const button = rowMenuButton(link);
   if (!button) return [];
   const kinds =
     (await withHiddenMenu(button, (menu) => rowKinds(menu).map(([, kind]) => kind))) ?? [];
-  const offered = await Promise.all(
-    kinds.map(async (kind) =>
-      kind !== null && typeof kind === "object"
-        ? blockAction(await contactBlockStatus(kind.blockContact))
-        : kind,
-    ),
-  );
-  return chatRowActions(offered);
+  return chatRowActions(await Promise.all(kinds.map(offeredAction)));
 }
 
 /** The row's current menu button. The chat list recycles row elements as it
@@ -134,10 +133,15 @@ export async function runChatRowAction(href: string, action: ChatRowAction) {
   }
   const picked = await withHiddenMenu(
     button,
-    (menu) => {
-      const row = rowKinds(menu).find(([, kind]) => rowPerforms(kind, action))?.[0];
-      row?.click();
-      return row !== undefined;
+    // A Block row is checked again here: the contact may have been blocked or
+    // unblocked elsewhere since the menu was read.
+    async (menu) => {
+      for (const [row, kind] of rowKinds(menu))
+        if ((await offeredAction(kind)) === action) {
+          row.click();
+          return true;
+        }
+      return false;
     },
     true,
   );

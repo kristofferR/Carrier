@@ -133,14 +133,6 @@ export function blockAction(blockedByViewerStatus: number | null): ChatRowAction
     : "shared.context.block";
 }
 
-/** Whether a row of `kind` performs `action`. */
-export function rowPerforms(kind: ChatRowKind | null, action: ChatRowAction): boolean {
-  if (kind === null) return false;
-  if (typeof kind === "object")
-    return action === "shared.context.block" || action === "shared.context.unblock";
-  return kind === action;
-}
-
 // Chatpane's own rows, after Messenger's: export that conversation (Ref #371).
 // Keep in sync with CHAT_EXPORT_CONTEXT_MENU_KEYS in src-tauri/src/menu.rs.
 export const CHAT_EXPORT_CONTEXT_MENU_KEYS = [
