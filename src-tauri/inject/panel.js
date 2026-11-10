@@ -4,6 +4,13 @@
  */
 "use strict";
 (() => {
+  // inject/src/native-timers.ts
+  var page = window;
+  var setTimeout = page.setTimeout.bind(page);
+  var clearTimeout = page.clearTimeout.bind(page);
+  var setInterval = page.setInterval.bind(page);
+  var clearInterval = page.clearInterval.bind(page);
+
   // inject/src/i18n.ts
   var ENGLISH = { lang: "en", dir: "ltr", strings: {} };
   function current() {

@@ -8,6 +8,13 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+  // inject/src/native-timers.ts
+  var page = window;
+  var setTimeout = page.setTimeout.bind(page);
+  var clearTimeout = page.clearTimeout.bind(page);
+  var setInterval = page.setInterval.bind(page);
+  var clearInterval = page.clearInterval.bind(page);
+
   // inject/src/messenger/lib/media-tracks.ts
   var LiveMediaTrackCounter = class {
     constructor(onChange) {
@@ -202,7 +209,7 @@
     const now = () => performance.now();
     let suspends = 0;
     let resumes = 0;
-    window.setInterval(() => {
+    setInterval(() => {
       if (suspends || resumes) {
         report({
           type: "stats",
@@ -234,7 +241,7 @@
         }
         const idleAt = gate.nextIdleAt(at);
         if (idleAt !== null) {
-          entry.timer = window.setTimeout(() => sync(ctx), Math.max(0, idleAt - at) + 1);
+          entry.timer = setTimeout(() => sync(ctx), Math.max(0, idleAt - at) + 1);
         }
       } else if (ctx.state === "running") {
         suspends += 1;

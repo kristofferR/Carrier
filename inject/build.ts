@@ -27,6 +27,19 @@ const common = {
   outdir: "src-tauri/inject",
 } as const;
 
+// The page scripts keep the timer functions Facebook replaces later (see
+// native-timers.ts): `inject` swaps each bare call for the captured one, and
+// `define` turns the `window.` forms into bare calls first.
+const nativeTimers = {
+  inject: ["inject/src/native-timers.ts"],
+  define: Object.fromEntries(
+    ["setTimeout", "clearTimeout", "setInterval", "clearInterval"].map((name) => [
+      `window.${name}`,
+      name,
+    ]),
+  ),
+};
+
 for (const [entry, out, source] of [
   ["inject/src/web-audio-idle.ts", "web-audio-idle", "inject/src/web-audio-idle.ts"],
   ["inject/src/messenger/index.ts", "messenger", "inject/src/messenger/"],
@@ -34,6 +47,7 @@ for (const [entry, out, source] of [
 ] as const) {
   await build({
     ...common,
+    ...nativeTimers,
     entryPoints: { [out]: entry },
     banner: { js: banner(source) },
   });
