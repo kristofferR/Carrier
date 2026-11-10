@@ -7,6 +7,7 @@ import {
 } from "../lib/facebook-modules";
 import { nicknameMode } from "../lib/nicknames";
 import { isFacebookRateLimitError } from "../lib/rate-limit";
+import { interceptErrorBlock } from "./messenger-error-block";
 import { installMessengerSoundPlayback, interceptSoundModules } from "./messenger-sounds";
 import { interceptNotificationModules } from "./page-notifications";
 import { reportRateLimit } from "./rate-limit";
@@ -74,7 +75,9 @@ export function initFacebookModuleInterception() {
       value as FacebookModuleDefine,
       (define) =>
         createFacebookModuleDefineInterceptor(
-          interceptNotificationModules(interceptSoundModules(define)) as FacebookModuleDefine,
+          interceptNotificationModules(
+            interceptErrorBlock(interceptSoundModules(define)),
+          ) as FacebookModuleDefine,
           shouldBlockTelemetry,
           (restore) => searchIndex.register(restore),
           (error) => {
