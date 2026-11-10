@@ -127,6 +127,7 @@ const PALETTE: &[(&str, &[&str])] = &[
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ThemeMode {
     Light,
@@ -144,6 +145,7 @@ pub(crate) struct ThemeHeader {
 
 /// A theme as the Settings gallery shows it.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ThemeInfo {
     pub(crate) id: String,
@@ -658,7 +660,7 @@ fn info_for(id: &str, css: &str, built_in: bool) -> Option<ThemeInfo> {
 
 /// Built-in themes, then imported ones by name.
 #[tauri::command]
-pub(crate) fn list_themes(app: tauri::AppHandle) -> Vec<ThemeInfo> {
+pub(crate) async fn list_themes(app: tauri::AppHandle) -> Vec<ThemeInfo> {
     let mut themes: Vec<ThemeInfo> = BUILT_IN
         .iter()
         .filter_map(|(id, css)| info_for(id, css, true))
@@ -750,7 +752,7 @@ pub(crate) async fn add_theme(app: tauri::AppHandle) -> Result<Option<String>, S
 }
 
 #[tauri::command]
-pub(crate) fn remove_theme(app: tauri::AppHandle, id: String) -> Result<(), String> {
+pub(crate) async fn remove_theme(app: tauri::AppHandle, id: String) -> Result<(), String> {
     if !is_user_theme_id(&id) {
         return Err(t("theme.error.built_in").into());
     }
@@ -763,7 +765,7 @@ pub(crate) fn remove_theme(app: tauri::AppHandle, id: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub(crate) fn open_themes_folder(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn open_themes_folder(app: tauri::AppHandle) -> Result<(), String> {
     let dir = themes_dir(&app)?;
     std::fs::create_dir_all(&dir)
         .map_err(|error| tf("theme.error.create_folder", &[("error", &error)]))?;

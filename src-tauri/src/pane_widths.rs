@@ -20,6 +20,7 @@ const PANE_WIDTH_MAX: u32 = 1600;
 
 /// None is Facebook's own width.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct PaneWidths {
     pub(crate) list: Option<u32>,
     pub(crate) details: Option<u32>,

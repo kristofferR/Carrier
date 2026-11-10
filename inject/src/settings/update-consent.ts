@@ -16,7 +16,14 @@ export interface UpdateUiState {
   version?: string;
 }
 
-type UpdateInvoke = (command: string) => Promise<unknown>;
+type UpdateInvoke = (
+  command:
+    | "update_install_mode"
+    | "discovered_update"
+    | "open_manual_update"
+    | "check_for_updates"
+    | "install_update",
+) => Promise<unknown>;
 type StateListener = (state: UpdateUiState) => void;
 
 type UpdateInstallMode =
@@ -108,11 +115,12 @@ export class UpdateConsentController {
     return state;
   }
 
-  async initialize(): Promise<UpdateUiState> {
-    const [rawInstallMode, discovered] = await Promise.all([
-      this.invoke("update_install_mode"),
-      this.invoke("discovered_update"),
-    ]);
+  /** `known` is what native code already had when the window was built; with
+   * it, the state is published before this returns its promise. */
+  async initialize(known?: { installMode: unknown; discovered: unknown }): Promise<UpdateUiState> {
+    const [rawInstallMode, discovered] = known
+      ? [known.installMode, known.discovered]
+      : await Promise.all([this.invoke("update_install_mode"), this.invoke("discovered_update")]);
     this.installMode = parseInstallMode(rawInstallMode);
     if (this.installMode.kind === "debug") {
       return this.publish({

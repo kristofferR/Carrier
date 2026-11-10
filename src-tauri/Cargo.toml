@@ -183,3 +183,6 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+[dev-dependencies]
+ts-rs = { version = "12", features = ["no-serde-warnings"] }

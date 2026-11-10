@@ -85,6 +85,7 @@ impl Drop for UpdateInstallGuard<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateInstallMode {
     kind: UpdateInstallKind,
@@ -95,8 +96,9 @@ pub(crate) struct UpdateInstallMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
-enum UpdateInstallKind {
+pub(crate) enum UpdateInstallKind {
     BuiltIn,
     Manual,
     Debug,
@@ -268,7 +270,22 @@ fn linux_update_install_mode(
     }
 }
 
+/// How this installation updates, found once: it can't change while Chatpane
+/// runs, and on Linux finding out runs pacman and the AUR helpers.
+static UPDATE_INSTALL_MODE: std::sync::OnceLock<UpdateInstallMode> = std::sync::OnceLock::new();
+
 fn current_update_install_mode() -> UpdateInstallMode {
+    UPDATE_INSTALL_MODE
+        .get_or_init(detect_update_install_mode)
+        .clone()
+}
+
+/// Find the install mode at startup, so Settings opens with it.
+pub(crate) async fn prepare_update_install_mode() {
+    let _ = current_update_install_mode_off_main().await;
+}
+
+fn detect_update_install_mode() -> UpdateInstallMode {
     if cfg!(debug_assertions) {
         return UpdateInstallMode {
             kind: UpdateInstallKind::Debug,
@@ -319,6 +336,7 @@ pub(crate) fn get_settings(state: State<AppState>) -> Settings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeCapabilities {
     snap: bool,
@@ -328,10 +346,9 @@ pub(crate) struct RuntimeCapabilities {
     debug: bool,
 }
 
-/// Tell the trusted Settings page which host-owned features the package can
-/// safely expose. Backend sanitization remains the enforcement boundary.
-#[tauri::command]
-pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
+/// Which host-owned features the package can safely expose in Settings.
+/// Backend sanitization remains the enforcement boundary.
+fn runtime_capabilities() -> RuntimeCapabilities {
     let snap = is_snap();
     RuntimeCapabilities {
         snap,
@@ -340,6 +357,35 @@ pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
         multi_instance: !snap,
         debug: cfg!(debug_assertions),
     }
+}
+
+/// Everything the Settings page needs for its first frame, injected when the
+/// window is built so it never draws an empty page while it asks for it.
+#[derive(Debug, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct SettingsBoot {
+    settings: Settings,
+    capabilities: RuntimeCapabilities,
+    version: String,
+    /// None until startup has found it; the page then asks.
+    install_mode: Option<UpdateInstallMode>,
+    discovered_update: Option<String>,
+}
+
+pub(crate) fn settings_boot_script(app: &tauri::AppHandle) -> String {
+    let state = app.state::<AppState>();
+    let discovered_update = discovered_version(&state);
+    let boot = SettingsBoot {
+        settings: state.settings.lock().unwrap().clone(),
+        capabilities: runtime_capabilities(),
+        version: app.package_info().version.to_string(),
+        install_mode: UPDATE_INSTALL_MODE.get().cloned(),
+        discovered_update,
+    };
+    format!(
+        "\n  window.__CHATPANE_SETTINGS_BOOT__ = {};",
+        serde_json::to_string(&boot).expect("Settings boot data serialises")
+    )
 }
 
 /// Whether Chatpane will start at login, read from the OS. Also corrects the
@@ -436,26 +482,31 @@ fn store_settings(
     }
 }
 
-/// `reset` also drops the page's pane widths, which an ordinary save keeps.
+/// None resets preferences; changes are applied only after acquiring the worker.
 async fn store_settings_off_main(
     app: tauri::AppHandle,
-    new: Settings,
-    reset: bool,
+    change: Option<crate::settings_change::SettingsChange>,
 ) -> Result<Settings, String> {
     let worker_app = app.clone();
     let state = app.state::<AppState>();
     let _settings_worker = state.settings_worker.lock().await;
     tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<AppState>();
-        store_settings(&worker_app, &state, new, reset)
+        let current = state.settings.lock().unwrap().clone();
+        let reset = change.is_none();
+        let next = change.map_or_else(Settings::default, |change| change.apply(current));
+        store_settings(&worker_app, &state, next, reset)
     })
     .await
     .map_err(|e| format!("settings worker failed: {e}"))?
 }
 
 #[tauri::command]
-pub(crate) async fn set_settings(app: tauri::AppHandle, new: Settings) -> Result<Settings, String> {
-    store_settings_off_main(app, new, false).await
+pub(crate) async fn update_setting(
+    app: tauri::AppHandle,
+    change: crate::settings_change::SettingsChange,
+) -> Result<Settings, String> {
+    store_settings_off_main(app, Some(change)).await
 }
 
 /// Copy the "Share Chatpane" message (Settings footer).
@@ -473,7 +524,7 @@ pub(crate) fn open_github(app: tauri::AppHandle) {
 /// Reset all settings to their defaults.
 #[tauri::command]
 pub(crate) async fn reset_settings(app: tauri::AppHandle) -> Result<Settings, String> {
-    store_settings_off_main(app, Settings::default(), true).await
+    store_settings_off_main(app, None).await
 }
 
 async fn available_update_unlocked(
@@ -588,6 +639,10 @@ pub(crate) fn update_release_notes(state: State<AppState>, version: String) -> O
 /// button as soon as it opens.
 #[tauri::command]
 pub(crate) fn discovered_update(state: State<AppState>) -> Option<String> {
+    discovered_version(&state)
+}
+
+fn discovered_version(state: &AppState) -> Option<String> {
     state
         .update_available
         .lock()
@@ -1155,7 +1210,7 @@ pub(crate) fn restart_app(app: tauri::AppHandle) {
 /// Open the folder holding Chatpane's log file, for attaching to bug reports.
 /// Called from the (local-origin) Settings window.
 #[tauri::command]
-pub(crate) fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     open::that_detached(&dir).map_err(|e| e.to_string())
@@ -1171,7 +1226,7 @@ pub(crate) fn open_facebook_language(app: tauri::AppHandle) {
 /// Create (without overwriting) and open the user-owned custom stylesheet.
 /// Called only from the trusted local Settings window.
 #[tauri::command]
-pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
     let path = ensure_custom_css(&app)?;
     open::that_detached(path).map_err(|error| error.to_string())
 }

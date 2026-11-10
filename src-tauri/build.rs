@@ -4,10 +4,9 @@
 const COMMANDS: &[&str] = &[
     "window_control",
     "get_settings",
-    "runtime_capabilities",
     "autostart_status",
     "open_login_items",
-    "set_settings",
+    "update_setting",
     "reset_settings",
     "check_for_updates",
     "update_install_mode",

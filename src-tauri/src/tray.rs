@@ -19,7 +19,7 @@ use crate::menu::recent_threads_for_menu;
 use crate::menu::target_window;
 #[cfg(not(target_os = "linux"))]
 use crate::menu::{menu_label, recent_menu_id};
-use crate::settings::{AppState, Settings};
+use crate::settings::{AppState, Settings, TrayIconStyle};
 #[cfg(target_os = "linux")]
 use crate::tray_badge::{UnreadBucket, draw_unread_badge};
 use crate::window::{build_app_window, install_main_close_handler};
@@ -30,25 +30,6 @@ pub(crate) type PlatformTrayIcon = TrayIcon;
 #[cfg(target_os = "linux")]
 pub(crate) struct PlatformTrayIcon {
     handle: ksni::blocking::Handle<LinuxTray>,
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum TrayIconStyle {
-    #[default]
-    Color,
-    Symbolic,
-}
-
-#[cfg(target_os = "linux")]
-impl TrayIconStyle {
-    fn from_setting(value: &str) -> Self {
-        if value == "symbolic" {
-            Self::Symbolic
-        } else {
-            Self::Color
-        }
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -83,8 +64,11 @@ impl PlatformTrayIcon {
             .ok_or_else(tray_service_closed)
     }
 
-    pub(crate) fn set_icon_style(&self, style: &str, dark_panel: bool) -> tauri::Result<()> {
-        let style = TrayIconStyle::from_setting(style);
+    pub(crate) fn set_icon_style(
+        &self,
+        style: TrayIconStyle,
+        dark_panel: bool,
+    ) -> tauri::Result<()> {
         self.handle
             .update(move |tray| {
                 if tray.style == style && tray.symbolic_dark == dark_panel {
@@ -574,7 +558,7 @@ fn show_tray_menu(app: &tauri::AppHandle) {
 #[cfg(target_os = "macos")]
 pub(crate) fn tray_unread_title(s: &Settings, unread: i64) -> Option<String> {
     if s.unread_badge && unread > 0 {
-        Some(if s.badge_mode == "dot" {
+        Some(if s.badge_mode == crate::settings::BadgeMode::Dot {
             "•".to_string()
         } else {
             unread.to_string()
@@ -589,7 +573,7 @@ pub(crate) fn tray_unread_title(s: &Settings, unread: i64) -> Option<String> {
 pub(crate) fn build_tray_with_menu(
     app: &tauri::AppHandle,
     menu: Menu<tauri::Wry>,
-    icon_style: &str,
+    icon_style: TrayIconStyle,
 ) -> tauri::Result<PlatformTrayIcon> {
     #[cfg(target_os = "macos")]
     let (icon, symbolic) = macos_tray_icon(app, icon_style)?;
@@ -638,9 +622,9 @@ pub(crate) fn build_tray_with_menu(
 #[cfg(target_os = "macos")]
 fn macos_tray_icon(
     app: &tauri::AppHandle,
-    icon_style: &str,
+    icon_style: TrayIconStyle,
 ) -> tauri::Result<(tauri::image::Image<'static>, bool)> {
-    let symbolic = icon_style == "symbolic";
+    let symbolic = icon_style == TrayIconStyle::Symbolic;
     let icon = if symbolic {
         tauri::image::Image::from_bytes(include_bytes!("../icons/tray/chatpane-symbolic.png"))?
     } else {
@@ -656,7 +640,7 @@ fn macos_tray_icon(
 pub(crate) fn set_macos_tray_icon_style(
     app: &tauri::AppHandle,
     tray: &PlatformTrayIcon,
-    icon_style: &str,
+    icon_style: TrayIconStyle,
 ) -> tauri::Result<()> {
     let (icon, symbolic) = macos_tray_icon(app, icon_style)?;
     tray.set_icon_with_as_template(Some(icon), symbolic)
@@ -815,7 +799,7 @@ pub(crate) fn tray_icon_size() -> usize {
 }
 
 #[cfg(any(target_os = "windows", test))]
-type WindowsTrayIconKey = (String, bool, usize);
+type WindowsTrayIconKey = (TrayIconStyle, bool, usize);
 
 /// Tracks the requested and visibly applied Windows tray icon independently.
 /// A generation lets a stale render notice that it may have overwritten a
@@ -862,12 +846,8 @@ impl WindowsTrayIconCache {
     }
 
     fn pending(&self) -> Option<(WindowsTrayIconKey, u64)> {
-        (self.applied != self.desired).then(|| {
-            (
-                self.desired.clone().expect("desired icon key"),
-                self.generation,
-            )
-        })
+        (self.applied != self.desired)
+            .then(|| (self.desired.expect("desired icon key"), self.generation))
     }
 }
 
@@ -878,11 +858,11 @@ impl WindowsTrayIconCache {
 #[cfg(target_os = "windows")]
 fn windows_tray_image(
     app: &tauri::AppHandle,
-    icon_style: &str,
+    icon_style: TrayIconStyle,
     icon_size: usize,
     dark_taskbar: bool,
 ) -> tauri::image::Image<'static> {
-    if icon_style == "symbolic" {
+    if icon_style == TrayIconStyle::Symbolic {
         match tauri::image::Image::from_bytes(include_bytes!("../icons/tray/chatpane-symbolic.png"))
         {
             Ok(symbolic) => {
@@ -921,7 +901,7 @@ fn windows_tray_image(
 pub(crate) fn set_windows_tray_icon_style(
     app: &tauri::AppHandle,
     tray: &PlatformTrayIcon,
-    icon_style: &str,
+    icon_style: TrayIconStyle,
 ) {
     static CACHE: std::sync::Mutex<WindowsTrayIconCache> =
         std::sync::Mutex::new(WindowsTrayIconCache {
@@ -930,10 +910,10 @@ pub(crate) fn set_windows_tray_icon_style(
             generation: 0,
         });
     let icon_size = tray_icon_size();
-    let key = (icon_style.to_string(), taskbar_prefers_dark(), icon_size);
+    let key = (icon_style, taskbar_prefers_dark(), icon_size);
     let mut pending = CACHE.lock().unwrap().request(key);
     while let Some((key, generation)) = pending {
-        let result = tray.set_icon(Some(windows_tray_image(app, &key.0, key.2, key.1)));
+        let result = tray.set_icon(Some(windows_tray_image(app, key.0, key.2, key.1)));
         if let Err(error) = &result {
             log::warn!("failed to update the Windows tray icon: {error}");
         }
@@ -948,7 +928,7 @@ pub(crate) fn set_windows_tray_icon_style(
 pub(crate) fn build_tray_with_menu(
     app: &tauri::AppHandle,
     _menu: (),
-    _icon_style: &str,
+    _icon_style: TrayIconStyle,
 ) -> tauri::Result<PlatformTrayIcon> {
     use ksni::blocking::TrayMethods;
 
@@ -1093,29 +1073,29 @@ mod tests {
     #[test]
     fn stale_tray_icon_completion_reapplies_latest_key() {
         let mut cache = WindowsTrayIconCache::default();
-        let old_key = ("symbolic".to_string(), true, 16);
-        let new_key = ("symbolic".to_string(), false, 16);
+        let old_key = (TrayIconStyle::Symbolic, true, 16);
+        let new_key = (TrayIconStyle::Symbolic, false, 16);
 
-        let old_update = cache.request(old_key.clone()).unwrap();
-        let new_update = cache.request(new_key.clone()).unwrap();
+        let old_update = cache.request(old_key).unwrap();
+        let new_update = cache.request(new_key).unwrap();
         assert_eq!(cache.complete(new_update.0, new_update.1, true), None);
-        assert_eq!(cache.applied, Some(new_key.clone()));
+        assert_eq!(cache.applied, Some(new_key));
 
         let retry = cache.complete(old_update.0, old_update.1, true).unwrap();
         assert_eq!(retry.0, new_key);
         assert_eq!(cache.applied, None);
-        assert_eq!(cache.complete(retry.0.clone(), retry.1, true), None);
+        assert_eq!(cache.complete(retry.0, retry.1, true), None);
         assert_eq!(cache.applied, Some(retry.0));
     }
 
     #[test]
     fn failed_stale_tray_icon_update_preserves_newer_success() {
         let mut cache = WindowsTrayIconCache::default();
-        let old_key = ("symbolic".to_string(), true, 16);
-        let new_key = ("symbolic".to_string(), false, 16);
+        let old_key = (TrayIconStyle::Symbolic, true, 16);
+        let new_key = (TrayIconStyle::Symbolic, false, 16);
 
         let old_update = cache.request(old_key).unwrap();
-        let new_update = cache.request(new_key.clone()).unwrap();
+        let new_update = cache.request(new_key).unwrap();
         assert_eq!(cache.complete(new_update.0, new_update.1, true), None);
         assert_eq!(cache.complete(old_update.0, old_update.1, false), None);
         assert_eq!(cache.applied, Some(new_key));
@@ -1124,10 +1104,10 @@ mod tests {
     #[test]
     fn tray_icon_cache_treats_size_as_part_of_key() {
         let mut cache = WindowsTrayIconCache::default();
-        let initial = cache.request(("symbolic".to_string(), false, 16)).unwrap();
+        let initial = cache.request((TrayIconStyle::Symbolic, false, 16)).unwrap();
         assert_eq!(cache.complete(initial.0, initial.1, true), None);
 
-        let resized = cache.request(("symbolic".to_string(), false, 20)).unwrap();
+        let resized = cache.request((TrayIconStyle::Symbolic, false, 20)).unwrap();
         assert_eq!(resized.1, initial.1 + 1);
     }
 

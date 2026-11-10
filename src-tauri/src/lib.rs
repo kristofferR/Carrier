@@ -58,6 +58,9 @@ mod render_recovery;
 mod renderer_memory;
 mod scheduled_send;
 mod settings;
+mod settings_change;
+#[cfg(test)]
+mod settings_types;
 mod sound;
 mod themes;
 mod title_bar;
@@ -99,8 +102,8 @@ use settings::AppState;
 #[cfg(any(target_os = "macos", test))]
 use settings::ContextMenuActivation;
 use settings::{
-    SaveOutcome, apply_page_zoom, apply_settings, clamp_zoom, clear_pending_webview_data,
-    load_settings, load_settings_early, save_settings,
+    BadgeMode, SaveOutcome, apply_page_zoom, apply_settings, clamp_zoom,
+    clear_pending_webview_data, load_settings, load_settings_early, save_settings,
 };
 use tray::show_main;
 #[cfg(target_os = "macos")]
@@ -122,7 +125,7 @@ pub(crate) fn refresh_unread_indicators(
     };
     let state = app.state::<AppState>();
     // Dot mode says that something is unread, never how much.
-    let dot = settings.badge_mode == "dot";
+    let dot = settings.badge_mode == BadgeMode::Dot;
     let tooltip = match (unread > 0, dot) {
         (false, _) => APP_TITLE.to_string(),
         (true, true) => i18n::tf("window.tooltip.unread", &[("title", &APP_TITLE)]),
@@ -155,7 +158,7 @@ pub(crate) fn refresh_unread_indicators(
             // Cheap re-check of the taskbar theme alongside the registry
             // watcher, so a flip retints even if the watcher ever stops.
             #[cfg(target_os = "windows")]
-            crate::tray::set_windows_tray_icon_style(app, &tray, &settings.tray_icon_style);
+            crate::tray::set_windows_tray_icon_style(app, &tray, settings.tray_icon_style);
         }
     }
 
@@ -180,7 +183,7 @@ fn update_windows_overlay_badges(app: &tauri::AppHandle, bucket: tray_badge::Unr
 
     // Rasterize only when the bucket changes — the RGBA is identical across
     // every window — but always call `set_overlay_icon`: it is cheap and
-    // idempotent, so a theme-rebuild or a freshly opened window self-heals on
+    // idempotent, so a rebuilt or freshly opened window self-heals on
     // the page's next unread re-emit without any extra plumbing.
     static OVERLAY_CACHE: Mutex<Option<(UnreadBucket, Option<Vec<u8>>)>> = Mutex::new(None);
     let rgba = {
@@ -208,10 +211,10 @@ fn update_windows_overlay_badges(app: &tauri::AppHandle, bucket: tray_badge::Unr
 #[cfg(target_os = "windows")]
 fn refresh_windows_tray_icon(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
-    let style = state.settings.lock().unwrap().tray_icon_style.clone();
+    let style = state.settings.lock().unwrap().tray_icon_style;
     let tray = state.tray.lock().unwrap().clone();
     if let Some(tray) = tray {
-        tray::set_windows_tray_icon_style(app, &tray, &style);
+        tray::set_windows_tray_icon_style(app, &tray, style);
     }
 }
 
@@ -1197,10 +1200,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             title_bar::window_control,
             commands::get_settings,
-            commands::runtime_capabilities,
             commands::autostart_status,
             commands::open_login_items,
-            commands::set_settings,
+            commands::update_setting,
             commands::reset_settings,
             commands::check_for_updates,
             commands::update_install_mode,
@@ -1276,7 +1278,7 @@ pub fn run() {
             let window = build_app_window(app.handle(), "main", &settings)?;
 
             // Close button: hide to tray (if enabled) instead of quitting.
-            // A themed rebuild reinstalls this on the new main window too.
+            // A rebuild reinstalls this on the new main window too.
             install_main_close_handler(app.handle(), &window);
 
             // Follow live OS light/dark switches while Theme = System (macOS only;
@@ -1302,6 +1304,7 @@ pub fn run() {
             // Show whether Chatpane will really start at login: the user can
             // switch it off in the OS (Ref #443).
             tauri::async_runtime::spawn(autostart::reconcile(app.handle().clone()));
+            tauri::async_runtime::spawn(commands::prepare_update_install_mode());
 
             // Start hidden only when a tray was actually created to reopen from.
             let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();
@@ -2141,8 +2144,8 @@ pub fn run() {
                 }
             }
 
-            // A theme switch or blank-webview recovery destroys and rebuilds
-            // windows; don't let the momentary zero-window state quit the app.
+            // Recovery and memory recycling destroy and rebuild windows; don't
+            // let the momentary zero-window state quit the app.
             // The same last-window-destroyed event (code: None) also fires on
             // macOS after the traffic light closes the window, so Hide on Close
             // must prevent that exit. Cmd+Q / Chatpane menu Quit use NSApp
@@ -2279,9 +2282,9 @@ mod tests {
             }
             assert!(!allowed(command, "settings", &local), "{command}");
         }
-        assert!(!allowed("set_settings", "main", &messenger));
-        assert!(!allowed("set_settings", "main", &local));
-        assert!(allowed("set_settings", "settings", &local));
+        assert!(!allowed("update_setting", "main", &messenger));
+        assert!(!allowed("update_setting", "main", &local));
+        assert!(allowed("update_setting", "settings", &local));
         assert!(allowed("connect_messenger", "main", &local));
         assert!(!allowed("connect_messenger", "main", &messenger));
     }

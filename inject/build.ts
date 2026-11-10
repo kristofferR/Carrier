@@ -39,16 +39,14 @@ for (const [entry, out, source] of [
   });
 }
 
-await build({
-  bundle: true,
-  format: "iife",
-  globalName: "ChatpaneSettingsUpdate",
-  target: "es2020",
-  charset: "utf8",
-  legalComments: "none",
-  entryPoints: ["inject/src/settings/update-consent.ts"],
-  outfile: "dist/settings-update.js",
-  banner: {
-    js: banner("inject/src/settings/update-consent.ts"),
-  },
-});
+for (const [entry, name] of [
+  ["inject/src/settings/early.ts", "settings-early"],
+  ["inject/src/settings/index.ts", "settings"],
+] as const) {
+  await build({
+    ...common,
+    entryPoints: { [name]: entry },
+    outdir: "dist",
+    banner: { js: banner(entry) },
+  });
+}

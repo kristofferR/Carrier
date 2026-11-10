@@ -3,7 +3,6 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import english from "../../../../src-tauri/locales/en.json";
 
 const repoUrl = (path: string) => new URL(`../../../../${path}`, import.meta.url);
 const repoAsset = (path: string) => Bun.file(repoUrl(path)).text();
@@ -67,82 +66,6 @@ describe("hand-maintained injected assets", () => {
     expect(splash).toContain('retry.addEventListener("click", () => connect(false))');
     expect(splash).toContain("connect(true)");
     expect(splash).toContain('["blocked", "unreachable", "error"]');
-  });
-
-  test("Windows tray options remain platform-gated and keep a tray escape hatch", async () => {
-    const settings = await repoAsset("dist/settings.html");
-
-    expect(settings).toContain("const IS_WINDOWS = /Win/");
-    expect(settings).toContain('"hide_on_minimize"');
-    expect(settings).toContain('"hide_on_focus_loss"');
-    expect(settings).toContain('"hide_taskbar_icon"');
-    expect(settings).toContain('key === "show_tray" && trayRequired');
-  });
-
-  test("the symbolic tray setting is offered on macOS, Linux, and Windows", async () => {
-    const settings = await repoAsset("dist/settings.html");
-
-    expect(settings).toContain("const IS_LINUX = !IS_MAC && !IS_WINDOWS");
-    expect(settings).toContain('...(IS_MAC || IS_LINUX || IS_WINDOWS ? ["tray_icon_style"] : [])');
-    expect(settings).toContain('["symbolic", t("settings.tray.tray_icon_style.symbolic")]');
-    expect(english["settings.tray.tray_icon_style.symbolic"]).toBe("Monochrome");
-  });
-
-  test("notification polish is configurable, with a taskbar flash on Windows", async () => {
-    const settings = await repoAsset("dist/settings.html");
-
-    // Conversation grouping stays macOS-only (Windows groups inherently);
-    // clear-on-view and the attention setting cover Windows too.
-    expect(settings).toContain('...(IS_MAC ? ["group_notifications_by_conversation"] : [])');
-    expect(settings).toContain(
-      '...(IS_MAC || IS_WINDOWS ? ["clear_notifications_on_view", "attention_on_message"] : [])',
-    );
-    expect(settings).toContain('label: t("settings.notifications.attention.label_windows")');
-    expect(english["settings.notifications.attention.label_windows"]).toBe("Flash Taskbar Icon");
-  });
-
-  test("downloads can save automatically or ask for a location", async () => {
-    const settings = await repoAsset("dist/settings.html");
-
-    expect(settings).toContain('"download_behavior", "downloads"');
-    expect(settings).toContain('["downloads", t("settings.general.download_behavior.downloads")]');
-    expect(settings).toContain('["ask", t("settings.general.download_behavior.ask")]');
-    expect(english["settings.general.download_behavior.ask"]).toBe("Ask every time");
-    expect(settings).toContain('"focus_composer_on_return", "download_behavior"');
-    expect(settings).toContain("download_behavior: downloadBehaviorRow");
-  });
-
-  test("custom CSS is presented as best-effort and reloadable", async () => {
-    const settings = await repoAsset("dist/settings.html");
-
-    expect(settings).toContain('invoke("open_custom_css")');
-    expect(settings).toContain('t("settings.advanced.custom_css.opened")');
-    expect(english["settings.advanced.custom_css.opened"]).toBe(
-      "Save custom.css, then reload {app} to apply it.",
-    );
-    expect(english["settings.advanced.custom_css.hint"]).toContain(
-      "missing or invalid CSS is safely ignored",
-    );
-  });
-
-  test("privacy settings share their own tab", async () => {
-    const settings = await repoAsset("dist/settings.html");
-
-    expect(settings).toContain(
-      'fields: ["block_typing_indicator", "hide_names", "hide_avatars", "block_telemetry", "strip_link_tracking"]',
-    );
-  });
-
-  test("Facebook link cleanup is a default-on setting beside telemetry blocking", async () => {
-    const settings = await repoAsset("dist/settings.html");
-
-    expect(settings).toContain(
-      '["strip_link_tracking", t("settings.privacy.strip_link_tracking.label")',
-    );
-    expect(english["settings.privacy.strip_link_tracking.label"]).toBe(
-      "Remove Facebook link tracking",
-    );
-    expect(settings).toContain('"block_telemetry", "strip_link_tracking"');
   });
 
   test("media viewer controls use a measured safe top inset", async () => {
@@ -209,16 +132,11 @@ describe("hand-maintained injected assets", () => {
     }
   });
 
-  test("Settings loads the generated update consent controller", async () => {
-    const [settings, controller] = await Promise.all([
-      repoAsset("dist/settings.html"),
-      repoAsset("dist/settings-update.js"),
-    ]);
-
-    expect(settings).toContain('<button class="action" id="check" type="button" disabled>');
-    expect(settings).toContain('<script src="settings-update.js"></script>');
-    expect(controller).toContain("GENERATED FILE — DO NOT EDIT");
-    expect(controller).toContain("UpdateConsentController");
+  test("Settings loads its generated scripts before paint and after the form", async () => {
+    const settings = await repoAsset("dist/settings.html");
+    expect(settings).toContain('<script src="settings-early.js"></script>');
+    expect(settings.indexOf('src="settings-early.js"')).toBeLessThan(settings.indexOf("<body>"));
+    expect(settings.indexOf('src="settings.js"')).toBeGreaterThan(settings.indexOf('id="check"'));
   });
 
   test("every landing locale exposes signed checks and audited consent copy", async () => {

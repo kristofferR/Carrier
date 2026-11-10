@@ -15,7 +15,8 @@
       "scripts/debug/**",
       "scripts/i18n/**",
       "scripts/site/**",
-      "!scripts/site/guides/**"
+      "!scripts/site/guides/**",
+      "!inject/src/settings/native-types.ts"
     ]
   },
   "formatter": {

@@ -11,73 +11,9 @@
  * fields are optional because the page may run off a stale localStorage cache
  * (or none at all) before the first settings push lands.
  */
-interface ChatpaneSettings {
-  hold_failures?: boolean;
-  always_on_top?: boolean;
-  show_tray?: boolean;
-  /** macOS/Linux tray artwork: the full-color icon or a monochrome glyph. */
-  tray_icon_style?: "color" | "symbolic";
-  start_to_tray?: boolean;
-  autostart?: boolean;
-  hide_on_close?: boolean;
-  /** Internal one-time onboarding state; not exposed in Settings. */
-  tray_notice_shown?: boolean;
-  multi_instance?: boolean;
-  spellcheck?: boolean;
-  unread_badge?: boolean;
-  /** "messages" (page-title total) or "conversations" (bold chat rows). */
-  badge_mode?: "messages" | "conversations" | "dot";
-  /** Skip badge and native notifications for Facebook-muted conversations. */
-  ignore_muted_conversations?: boolean;
-  /** "ignore", "badge" (badge only) or "include"; absent on older installs. */
-  muted_conversations?: "ignore" | "badge" | "include" | null;
-  /** "system", "light", or "dark". */
-  theme?: "system" | "light" | "dark";
-  menu_bar_only?: boolean;
-  hide_menu_bar?: boolean;
-  /** Linux only: "auto" hides the title bar in tiled windows. */
-  hide_on_minimize?: boolean;
-  hide_on_focus_loss?: boolean;
-  hide_taskbar_icon?: boolean;
-  mute_notifications?: boolean;
-  /** Notifications paused from the tray or Dock menu until this time (ms since 1970). */
-  notifications_paused_until?: number | null;
-  notification_sound?: boolean;
-  hide_notification_preview?: boolean;
-  /** Notify for group-chat messages too (the badge counts them either way). */
-  notify_group_chats?: boolean;
-  notify_reactions?: boolean;
-  group_notifications_by_conversation?: boolean;
-  clear_notifications_on_view?: boolean;
-  attention_on_message?: boolean;
-  hide_names_avatars?: boolean;
-  /** Blur names; absent (null) keeps hide_names_avatars. */
-  hide_names?: boolean | null;
-  /** Blur avatars; absent (null) keeps hide_names_avatars. */
-  hide_avatars?: boolean | null;
-  nickname_scope?: "all" | "direct" | "groups" | "off" | null;
-  show_nicknames?: boolean;
-  nicknames_group_only?: boolean;
-  system_emoji?: boolean;
-  /** Never tell others you are typing (regular and encrypted chats). */
-  block_typing_indicator?: boolean;
-  /** Pause video/GIF playback unless it follows a recent user interaction. */
-  stop_media_autoplay?: boolean;
-  /** Page zoom in percent (30–200; 100 = no zoom). */
-  zoom?: number;
-  /** Dragged widths of the chat list and details panes in CSS px; null is Facebook's. */
-  pane_widths?: { list?: number | null; details?: number | null } | null;
-  global_hotkey?: boolean;
-  block_telemetry?: boolean;
-  /** Strip Facebook attribution parameters from copied and externally opened links. */
-  strip_link_tracking?: boolean;
-  /** Put the cursor in the message box when the window comes back to the front. */
-  focus_composer_on_return?: boolean;
-  /** Require Cmd+Enter (macOS) or Ctrl+Enter (elsewhere) to send. */
-  send_with_accelerator?: boolean;
-  /** Save automatically to Downloads, or open a native save dialog first. */
-  download_behavior?: "downloads" | "ask";
-}
+type ChatpaneSettings = Partial<Omit<import("./settings/native-types").Settings, "pane_widths">> & {
+  pane_widths?: Partial<import("./settings/native-types").PaneWidths> | null;
+};
 
 type ChatpaneToastAction =
   | { label: string; kind: "reveal-download"; url: string }
@@ -193,6 +129,8 @@ interface Window {
   /** Called by the native side with the strip's current state. */
   __chatpaneTitleBar?: (state: unknown) => void;
   __CHATPANE_SETTINGS__?: ChatpaneSettings;
+  /** The Settings window's first-frame data, injected when it is built. */
+  __CHATPANE_SETTINGS_BOOT__?: import("./settings/native-types").SettingsBoot;
   /** Scheduled delivery availability fixed when the native process starts. */
   __CHATPANE_SCHEDULED_SEND_AVAILABLE__?: boolean;
   /** Conversation id a recycled window reopens; set only in rebuilt windows. */
@@ -212,7 +150,7 @@ interface Window {
   __chatpaneToggleSettings?: () => void;
   __chatpaneToggleShortcuts?: () => void;
   /** Called by native code when the one-time star toast is due. */
-  __chatpaneStarPrompt?: (productName: string) => void;
+  __chatpaneStarPrompt?: () => void;
 
   // messenger.js — driven by the native menus (View ▸ Zoom, File ▸ New
   // Conversation, Dock/tray thread menus) and the dev-only mcp-bridge.

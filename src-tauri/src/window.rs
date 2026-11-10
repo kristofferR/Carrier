@@ -1,6 +1,6 @@
 //! Window construction: the Messenger windows (with navigation/download
 //! policies and the injected init script), the Settings dialog, theme helpers,
-//! and the theme-change window rebuild.
+//! and the window rebuild that recovery and memory recycling use.
 
 use tauri::{
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
@@ -20,8 +20,8 @@ use crate::download::{
 use crate::macos::theme::make_webview_transparent;
 use crate::render_recovery::RenderRecoveryBudget;
 use crate::settings::{
-    AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN, apply_page_zoom, load_settings,
-    save_settings,
+    AppState, DownloadBehavior, SaveOutcome, Settings, ThemeChoice, ZOOM_MAX, ZOOM_MIN,
+    apply_page_zoom, load_settings, save_settings,
 };
 use crate::url_rules::{Route, is_messenger_web_url, popup_route, route};
 use crate::webview_watchdog::WebviewWatchdog;
@@ -65,19 +65,19 @@ fn notify_download_finished(
 /// The window/chrome theme to apply for a given preference: an explicit
 /// light/dark, or `None` to follow the system.
 pub(crate) fn theme_for(s: &Settings) -> Option<tauri::Theme> {
-    match s.theme.as_str() {
-        "dark" => Some(tauri::Theme::Dark),
-        "light" => Some(tauri::Theme::Light),
-        _ => None,
+    match s.theme {
+        ThemeChoice::Dark => Some(tauri::Theme::Dark),
+        ThemeChoice::Light => Some(tauri::Theme::Light),
+        ThemeChoice::System => None,
     }
 }
 
 /// True when the window should render dark (forced dark, or system-dark).
 pub(crate) fn is_dark(s: &Settings) -> bool {
-    match s.theme.as_str() {
-        "dark" => true,
-        "light" => false,
-        _ => system_prefers_dark(),
+    match s.theme {
+        ThemeChoice::Dark => true,
+        ThemeChoice::Light => false,
+        ThemeChoice::System => system_prefers_dark(),
     }
 }
 
@@ -107,6 +107,48 @@ pub(crate) fn is_messenger_window_label(label: &str) -> bool {
 }
 
 pub(crate) const POPUP_LABEL_PREFIX: &str = "popup-";
+
+/// Destroy a Messenger or Settings window. WebKitGTK keeps a destroyed
+/// webview's page running in its web process, hundreds of MB for the rest of
+/// the session, so on Linux the process is ended first.
+pub(crate) fn destroy_webview_window(window: &WebviewWindow) -> tauri::Result<()> {
+    #[cfg(target_os = "linux")]
+    end_web_process(window);
+    window.destroy()
+}
+
+/// Linux: end a window's web process when the user closes it, as closing
+/// destroys it ([`destroy_webview_window`]). Only for windows nothing keeps
+/// open on close, and never for a page's own windows (calls), which share
+/// their opener's process.
+#[cfg(target_os = "linux")]
+fn end_web_process_on_close(window: &WebviewWindow) {
+    let target = window.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::CloseRequested { .. }) {
+            end_web_process(&target);
+        }
+    });
+}
+
+/// A page's own windows (calls) share their opener's web process, so while
+/// one is open no Facebook window's process is ended: that would end the call.
+/// Settings opens none.
+#[cfg(target_os = "linux")]
+fn end_web_process(window: &WebviewWindow) {
+    let page_window_open = window
+        .app_handle()
+        .webview_windows()
+        .keys()
+        .any(|label| label.starts_with(POPUP_LABEL_PREFIX) && label != FACEBOOK_LANGUAGE_LABEL);
+    if window.label() != "settings" && page_window_open {
+        return;
+    }
+    let _ = window.with_webview(|webview| {
+        use webkit2gtk::WebViewExt;
+        webview.inner().terminate_web_process();
+    });
+}
 
 /// Messenger and call windows load Messenger in the app and open other web
 /// pages in the browser.
@@ -303,6 +345,8 @@ pub(crate) async fn open_facebook_language(app: tauri::AppHandle) {
             // would reload one, not this page). Settings drops it too.
             #[cfg(not(target_os = "macos"))]
             let _ = window.remove_menu();
+            #[cfg(target_os = "linux")]
+            end_web_process_on_close(&window);
             window.on_window_event(move |event| {
                 if matches!(event, WindowEvent::Destroyed) {
                     // Messenger waits out a draft, a send or a call before
@@ -332,8 +376,8 @@ async fn move_windows_to_shared_engine(app: &tauri::AppHandle) -> bool {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
-    // Theme changes and recovery rebuild windows too: never overlap them, and
-    // keep the app running while no window exists.
+    // Recovery and memory recycling rebuild windows too: never overlap them,
+    // and keep the app running while no window exists.
     let mut claimed = false;
     for _ in 0..100 {
         if !app
@@ -387,7 +431,7 @@ async fn move_windows_to_shared_engine(app: &tauri::AppHandle) -> bool {
             label,
         };
         crate::webview_watchdog::realtime_window_replacing(&snapshot.label);
-        match window.destroy() {
+        match destroy_webview_window(&window) {
             Ok(()) => destroyed.push(snapshot),
             Err(error) => {
                 crate::webview_watchdog::realtime_window_replacement_failed(&snapshot.label);
@@ -682,7 +726,7 @@ fn build_app_window_with_render_budget(
                         .lock()
                         .unwrap()
                         .download_behavior
-                        == "ask";
+                        == DownloadBehavior::Ask;
                     if asks {
                         // Ask mode accepts only downloads pre-authorized by the
                         // native picker. This also prevents a page-initiated
@@ -796,6 +840,10 @@ fn build_app_window_with_render_budget(
             crate::linux::configure_messenger_webview_memory(window);
             crate::linux::enable_calls(window);
             crate::linux::install_webview_diagnostics(window);
+            // `main` hides on close or quits the app; other windows close.
+            if label != "main" {
+                end_web_process_on_close(window);
+            }
         }
         // New windows inherit the current always-on-top preference and zoom.
         let _ = window.set_always_on_top(settings.always_on_top);
@@ -982,7 +1030,7 @@ pub(crate) fn should_hide_on_close(hide_on_close: bool, has_tray: bool) -> bool 
 ///
 /// tauri-runtime-wry emits this event in two cases only:
 /// - `code: None` — the last window was destroyed (traffic-light / Cmd+W after
-///   the window actually goes away, or a themed rebuild's zero-window gap).
+///   the window actually goes away, or a rebuild's zero-window gap).
 /// - `code: Some(n)` — `AppHandle::exit(n)` (tray Quit, updater relaunch).
 ///
 /// Native Chatpane menu Quit / Cmd+Q do **not** hit this predicate. They use
@@ -998,9 +1046,9 @@ pub(crate) fn should_prevent_app_exit(
 }
 
 /// Install the `main` window's close behaviour: hide instead of quitting when
-/// [`should_hide_on_close`] says so, otherwise quit. Reinstalled on every `main`
-/// window the app creates (startup and after a themed rebuild) so the behaviour
-/// survives `recreate_themed_windows`.
+/// [`should_hide_on_close`] says so, otherwise quit. Installed on every `main`
+/// window the app creates (at startup, when the tray reopens it, and when a
+/// rebuild replaces it), so the behaviour survives a rebuild.
 pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &WebviewWindow) {
     let handle = app.clone();
     window.on_window_event(move |event| {
@@ -1070,9 +1118,10 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
 /// `WKWebView.reload()` / WebView2 reload cannot, while keeping cookies,
 /// settings, window geometry, and the rest of the app process intact.
 ///
-/// Returns whether a rebuild was scheduled. Theme changes and other recovery
-/// attempts share the `recreating` guard so two destroy/build cycles cannot
+/// Every rebuild (recovery, memory recycling, macOS's move to the shared
+/// engine) shares the `recreating` guard so two destroy/build cycles cannot
 /// overlap.
+///
 /// Returns whether a rebuild was scheduled. `on_abandoned` runs only when a
 /// scheduled rebuild is later abandoned without destroying the window (the
 /// destroy call failed, so the old window and its watchdog live on) — callers
@@ -1145,7 +1194,7 @@ pub(crate) fn recreate_messenger_window(
                         .url()
                         .ok()
                         .and_then(|url| crate::messenger_url_thread_id(&url));
-                    (target.destroy(), was_loaded, thread)
+                    (destroy_webview_window(&target), was_loaded, thread)
                 });
                 let _ = sender.send(result);
             });
@@ -1158,7 +1207,7 @@ pub(crate) fn recreate_messenger_window(
                 (Some(result), was_loaded, thread)
             })
         } else {
-            (Some(window.destroy()), None, None)
+            (Some(destroy_webview_window(&window)), None, None)
         };
         let was_loaded = was_loaded.or(recycle_was_loaded);
         if !matches!(destroy_result, Some(Ok(()))) {
@@ -1271,20 +1320,48 @@ pub(crate) fn recreate_messenger_window(
     true
 }
 
+/// How long a closed Settings window stays loaded for a quick reopen. Its web
+/// process holds over 100 MB, so outside Windows it is released after that.
+/// (Windows keeps it: rebuilding WebView2 leaks handles, see below.)
+#[cfg(not(target_os = "windows"))]
+const SETTINGS_KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(3 * 60);
+
+/// Bumped on every Settings open and close, so a release only happens while
+/// the close that scheduled it is the latest.
+static SETTINGS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Destroy a closed Settings window once it has stayed closed for
+/// [`SETTINGS_KEPT_FOR`].
+#[cfg(not(target_os = "windows"))]
+fn release_settings_later(window: WebviewWindow) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let closed = SETTINGS_GENERATION.fetch_add(1, SeqCst).wrapping_add(1);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(SETTINGS_KEPT_FOR).await;
+        let target = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            if SETTINGS_GENERATION.load(SeqCst) == closed && !target.is_visible().unwrap_or(true) {
+                let _ = destroy_webview_window(&target);
+            }
+        });
+    });
+}
+
 /// Open (or focus) the dedicated settings window (a small local page, separate
 /// from the Messenger view).
 pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("settings") {
+        SETTINGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let _ = w.show();
         let _ = w.set_focus();
         return;
     }
     // Match the Messenger windows' topmost state so the dialog isn't trapped
     // behind them when Always on Top is enabled.
-    let (aot, theme) = {
+    let (aot, theme, background) = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
-        (s.always_on_top, theme_for(&s))
+        (s.always_on_top, theme_for(&s), splash_background(&s))
     };
     let builder =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
@@ -1298,7 +1375,10 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
             .maximizable(false)
             .minimizable(false)
             .always_on_top(aot)
-            .theme(theme);
+            .theme(theme)
+            // The page's own background until its first frame, which the boot
+            // data below makes the whole page.
+            .background_color(background);
     // macOS: the window buttons float over the tab bar, as in the Messenger
     // windows (see macos::title_bar), so a theme change needs no rebuild.
     #[cfg(target_os = "macos")]
@@ -1307,6 +1387,7 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         .hidden_title(true);
     // Windows and Linux: Chatpane's title bar, as in the Messenger windows
     // (crate::title_bar): the page draws the close button.
+    let boot = crate::commands::settings_boot_script(app);
     let builder = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
@@ -1315,6 +1396,7 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         builder
             .initialization_script(crate::title_bar::initial_script(&s, false))
             .initialization_script(crate::i18n::script(crate::i18n::Audience::Settings))
+            .initialization_script(boot)
             // The page draws the controls once it's loaded: restate them then.
             .on_page_load(|window, payload| {
                 if payload.event() == tauri::webview::PageLoadEvent::Finished {
@@ -1328,11 +1410,36 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
                 let state = app.state::<AppState>();
                 let s = state.settings.lock().unwrap();
                 crate::app_icon::apply_window_icon(&window, &s);
+                // Tauri's window background can invert white on macOS (tauri#12349).
+                #[cfg(target_os = "macos")]
+                {
+                    let win = window.clone();
+                    let dark = is_dark(&s);
+                    let _ = window.run_on_main_thread(move || {
+                        if let Ok(ptr) = win.ns_window() {
+                            crate::macos::theme::set_macos_window_bg(ptr, dark);
+                        }
+                    });
+                }
             }
-            // A reopened Settings window starts from the initial state.
+            // A rebuilt Settings window starts from the initial state.
             window.on_window_event(|event| {
                 if matches!(event, WindowEvent::Destroyed) {
                     crate::title_bar::forget("settings");
+                }
+            });
+            // Closing hides the window, and an open soon after shows it again: a
+            // new webview is blank while its web process starts. Windows keeps
+            // it for good, since rebuilding WebView2 retains two shared-memory
+            // section handles per teardown, and the reused window's removed
+            // menu stays removed.
+            let close_window = window.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = close_window.hide();
+                    #[cfg(not(target_os = "windows"))]
+                    release_settings_later(close_window.clone());
                 }
             });
             #[cfg(target_os = "macos")]
@@ -1345,21 +1452,6 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
             let _ = window.remove_menu();
             #[cfg(target_os = "linux")]
             crate::linux_tiling::watch(&window);
-
-            #[cfg(target_os = "windows")]
-            {
-                // Keep the local Settings webview alive when its close button is
-                // pressed. Rebuilding WebView2 repeatedly retains two unnamed
-                // shared-memory section handles per teardown, and reusing the same
-                // native window also prevents its removed menu from resurfacing.
-                let close_window = window.clone();
-                window.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = close_window.hide();
-                    }
-                });
-            }
         }
         Err(error) => log::error!("failed to create Settings window: {error}"),
     }
@@ -1832,51 +1924,51 @@ mod tests {
     // theme_for / is_dark / splash_background  (new in this PR)
     // -----------------------------------------------------------------------
 
-    fn with_theme(theme: &str) -> Settings {
+    fn with_theme(theme: ThemeChoice) -> Settings {
         Settings {
-            theme: theme.into(),
+            theme,
             ..Default::default()
         }
     }
 
     #[test]
     fn theme_for_dark_returns_dark() {
-        assert_eq!(theme_for(&with_theme("dark")), Some(tauri::Theme::Dark));
+        assert_eq!(
+            theme_for(&with_theme(ThemeChoice::Dark)),
+            Some(tauri::Theme::Dark)
+        );
     }
 
     #[test]
     fn theme_for_light_returns_light() {
-        assert_eq!(theme_for(&with_theme("light")), Some(tauri::Theme::Light));
+        assert_eq!(
+            theme_for(&with_theme(ThemeChoice::Light)),
+            Some(tauri::Theme::Light)
+        );
     }
 
     #[test]
     fn theme_for_system_returns_none() {
-        assert_eq!(theme_for(&with_theme("system")), None);
-    }
-
-    #[test]
-    fn theme_for_unknown_string_returns_none() {
-        assert_eq!(theme_for(&with_theme("auto")), None);
-        assert_eq!(theme_for(&with_theme("")), None);
+        assert_eq!(theme_for(&with_theme(ThemeChoice::System)), None);
     }
 
     // "system" calls system_prefers_dark() (OS-dependent), so only the
     // explicitly-forced cases are asserted here.
     #[test]
     fn is_dark_forced_dark() {
-        assert!(is_dark(&with_theme("dark")));
+        assert!(is_dark(&with_theme(ThemeChoice::Dark)));
     }
 
     #[test]
     fn is_dark_forced_light() {
-        assert!(!is_dark(&with_theme("light")));
+        assert!(!is_dark(&with_theme(ThemeChoice::Light)));
     }
 
     #[test]
     fn splash_background_dark_is_facebook_dark_color() {
         // Facebook's dark background colour, as hard-coded in the function.
         assert_eq!(
-            splash_background(&with_theme("dark")),
+            splash_background(&with_theme(ThemeChoice::Dark)),
             Color(24, 25, 26, 255)
         );
     }
@@ -1884,7 +1976,7 @@ mod tests {
     #[test]
     fn splash_background_light_is_white() {
         assert_eq!(
-            splash_background(&with_theme("light")),
+            splash_background(&with_theme(ThemeChoice::Light)),
             Color(255, 255, 255, 255)
         );
     }

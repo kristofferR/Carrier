@@ -155,7 +155,13 @@ pub(crate) fn install_webview_diagnostics(window: &tauri::WebviewWindow) {
         });
         let terminated_label = label.clone();
         view.connect_web_process_terminated(move |_, reason| {
-            log::warn!("webview {terminated_label} web process terminated: reason={reason:?}");
+            // Chatpane ends a process itself before a rebuild or a close.
+            let level = if reason == webkit2gtk::WebProcessTerminationReason::TerminatedByApi {
+                log::Level::Info
+            } else {
+                log::Level::Warn
+            };
+            log::log!(level, "webview {terminated_label} web process terminated: reason={reason:?}");
         });
         let responsive_label = label.clone();
         view.connect_is_web_process_responsive_notify(move |view| {
@@ -269,7 +275,8 @@ fn apply_portal_color_scheme(app: &tauri::AppHandle, scheme: ColorScheme) {
         let _ = tray.set_symbolic_dark(dark_panel);
     }
 
-    let follows_system = state.settings.lock().unwrap().theme == "system";
+    let follows_system =
+        state.settings.lock().unwrap().theme == crate::settings::ThemeChoice::System;
     if !follows_system {
         return;
     }

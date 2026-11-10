@@ -139,7 +139,8 @@ objc2::define_class!(
             // Only while following the system theme. An explicit light/dark choice
             // also moves NSApp's appearance (we set it ourselves on a manual
             // switch), and apply_settings has already repainted for it.
-            let is_system = app.state::<AppState>().settings.lock().unwrap().theme == "system";
+            let is_system = app.state::<AppState>().settings.lock().unwrap().theme
+                == crate::settings::ThemeChoice::System;
             if is_system && now_dark != was_dark {
                 for (_, window) in tauri::Manager::webview_windows(app) {
                     if let Ok(ns_window) = window.ns_window() {

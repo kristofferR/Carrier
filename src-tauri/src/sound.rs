@@ -79,6 +79,7 @@ const LINUX_SOUNDS: &[(&str, &str)] = &[
 
 /// The notification sound Settings stores (`notification_sound_choice`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum NotificationSound {
     Off,
@@ -372,6 +373,7 @@ fn import_sound(
 
 /// One entry in the Settings sound list, after Off and System default.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct SoundOption {
     label: String,
     sound: NotificationSound,

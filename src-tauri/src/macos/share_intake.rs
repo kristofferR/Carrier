@@ -169,7 +169,7 @@ fn target_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
 /// Handle one `chatpane://share-pasteboard` open: take and validate the
 /// payload, park it, surface the window, and attempt delivery. Parking comes
 /// first — the pasteboard is cleared by now, so this in-memory copy must
-/// survive a missing window (e.g. a theme rebuild in flight).
+/// survive a missing window (e.g. a rebuild in flight).
 pub(crate) fn handle_share_open(app: &tauri::AppHandle, url: &str) {
     let Some(pasteboard_name) = pasteboard_name_for_handoff(url) else {
         log::warn!("ignoring unknown chatpane:// open");

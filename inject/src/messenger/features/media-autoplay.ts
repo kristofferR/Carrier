@@ -74,15 +74,18 @@ export function initMediaAutoplay() {
     observer = null;
   };
 
+  let enabled = false;
   const apply = () => {
     if (on()) {
       start();
-      // Enabling the setting is explicit: pause media already playing even if
-      // the last in-page action happened within the normal grace window.
-      scan(document, true);
+      // Turning the setting on is explicit: pause media already playing even
+      // if the last in-page action happened within the normal grace window.
+      // Other settings changes leave playing media alone.
+      if (!enabled) scan(document, true);
     } else {
       stop();
     }
+    enabled = on();
   };
 
   apply();
