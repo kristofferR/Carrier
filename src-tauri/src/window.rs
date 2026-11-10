@@ -1,6 +1,6 @@
 //! Window construction: the Messenger windows (with navigation/download
 //! policies and the injected init script), the Settings dialog, theme helpers,
-//! and the theme-change window rebuild.
+//! and the window rebuild that recovery and memory recycling use.
 
 use tauri::{
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
@@ -332,8 +332,8 @@ async fn move_windows_to_shared_engine(app: &tauri::AppHandle) -> bool {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
-    // Theme changes and recovery rebuild windows too: never overlap them, and
-    // keep the app running while no window exists.
+    // Recovery and memory recycling rebuild windows too: never overlap them,
+    // and keep the app running while no window exists.
     let mut claimed = false;
     for _ in 0..100 {
         if !app
@@ -982,7 +982,7 @@ pub(crate) fn should_hide_on_close(hide_on_close: bool, has_tray: bool) -> bool 
 ///
 /// tauri-runtime-wry emits this event in two cases only:
 /// - `code: None` — the last window was destroyed (traffic-light / Cmd+W after
-///   the window actually goes away, or a themed rebuild's zero-window gap).
+///   the window actually goes away, or a rebuild's zero-window gap).
 /// - `code: Some(n)` — `AppHandle::exit(n)` (tray Quit, updater relaunch).
 ///
 /// Native Chatpane menu Quit / Cmd+Q do **not** hit this predicate. They use
@@ -998,9 +998,9 @@ pub(crate) fn should_prevent_app_exit(
 }
 
 /// Install the `main` window's close behaviour: hide instead of quitting when
-/// [`should_hide_on_close`] says so, otherwise quit. Reinstalled on every `main`
-/// window the app creates (startup and after a themed rebuild) so the behaviour
-/// survives `recreate_themed_windows`.
+/// [`should_hide_on_close`] says so, otherwise quit. Installed on every `main`
+/// window the app creates (at startup, when the tray reopens it, and when a
+/// rebuild replaces it), so the behaviour survives a rebuild.
 pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &WebviewWindow) {
     let handle = app.clone();
     window.on_window_event(move |event| {
@@ -1070,9 +1070,10 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
 /// `WKWebView.reload()` / WebView2 reload cannot, while keeping cookies,
 /// settings, window geometry, and the rest of the app process intact.
 ///
-/// Returns whether a rebuild was scheduled. Theme changes and other recovery
-/// attempts share the `recreating` guard so two destroy/build cycles cannot
+/// Every rebuild (recovery, memory recycling, macOS's move to the shared
+/// engine) shares the `recreating` guard so two destroy/build cycles cannot
 /// overlap.
+///
 /// Returns whether a rebuild was scheduled. `on_abandoned` runs only when a
 /// scheduled rebuild is later abandoned without destroying the window (the
 /// destroy call failed, so the old window and its watchdog live on) — callers

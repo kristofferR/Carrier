@@ -766,7 +766,7 @@ impl WebviewWatchdog {
     /// The watchdog arms only after the injected page answers once, so Chatpane's
     /// local connectivity screen and a page that has not loaded yet are never put
     /// into a reload loop. A destroyed window stops its task; this matters when a
-    /// macOS theme change rebuilds a window under the same label.
+    /// rebuild replaces a window under the same label.
     pub(crate) fn install(&self, window: &WebviewWindow) {
         #[cfg(target_os = "linux")]
         MEMORY_WINDOW_GENERATION.fetch_add(1, Ordering::Relaxed);

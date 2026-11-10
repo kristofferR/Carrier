@@ -183,7 +183,7 @@ fn update_windows_overlay_badges(app: &tauri::AppHandle, bucket: tray_badge::Unr
 
     // Rasterize only when the bucket changes — the RGBA is identical across
     // every window — but always call `set_overlay_icon`: it is cheap and
-    // idempotent, so a theme-rebuild or a freshly opened window self-heals on
+    // idempotent, so a rebuilt or freshly opened window self-heals on
     // the page's next unread re-emit without any extra plumbing.
     static OVERLAY_CACHE: Mutex<Option<(UnreadBucket, Option<Vec<u8>>)>> = Mutex::new(None);
     let rgba = {
@@ -1278,7 +1278,7 @@ pub fn run() {
             let window = build_app_window(app.handle(), "main", &settings)?;
 
             // Close button: hide to tray (if enabled) instead of quitting.
-            // A themed rebuild reinstalls this on the new main window too.
+            // A rebuild reinstalls this on the new main window too.
             install_main_close_handler(app.handle(), &window);
 
             // Follow live OS light/dark switches while Theme = System (macOS only;
@@ -2144,8 +2144,8 @@ pub fn run() {
                 }
             }
 
-            // A theme switch or blank-webview recovery destroys and rebuilds
-            // windows; don't let the momentary zero-window state quit the app.
+            // Recovery and memory recycling destroy and rebuild windows; don't
+            // let the momentary zero-window state quit the app.
             // The same last-window-destroyed event (code: None) also fires on
             // macOS after the traffic light closes the window, so Hide on Close
             // must prevent that exit. Cmd+Q / Chatpane menu Quit use NSApp
