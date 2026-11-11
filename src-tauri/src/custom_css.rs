@@ -113,7 +113,7 @@ fn read_custom_css_from_path(path: &Path) -> Option<String> {
         return None;
     }
     match std::fs::read_to_string(path) {
-        Ok(css) if !css.trim().is_empty() => Some(upgrade_css_file(path, css)),
+        Ok(css) if !css.trim().is_empty() => Some(css),
         Ok(_) => Some(String::new()),
         Err(error) => {
             log::warn!("could not read custom CSS file {}: {error}", path.display());
@@ -155,6 +155,7 @@ pub(crate) fn apply_custom_css(window: &WebviewWindow, url: &url::Url) {
     let Some(css) = read_custom_css_from_path(&path) else {
         return;
     };
+    let css = upgrade_css_file(&path, css);
     if let Err(error) = window.eval(custom_css_script(&css)) {
         log::warn!("could not inject custom CSS: {error}");
     }
@@ -216,6 +217,8 @@ fn reapply_everywhere(app: &tauri::AppHandle, path: &Path) -> bool {
     let Some(css) = read_custom_css_from_path(path) else {
         return false;
     };
+    // Live reads must not overwrite a newer editor save with migrated CSS.
+    let css = convert_legacy_css(&css).unwrap_or(css);
     let script = custom_css_script(&css);
     for (label, window) in app.webview_windows() {
         let on_messenger = window.url().is_ok_and(|url| is_messenger_web_url(&url));
@@ -260,10 +263,26 @@ mod tests {
 
         let path = test_path("legacy.css");
         std::fs::write(&path, css).unwrap();
-        let first = read_custom_css_from_path(&path).unwrap();
+        let first = upgrade_css_file(&path, read_custom_css_from_path(&path).unwrap());
         assert!(!first.contains("carrier"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), first);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reading_legacy_css_does_not_rewrite_the_stylesheet() {
+        let path = test_path("live-legacy.css");
+        let original = ".carrier-out { color: var(--carrier-text); }";
+        std::fs::write(&path, original).unwrap();
+
+        let css = read_custom_css_from_path(&path).unwrap();
+        assert_eq!(css, original);
+        assert_eq!(
+            convert_legacy_css(&css).as_deref(),
+            Some(".chatpane-out { color: var(--chatpane-text); }")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
