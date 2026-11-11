@@ -46,12 +46,16 @@ jobs:
             patchelf \
             xdg-utils \
             build-essential \
-            minisign firejail xvfb xdotool imagemagick
+            firejail xvfb xdotool imagemagick
           dpkg-query -W libc6 libwebkit2gtk-4.1-0 libgstreamer1.0-0 libgtk-3-0
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.target }}
+
+      # Ubuntu 22.04 has no minisign package; rsign2 checks the same signatures.
+      - name: Install rsign2
+        run: cargo install rsign2 --locked --quiet
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
@@ -99,7 +103,7 @@ jobs:
           jq -r '.plugins.updater.pubkey' src-tauri/tauri.conf.json | base64 -d > updater.pub
           for f in out/*.AppImage out/*.deb out/*.rpm; do
             base64 -d "$f.sig" > "$RUNNER_TEMP/bundle.minisig"
-            minisign -V -p updater.pub -m "$f" -x "$RUNNER_TEMP/bundle.minisig"
+            rsign verify -p updater.pub -x "$RUNNER_TEMP/bundle.minisig" "$f"
           done
 
       - name: Check the glibc floor
