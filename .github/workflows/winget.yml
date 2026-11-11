@@ -116,6 +116,8 @@ jobs:
 
       # komac checks for an open PR for this version first, so a rerun does not
       # open a duplicate. The token owner must already have a winget-pkgs fork.
+      # The `|arch` suffix pins each installer's architecture: komac reads the
+      # `win_arm` file name as 32-bit ARM, but the build is arm64.
       - name: Open the winget-pkgs pull request
         if: steps.release.outputs.skip != 'true'
         env:
@@ -127,6 +129,6 @@ jobs:
         run: |
           "$RUNNER_TEMP/komac/komac" update "$PACKAGE_ID" \
             --version "$VERSION" \
-            --urls "$X64_URL" "$ARM64_URL" \
+            --urls "$X64_URL|x64" "$ARM64_URL|arm64" \
             --release-notes-url "$NOTES_URL" \
             --submit
