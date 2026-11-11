@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "CSS tùy chỉnh",
   "settings.advanced.custom_css.hint": "Tùy chỉnh giao diện Messenger nâng cao, không đảm bảo luôn hoạt động. Thay đổi mã trang của Facebook có thể làm hỏng; CSS bị thiếu hoặc không hợp lệ sẽ được bỏ qua an toàn.",
   "settings.advanced.custom_css.open": "Mở custom.css",
-  "settings.advanced.custom_css.opened": "Lưu custom.css, rồi tải lại {app} để áp dụng.",
+  "settings.advanced.custom_css.opened": "Thay đổi trong custom.css được áp dụng mỗi khi bạn lưu.",
   "settings.advanced.custom_css.open_failed": "Không thể mở custom.css.",
   "settings.advanced.logs.label": "Nhật ký chẩn đoán",
   "settings.advanced.logs.hint": "Cảnh báo và lỗi tích hợp trang được ghi tại đây — hãy đính kèm tệp này khi báo lỗi.",

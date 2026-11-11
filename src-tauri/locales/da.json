@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Brugerdefineret CSS",
   "settings.advanced.custom_css.hint": "Avanceret styling af Messenger uden garantier. Ændringer i Facebooks kode kan ødelægge den. CSS, der mangler eller er ugyldig, ignoreres sikkert.",
   "settings.advanced.custom_css.open": "Åbn custom.css",
-  "settings.advanced.custom_css.opened": "Gem custom.css, og genindlæs derefter {app} for at anvende den.",
+  "settings.advanced.custom_css.opened": "Ændringer i custom.css anvendes, hver gang du gemmer den.",
   "settings.advanced.custom_css.open_failed": "Kunne ikke åbne custom.css.",
   "settings.advanced.logs.label": "Diagnosticeringslog",
   "settings.advanced.logs.hint": "Advarsler og fejl i sideintegrationen logges her – vedhæft filen til fejlrapporter.",

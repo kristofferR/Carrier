@@ -1228,7 +1228,9 @@ pub(crate) fn open_facebook_language(app: tauri::AppHandle) {
 #[tauri::command]
 pub(crate) async fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
     let path = ensure_custom_css(&app)?;
-    open::that_detached(path).map_err(|error| error.to_string())
+    open::that_detached(&path).map_err(|error| error.to_string())?;
+    crate::custom_css::watch_while_editing(&app, path);
+    Ok(())
 }
 
 #[cfg(test)]

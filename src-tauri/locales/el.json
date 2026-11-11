@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Προσαρμοσμένο CSS",
   "settings.advanced.custom_css.hint": "Προχωρημένη προσαρμογή της εμφάνισης του Messenger, χωρίς εγγυήσεις. Αλλαγές στον κώδικα του Facebook μπορεί να τη χαλάσουν· CSS που λείπει ή δεν είναι έγκυρο αγνοείται με ασφάλεια.",
   "settings.advanced.custom_css.open": "Άνοιγμα custom.css",
-  "settings.advanced.custom_css.opened": "Αποθήκευσε το custom.css και μετά κάνε επαναφόρτωση του {app} για να εφαρμοστεί.",
+  "settings.advanced.custom_css.opened": "Οι αλλαγές στο custom.css εφαρμόζονται κάθε φορά που το αποθηκεύεις.",
   "settings.advanced.custom_css.open_failed": "Δεν ήταν δυνατό το άνοιγμα του custom.css.",
   "settings.advanced.logs.label": "Αρχείο καταγραφής διαγνωστικών",
   "settings.advanced.logs.hint": "Εδώ καταγράφονται οι προειδοποιήσεις και τα σφάλματα ενσωμάτωσης στη σελίδα — επισύναψε το αρχείο στις αναφορές σφαλμάτων.",

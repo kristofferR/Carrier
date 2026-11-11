@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "CSS ກຳນົດເອງ",
   "settings.advanced.custom_css.hint": "ການປັບແຕ່ງໜ້າຕາ Messenger ຂັ້ນສູງແບບບໍ່ຮັບປະກັນ. ການປ່ຽນແປງ markup ຂອງ Facebook ອາດເຮັດໃຫ້ມັນໃຊ້ບໍ່ໄດ້; CSS ທີ່ຂາດຫາຍ ຫຼື ບໍ່ຖືກຕ້ອງຈະຖືກຂ້າມໄປຢ່າງປອດໄພ.",
   "settings.advanced.custom_css.open": "ເປີດ custom.css",
-  "settings.advanced.custom_css.opened": "ບັນທຶກ custom.css ແລ້ວໂຫຼດ {app} ຄືນໃໝ່ເພື່ອນຳໃຊ້.",
+  "settings.advanced.custom_css.opened": "ການປ່ຽນແປງໃນ custom.css ຈະນຳໃຊ້ທຸກຄັ້ງທີ່ບັນທຶກ.",
   "settings.advanced.custom_css.open_failed": "ເປີດ custom.css ບໍ່ໄດ້.",
   "settings.advanced.logs.label": "ບັນທຶກການວິນິດໄສ",
   "settings.advanced.logs.hint": "ຄຳເຕືອນ ແລະ ຂໍ້ຜິດພາດຂອງການເຊື່ອມໂຍງກັບໜ້າເວັບຈະຖືກບັນທຶກໄວ້ທີ່ນີ້ — ແນບໄຟລ໌ນີ້ໄປກັບລາຍງານບັນຫາ.",

@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "CSS personalizado",
   "settings.advanced.custom_css.hint": "Estilos avanzados para Messenger, sin garantías. Los cambios en el código de Facebook pueden romperlos; el CSS inexistente o no válido se ignora sin riesgo.",
   "settings.advanced.custom_css.open": "Abrir custom.css",
-  "settings.advanced.custom_css.opened": "Guarda custom.css y luego vuelve a cargar {app} para aplicarlo.",
+  "settings.advanced.custom_css.opened": "Los cambios en custom.css se aplican cada vez que lo guardas.",
   "settings.advanced.custom_css.open_failed": "No se pudo abrir custom.css.",
   "settings.advanced.logs.label": "Registro de diagnóstico",
   "settings.advanced.logs.hint": "Aquí se registran las advertencias y los fallos de integración con la página — adjunta el archivo a los reportes de errores.",

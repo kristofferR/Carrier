@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "අභිරුචි CSS",
   "settings.advanced.custom_css.hint": "උසස්, හැකි තරම් ක්‍රියා කරන Messenger විලාසකරණය. Facebook markup වෙනස්කම් නිසා එය කැඩී යා හැක; නැති හෝ වලංගු නොවන CSS ආරක්ෂිතව නොසලකා හරිනු ලැබේ.",
   "settings.advanced.custom_css.open": "custom.css විවෘත කරන්න",
-  "settings.advanced.custom_css.opened": "custom.css සුරකින්න, ඉන්පසු එය අදාළ කිරීමට {app} නැවත පූරණය කරන්න.",
+  "settings.advanced.custom_css.opened": "custom.css සුරකින සෑම විටම වෙනස්කම් අදාළ වේ.",
   "settings.advanced.custom_css.open_failed": "custom.css විවෘත කළ නොහැකි විය.",
   "settings.advanced.logs.label": "දෝෂ නිර්ණ ලොගය",
   "settings.advanced.logs.hint": "අනතුරු ඇඟවීම් සහ පිටු ඒකාබද්ධ කිරීමේ දෝෂ මෙහි සටහන් වේ — දෝෂ වාර්තාවලට ගොනුව අමුණන්න.",

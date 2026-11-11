@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Vlastní CSS",
   "settings.advanced.custom_css.hint": "Pokročilé stylování Messengeru bez záruky. Změny v kódu Facebooku ho mohou rozbít; chybějící nebo neplatné CSS se bezpečně ignoruje.",
   "settings.advanced.custom_css.open": "Otevřít custom.css",
-  "settings.advanced.custom_css.opened": "Ulož custom.css a pak znovu načti aplikaci {app}, aby se použil.",
+  "settings.advanced.custom_css.opened": "Změny v custom.css se použijí při každém uložení.",
   "settings.advanced.custom_css.open_failed": "custom.css se nepodařilo otevřít.",
   "settings.advanced.logs.label": "Diagnostický protokol",
   "settings.advanced.logs.hint": "Zaznamenávají se sem varování a chyby integrace se stránkou — soubor přilož k hlášení chyb.",

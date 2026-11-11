@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Własny CSS",
   "settings.advanced.custom_css.hint": "Zaawansowane stylowanie Messengera bez gwarancji. Zmiany w kodzie strony Facebooka mogą je zepsuć; brakujący lub nieprawidłowy CSS jest bezpiecznie pomijany.",
   "settings.advanced.custom_css.open": "Otwórz custom.css",
-  "settings.advanced.custom_css.opened": "Zapisz custom.css, a potem wczytaj ponownie aplikację {app}, aby go zastosować.",
+  "settings.advanced.custom_css.opened": "Zmiany w custom.css są stosowane przy każdym zapisie.",
   "settings.advanced.custom_css.open_failed": "Nie udało się otworzyć custom.css.",
   "settings.advanced.logs.label": "Dziennik diagnostyczny",
   "settings.advanced.logs.hint": "Tu zapisywane są ostrzeżenia i błędy integracji ze stroną — dołączaj ten plik do zgłoszeń błędów.",

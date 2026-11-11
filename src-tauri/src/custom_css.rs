@@ -1,11 +1,14 @@
 //! Best-effort user stylesheet support.
 //!
 //! `custom.css` lives beside Chatpane's settings file. It is read afresh after
-//! each Messenger page load so editing it and pressing Reload is sufficient;
-//! missing, unreadable, non-UTF-8, or unreasonably large files are ignored.
+//! each Messenger page load, and after Settings opens it, each save applies
+//! live ([`watch_while_editing`]); missing, unreadable, non-UTF-8, or
+//! unreasonably large files are ignored.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime};
 
 use tauri::{Manager, WebviewWindow};
 
@@ -17,7 +20,8 @@ const CUSTOM_CSS_TEMPLATE: &str = r#"/*
  * Chatpane custom CSS
  *
  * This advanced customization is best-effort: Facebook can change Messenger's
- * markup at any time. Save this file, then reload Chatpane (Ctrl/Cmd+R).
+ * markup at any time. Saving this file applies it while Chatpane opened it;
+ * otherwise reload Chatpane (Ctrl/Cmd+R).
  */
 
 "#;
@@ -156,6 +160,71 @@ pub(crate) fn apply_custom_css(window: &WebviewWindow, url: &url::Url) {
     }
 }
 
+/// How long a watch lasts after Settings opens the file or after its last save.
+const WATCH_IDLE: Duration = Duration::from_secs(30 * 60);
+const WATCH_POLL: Duration = Duration::from_millis(500);
+
+/// When the running watch ends, or None when none runs.
+static WATCH_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// What tells one save from the next.
+fn file_stamp(path: &Path) -> Option<(SystemTime, u64)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.modified().ok()?, metadata.len()))
+}
+
+/// Apply each save of `custom.css` to every Messenger window, starting when
+/// Settings opens the file and ending after [`WATCH_IDLE`] without a save.
+/// It polls the file's timestamp, so nothing runs once editing stops.
+pub(crate) fn watch_while_editing(app: &tauri::AppHandle, path: PathBuf) {
+    {
+        let mut until = WATCH_UNTIL.lock().unwrap();
+        let running = until.is_some();
+        *until = Some(Instant::now() + WATCH_IDLE);
+        if running {
+            return;
+        }
+    }
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("custom-css-watch".into())
+        .spawn(move || {
+            let mut stamp = file_stamp(&path);
+            loop {
+                std::thread::sleep(WATCH_POLL);
+                let now = file_stamp(&path);
+                let mut until = WATCH_UNTIL.lock().unwrap();
+                if now != stamp {
+                    stamp = now;
+                    *until = Some(Instant::now() + WATCH_IDLE);
+                    drop(until);
+                    reapply_everywhere(&app, &path);
+                } else if until.is_none_or(|end| Instant::now() >= end) {
+                    *until = None;
+                    return;
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("could not watch custom.css: {error}");
+        *WATCH_UNTIL.lock().unwrap() = None;
+    }
+}
+
+fn reapply_everywhere(app: &tauri::AppHandle, path: &Path) {
+    // An emptied or unreadable file clears what the last save applied.
+    let script = custom_css_script(&read_custom_css_from_path(path).unwrap_or_default());
+    for (label, window) in app.webview_windows() {
+        let on_messenger = window.url().is_ok_and(|url| is_messenger_web_url(&url));
+        if crate::window::is_messenger_window_label(&label)
+            && on_messenger
+            && let Err(error) = window.eval(&script)
+        {
+            log::warn!("could not reapply custom CSS: {error}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,7 +306,7 @@ mod tests {
         ensure_custom_css_at(&path).unwrap();
         let css = std::fs::read_to_string(&path).unwrap();
         assert!(css.contains("best-effort"));
-        assert!(css.contains("Ctrl/Cmd+R"));
+        assert!(css.contains("Saving this file applies it"));
         std::fs::remove_dir_all(directory).unwrap();
     }
 
