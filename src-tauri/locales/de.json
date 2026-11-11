@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Eigenes CSS",
   "settings.advanced.custom_css.hint": "Erweiterte Messenger-Gestaltung ohne Gewähr. Änderungen an Facebooks Markup können sie zerstören; fehlendes oder ungültiges CSS wird gefahrlos ignoriert.",
   "settings.advanced.custom_css.open": "custom.css öffnen",
-  "settings.advanced.custom_css.opened": "Speichere custom.css und lade {app} dann neu, um es anzuwenden.",
+  "settings.advanced.custom_css.opened": "Änderungen an custom.css werden beim Speichern angewendet. Nach 30 Minuten ohne Speichern enden die Live-Aktualisierungen. Wähle erneut „custom.css öffnen“, um sie fortzusetzen.",
   "settings.advanced.custom_css.open_failed": "custom.css konnte nicht geöffnet werden.",
   "settings.advanced.logs.label": "Diagnoseprotokoll",
   "settings.advanced.logs.hint": "Warnungen und Fehler der Seitenintegration werden hier protokolliert – häng die Datei an Fehlerberichte an.",

@@ -1,11 +1,14 @@
 //! Best-effort user stylesheet support.
 //!
 //! `custom.css` lives beside Chatpane's settings file. It is read afresh after
-//! each Messenger page load so editing it and pressing Reload is sufficient;
-//! missing, unreadable, non-UTF-8, or unreasonably large files are ignored.
+//! each Messenger page load, and after Settings opens it, each save applies
+//! live ([`watch_while_editing`]); missing, unreadable, non-UTF-8, or
+//! unreasonably large files are ignored.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime};
 
 use tauri::{Manager, WebviewWindow};
 
@@ -17,7 +20,8 @@ const CUSTOM_CSS_TEMPLATE: &str = r#"/*
  * Chatpane custom CSS
  *
  * This advanced customization is best-effort: Facebook can change Messenger's
- * markup at any time. Save this file, then reload Chatpane (Ctrl/Cmd+R).
+ * markup at any time. Saving this file applies it while Chatpane opened it;
+ * otherwise reload Chatpane (Ctrl/Cmd+R).
  */
 
 "#;
@@ -109,8 +113,8 @@ fn read_custom_css_from_path(path: &Path) -> Option<String> {
         return None;
     }
     match std::fs::read_to_string(path) {
-        Ok(css) if !css.trim().is_empty() => Some(upgrade_css_file(path, css)),
-        Ok(_) => None,
+        Ok(css) if !css.trim().is_empty() => Some(css),
+        Ok(_) => Some(String::new()),
         Err(error) => {
             log::warn!("could not read custom CSS file {}: {error}", path.display());
             None
@@ -151,9 +155,81 @@ pub(crate) fn apply_custom_css(window: &WebviewWindow, url: &url::Url) {
     let Some(css) = read_custom_css_from_path(&path) else {
         return;
     };
+    let css = upgrade_css_file(&path, css);
     if let Err(error) = window.eval(custom_css_script(&css)) {
         log::warn!("could not inject custom CSS: {error}");
     }
+}
+
+/// How long a watch lasts after Settings opens the file or after its last save.
+const WATCH_IDLE: Duration = Duration::from_secs(30 * 60);
+const WATCH_POLL: Duration = Duration::from_millis(500);
+
+/// When the running watch ends, or None when none runs.
+static WATCH_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// What tells one save from the next.
+fn file_stamp(path: &Path) -> Option<(SystemTime, u64)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.modified().ok()?, metadata.len()))
+}
+
+/// Apply each save of `custom.css` to every Messenger window, starting when
+/// Settings opens the file and ending after [`WATCH_IDLE`] without a save.
+/// It polls the file's timestamp, so nothing runs once editing stops.
+pub(crate) fn watch_while_editing(app: &tauri::AppHandle, path: PathBuf) {
+    {
+        let mut until = WATCH_UNTIL.lock().unwrap();
+        let running = until.is_some();
+        *until = Some(Instant::now() + WATCH_IDLE);
+        if running {
+            return;
+        }
+    }
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("custom-css-watch".into())
+        .spawn(move || {
+            let mut stamp = file_stamp(&path);
+            loop {
+                std::thread::sleep(WATCH_POLL);
+                let now = file_stamp(&path);
+                let mut until = WATCH_UNTIL.lock().unwrap();
+                if until.is_none_or(|end| Instant::now() >= end) {
+                    *until = None;
+                    return;
+                }
+                drop(until);
+                if now != stamp && reapply_everywhere(&app, &path) {
+                    stamp = now;
+                    *WATCH_UNTIL.lock().unwrap() = Some(Instant::now() + WATCH_IDLE);
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("could not watch custom.css: {error}");
+        *WATCH_UNTIL.lock().unwrap() = None;
+    }
+}
+
+fn reapply_everywhere(app: &tauri::AppHandle, path: &Path) -> bool {
+    // Only a successful read, including an empty file, replaces the applied CSS.
+    let Some(css) = read_custom_css_from_path(path) else {
+        return false;
+    };
+    // Live reads must not overwrite a newer editor save with migrated CSS.
+    let css = convert_legacy_css(&css).unwrap_or(css);
+    let script = custom_css_script(&css);
+    for (label, window) in app.webview_windows() {
+        let on_messenger = window.url().is_ok_and(|url| is_messenger_web_url(&url));
+        if crate::window::is_messenger_window_label(&label)
+            && on_messenger
+            && let Err(error) = window.eval(&script)
+        {
+            log::warn!("could not reapply custom CSS: {error}");
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -187,21 +263,32 @@ mod tests {
 
         let path = test_path("legacy.css");
         std::fs::write(&path, css).unwrap();
-        let first = read_custom_css_from_path(&path).unwrap();
+        let first = upgrade_css_file(&path, read_custom_css_from_path(&path).unwrap());
         assert!(!first.contains("carrier"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), first);
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn missing_empty_invalid_and_oversized_stylesheets_fail_soft() {
+    fn reading_legacy_css_does_not_rewrite_the_stylesheet() {
+        let path = test_path("live-legacy.css");
+        let original = ".carrier-out { color: var(--carrier-text); }";
+        std::fs::write(&path, original).unwrap();
+
+        let css = read_custom_css_from_path(&path).unwrap();
+        assert_eq!(css, original);
+        assert_eq!(
+            convert_legacy_css(&css).as_deref(),
+            Some(".chatpane-out { color: var(--chatpane-text); }")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn missing_invalid_and_oversized_stylesheets_fail_soft() {
         let missing = test_path("missing.css");
         assert_eq!(read_custom_css_from_path(&missing), None);
-
-        let empty = test_path("empty.css");
-        std::fs::write(&empty, " \n\t").unwrap();
-        assert_eq!(read_custom_css_from_path(&empty), None);
-        std::fs::remove_file(empty).unwrap();
 
         let invalid = test_path("invalid.css");
         std::fs::write(&invalid, [0xff, 0xfe]).unwrap();
@@ -213,6 +300,25 @@ mod tests {
         file.set_len(CUSTOM_CSS_MAX_BYTES + 1).unwrap();
         assert_eq!(read_custom_css_from_path(&oversized), None);
         std::fs::remove_file(oversized).unwrap();
+    }
+
+    #[test]
+    fn empty_stylesheet_is_distinct_from_failed_read() {
+        let path = test_path("retry.css");
+        std::fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert_eq!(read_custom_css_from_path(&path), None);
+
+        std::fs::write(&path, "body { color: red; }").unwrap();
+        assert_eq!(
+            read_custom_css_from_path(&path).as_deref(),
+            Some("body { color: red; }")
+        );
+
+        for css in ["", " \n\t"] {
+            std::fs::write(&path, css).unwrap();
+            assert_eq!(read_custom_css_from_path(&path).as_deref(), Some(""));
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -237,7 +343,7 @@ mod tests {
         ensure_custom_css_at(&path).unwrap();
         let css = std::fs::read_to_string(&path).unwrap();
         assert!(css.contains("best-effort"));
-        assert!(css.contains("Ctrl/Cmd+R"));
+        assert!(css.contains("Saving this file applies it"));
         std::fs::remove_dir_all(directory).unwrap();
     }
 

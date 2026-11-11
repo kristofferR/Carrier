@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Custom CSS",
   "settings.advanced.custom_css.hint": "Advanced na styling ng Messenger, walang garantiya. Puwede itong masira ng mga pagbabago sa markup ng Facebook; ligtas na binabalewala ang nawawala o invalid na CSS.",
   "settings.advanced.custom_css.open": "Buksan ang custom.css",
-  "settings.advanced.custom_css.opened": "I-save ang custom.css, tapos i-reload ang {app} para ma-apply ito.",
+  "settings.advanced.custom_css.opened": "Naa-apply ang mga pagbabago sa custom.css kapag nag-save ka. Hihinto ang mga live update pagkatapos ng 30 minutong walang pag-save. Piliin muli ang “Buksan ang custom.css” para ipagpatuloy ang mga ito.",
   "settings.advanced.custom_css.open_failed": "Hindi mabuksan ang custom.css.",
   "settings.advanced.logs.label": "Diagnostics log",
   "settings.advanced.logs.hint": "Dito nila-log ang mga babala at pagpalya sa page integration — ilakip ang file sa mga bug report.",

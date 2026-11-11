@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "CSS مخصّص",
   "settings.advanced.custom_css.hint": "تنسيق متقدّم لـ Messenger دون ضمانات. قد تُعطّله تغييرات Facebook في بنية الصفحة؛ ويُتجاهَل CSS المفقود أو غير الصالح بأمان.",
   "settings.advanced.custom_css.open": "فتح custom.css",
-  "settings.advanced.custom_css.opened": "احفظ custom.css، ثم أعد تحميل {app} لتطبيقه.",
+  "settings.advanced.custom_css.opened": "تُطبَّق تغييرات custom.css عند الحفظ. تتوقف التحديثات المباشرة بعد 30 دقيقة دون حفظ. اختر «فتح custom.css» مجددًا لاستئنافها.",
   "settings.advanced.custom_css.open_failed": "تعذّر فتح custom.css.",
   "settings.advanced.logs.label": "سجلّ التشخيص",
   "settings.advanced.logs.hint": "تُسجَّل هنا التحذيرات وإخفاقات التكامل مع الصفحة — أرفق الملف ببلاغات الأخطاء.",

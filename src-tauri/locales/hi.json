@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "कस्टम CSS",
   "settings.advanced.custom_css.hint": "Messenger की एडवांस्ड स्टाइलिंग, बिना किसी गारंटी के। Facebook के मार्कअप में बदलाव इसे बिगाड़ सकते हैं; ग़ायब या अमान्य CSS को सुरक्षित रूप से अनदेखा किया जाता है।",
   "settings.advanced.custom_css.open": "custom.css खोलें",
-  "settings.advanced.custom_css.opened": "custom.css सहेजें, फिर इसे लागू करने के लिए {app} रीलोड करें।",
+  "settings.advanced.custom_css.opened": "custom.css में बदलाव सहेजने पर लागू होते हैं। 30 मिनट तक न सहेजने पर लाइव अपडेट बंद हो जाते हैं। फिर से शुरू करने के लिए «custom.css खोलें» दोबारा चुनें।",
   "settings.advanced.custom_css.open_failed": "custom.css नहीं खुल सकी।",
   "settings.advanced.logs.label": "डायग्नॉस्टिक्स लॉग",
   "settings.advanced.logs.hint": "चेतावनियाँ और पेज-इंटीग्रेशन की गड़बड़ियाँ यहाँ लॉग होती हैं; बग रिपोर्ट के साथ यह फ़ाइल जोड़ें।",

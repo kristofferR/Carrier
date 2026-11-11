@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Anpassad CSS",
   "settings.advanced.custom_css.hint": "Avancerad Messenger-styling utan garantier. Ändringar i Facebooks kod kan förstöra den. CSS som saknas eller är ogiltig ignoreras säkert.",
   "settings.advanced.custom_css.open": "Öppna custom.css",
-  "settings.advanced.custom_css.opened": "Spara custom.css och läs sedan in {app} igen för att tillämpa den.",
+  "settings.advanced.custom_css.opened": "Ändringar i custom.css tillämpas när du sparar. Liveuppdateringar stoppas efter 30 minuter utan att du sparar. Välj ”Öppna custom.css” igen för att återuppta dem.",
   "settings.advanced.custom_css.open_failed": "Det gick inte att öppna custom.css.",
   "settings.advanced.logs.label": "Diagnostiklogg",
   "settings.advanced.logs.hint": "Varningar och fel i sidintegrationen loggas här – bifoga filen i felrapporter.",

@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "CSS ផ្ទាល់ខ្លួន",
   "settings.advanced.custom_css.hint": "ការកែរចនាប័ទ្ម Messenger កម្រិតខ្ពស់ ដោយមិនធានា។ ការផ្លាស់ប្តូរ markup របស់ Facebook អាចធ្វើឱ្យវាខូច។ CSS ដែលបាត់ ឬមិនត្រឹមត្រូវ នឹងត្រូវរំលងដោយសុវត្ថិភាព។",
   "settings.advanced.custom_css.open": "បើក custom.css",
-  "settings.advanced.custom_css.opened": "រក្សាទុក custom.css រួចផ្ទុក {app} ឡើងវិញដើម្បីអនុវត្តវា។",
+  "settings.advanced.custom_css.opened": "ការផ្លាស់ប្ដូរក្នុង custom.css មានប្រសិទ្ធភាពពេលរក្សាទុក។ ការធ្វើបច្ចុប្បន្នភាពភ្លាមៗឈប់បន្ទាប់ពី 30 នាទីដោយមិនរក្សាទុក។ ជ្រើស «បើក custom.css» ម្ដងទៀតដើម្បីបន្ត។",
   "settings.advanced.custom_css.open_failed": "មិនអាចបើក custom.css បានទេ។",
   "settings.advanced.logs.label": "កំណត់ហេតុរោគវិនិច្ឆ័យ",
   "settings.advanced.logs.hint": "ការព្រមាន និងកំហុសនៃការភ្ជាប់ជាមួយទំព័រត្រូវបានកត់ត្រានៅទីនេះ — សូមភ្ជាប់ឯកសារនេះទៅនឹងរបាយការណ៍កំហុស។",

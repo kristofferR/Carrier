@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "CSS kustom",
   "settings.advanced.custom_css.hint": "Gaya tampilan Messenger tingkat lanjut, tanpa jaminan. Perubahan markup Facebook bisa merusaknya; CSS yang hilang atau tidak valid diabaikan dengan aman.",
   "settings.advanced.custom_css.open": "Buka custom.css",
-  "settings.advanced.custom_css.opened": "Simpan custom.css, lalu muat ulang {app} untuk menerapkannya.",
+  "settings.advanced.custom_css.opened": "Perubahan pada custom.css diterapkan saat disimpan. Pembaruan langsung berhenti setelah 30 menit tanpa menyimpan. Pilih “Buka custom.css” lagi untuk melanjutkannya.",
   "settings.advanced.custom_css.open_failed": "Tidak dapat membuka custom.css.",
   "settings.advanced.logs.label": "Log diagnostik",
   "settings.advanced.logs.hint": "Peringatan dan kegagalan integrasi halaman dicatat di sini — lampirkan file-nya ke laporan bug.",

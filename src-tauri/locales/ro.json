@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "CSS personalizat",
   "settings.advanced.custom_css.hint": "Stilizare avansată pentru Messenger, fără garanții. Modificările din codul Facebook o pot strica; CSS-ul lipsă sau nevalid este ignorat în siguranță.",
   "settings.advanced.custom_css.open": "Deschide custom.css",
-  "settings.advanced.custom_css.opened": "Salvează custom.css, apoi reîncarcă {app} ca să-l aplici.",
+  "settings.advanced.custom_css.opened": "Modificările din custom.css se aplică la salvare. Actualizările în timp real se opresc după 30 de minute fără salvare. Selectează din nou „Deschide custom.css” pentru a le relua.",
   "settings.advanced.custom_css.open_failed": "custom.css nu a putut fi deschis.",
   "settings.advanced.logs.label": "Jurnal de diagnosticare",
   "settings.advanced.logs.hint": "Avertismentele și erorile de integrare cu pagina sunt înregistrate aici — atașează fișierul la rapoartele de erori.",
