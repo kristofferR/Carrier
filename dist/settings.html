@@ -89,6 +89,13 @@
       select:focus-visible { outline: 2px solid #0866ff; outline-offset: 1px; }
       .label { font-weight: 500; }
       .hint { color: #65676b; font-size: 12px; margin-top: 2px; }
+      /* Marks a setting stored in the Facebook account; its title explains. */
+      .sync-chip {
+        display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 8px; vertical-align: middle;
+        padding-block: 1px; padding-inline: 6px 8px; border-radius: 99px; white-space: nowrap; cursor: help;
+        background: #e7f0ff; color: #0866ff; font-size: 11px; font-weight: 600;
+      }
+      .sync-chip svg { width: 12px; height: 12px; stroke-width: 2; }
       /* An on/off switch: a native checkbox, so labels, keyboard and forms
          behave as before. */
       input.switch {
@@ -164,6 +171,7 @@
       .notice.error { background: #fdecea; border: 1px solid #f5c2bd; }
       .notice.ok { background: #e8f5ec; border: 1px solid #b7e0c3; }
       .notice span { flex: 1; }
+      .card > .notice { margin: 2px 0 12px; }
             .swatches { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
       .swatch {
         width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
@@ -218,6 +226,7 @@
         .tabs { background: #242526; }
         .tabs, footer { border-color: #3a3b3c; }
         .hint { color: #b0b3b8; }
+        .sync-chip { background: #263a59; color: #5b9bff; }
         main { background: #18191a; }
         .card { background: #242526; border-color: #3a3b3c; }
         .row + .row, .card-head + .row { border-color: #343536; }

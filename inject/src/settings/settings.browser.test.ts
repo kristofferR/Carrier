@@ -186,8 +186,41 @@ async function exerciseSettings() {
     fixture.release();
     await settle();
     assert(document.title === "Chatpane Settings", "early localization");
-    assert(document.querySelectorAll('[role="tab"]').length === 7, "all tabs render");
-    for (const name of ["appearance", "tray", "notifications", "privacy", "account", "advanced"]) {
+    assert(document.querySelectorAll('[role="tab"]').length === 6, "all tabs render");
+    // Messenger's own account settings load on any tab that shows one, and
+    // say where they live.
+    tab("notifications");
+    await settle();
+    const dnd = [...document.querySelectorAll("label.row")].find(
+      (row) => row.querySelector(".label")?.firstChild?.textContent === "Do Not Disturb",
+    );
+    assert(
+      dnd?.querySelector("select")?.disabled === false,
+      "Do Not Disturb loads on Notifications",
+    );
+    assert(
+      dnd?.querySelector(".sync-chip")?.getAttribute("title")?.includes("Facebook account"),
+      "the sync chip explains itself",
+    );
+    // Refocusing reads the account again, but must not swap out a control
+    // the focusing click is still pressing.
+    const mute = dnd!.previousElementSibling;
+    window.dispatchEvent(new Event("focus"));
+    assert(mute?.isConnected, "refocusing keeps the rows in place");
+    await settle();
+    assert(mute?.isConnected, "an unchanged account doesn't redraw");
+    // A tab drawn during that read keeps its rows usable.
+    window.dispatchEvent(new Event("focus"));
+    tab("account");
+    await settle();
+    const activeStatus = [...document.querySelectorAll("label.row")].find(
+      (row) => row.querySelector(".label")?.firstChild?.textContent === "Active Status",
+    );
+    assert(
+      activeStatus?.querySelector("input")?.disabled === false,
+      "rows drawn during a re-read stay usable",
+    );
+    for (const name of ["appearance", "account", "window", "advanced"]) {
       tab(name);
       await settle();
       assert(
@@ -210,14 +243,10 @@ async function exerciseSettings() {
     await settle();
     assert(fixture.calls.join() === "log_out", "Log Out asks native");
 
-    // The message sound is Chatpane's own: Account links to it, and picking
-    // Messenger copies Messenger's sound before saving the choice.
-    [...document.querySelectorAll<HTMLButtonElement>("#rows .link-button")]
-      .find((link) => link.textContent?.startsWith("Message sound"))!
-      .click();
+    // Picking Messenger's message sound copies it before saving the choice.
+    tab("notifications");
     await settle();
     const messageSound = document.getElementById("message-sound") as HTMLSelectElement;
-    assert(document.activeElement === messageSound, "Account link opens the message sound");
     fixture.calls.length = 0;
     messageSound.value = JSON.stringify("messenger");
     messageSound.dispatchEvent(new Event("change"));

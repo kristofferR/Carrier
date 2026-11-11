@@ -193,12 +193,11 @@ const ICONS = {
     '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
   appearance:
     '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
-  tray: '<path d="M12 2v10"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>',
+  window: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
   notifications:
     '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
-  privacy:
-    '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
   account: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
   advanced:
     '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
 };
@@ -220,108 +219,94 @@ if (IS_WINDOWS) {
 
 type CustomRowKey = keyof typeof CUSTOM_ROWS;
 type RowKey = SwitchKey | CustomRowKey;
-type Tab = { id: string; label: string; icon: string } & (
-  | { fields: RowKey[]; cards?: never }
-  | { cards: (CustomRowKey | RowKey[])[]; fields?: never }
-);
+// A tab is a stack of cards, one per group of related settings: each a
+// list of fields, or the key of a section that builds its own card. A
+// list left empty on this platform draws no card.
+type Tab = { id: string; label: string; icon: string; cards: (CustomRowKey | RowKey[])[] };
 const TABS: Tab[] = [
   {
     id: "general",
     label: t("settings.tab.general"),
     icon: ICONS.general,
-    fields: [
-      "language",
-      "messenger_language",
-      "always_on_top",
-      "global_hotkey",
-      "hide_on_close",
-      "spellcheck",
-      "stop_media_autoplay",
-      "focus_composer_on_return",
-      "download_behavior",
+    cards: [
+      ["language", "messenger_language"],
+      ["spellcheck", "focus_composer_on_return"],
+      ["stop_media_autoplay", "download_behavior"],
+      ["autostart"],
     ],
   },
-  // A tab is one card of `fields`, or `cards`: each a list of fields or
-  // the key of a section that builds its own card.
   {
     id: "appearance",
     label: t("settings.tab.appearance"),
     icon: ICONS.appearance,
     cards: [
-      // Windows: the native menu bar never shows next to Chatpane's
-      // window buttons (src-tauri/src/title_bar.rs), so nothing to hide.
-      ["zoom", ...(IS_LINUX ? (["hide_menu_bar"] as const) : []), "system_emoji", "nickname_scope"],
       "theme_section",
-      "look_section",
+      ["accent", "font", "system_emoji"],
+      ["zoom", "nickname_scope"],
       "app_icon",
-    ],
-  },
-  {
-    id: "tray",
-    label: t("settings.tab.tray"),
-    icon: ICONS.tray,
-    fields: [
-      "show_tray",
-      "start_to_tray",
-      "autostart",
-      ...(IS_MAC || IS_LINUX || IS_WINDOWS ? (["tray_icon_style"] as const) : []),
-      ...(IS_MAC ? (["menu_bar_only"] as const) : []),
-      ...(IS_WINDOWS
-        ? (["hide_on_minimize", "hide_on_focus_loss", "hide_taskbar_icon"] as const)
-        : []),
     ],
   },
   {
     id: "notifications",
     label: t("settings.tab.notifications"),
     icon: ICONS.notifications,
-    fields: [
-      "mute_notifications",
-      "notification_sound",
-      "notify_group_chats",
-      "notify_reactions",
-      "hide_notification_preview",
-      "notification_reaction",
-      ...(IS_MAC ? (["group_notifications_by_conversation"] as const) : []),
-      ...(IS_MAC || IS_WINDOWS
-        ? (["clear_notifications_on_view", "attention_on_message"] as const)
-        : []),
-      "unread_badge",
-      "muted_conversations",
-      "badge_mode",
-      "test_notification",
-    ],
-  },
-  {
-    id: "privacy",
-    label: t("settings.tab.privacy"),
-    icon: ICONS.privacy,
-    fields: [
-      "block_typing_indicator",
-      "hide_names",
-      "hide_avatars",
-      "block_telemetry",
-      "strip_link_tracking",
+    cards: [
+      ["mute_notifications", "do_not_disturb", "account_notice"],
+      ["notification_sound", "hide_notification_preview", "notification_reaction"],
+      ["notify_group_chats", "notify_reactions", "muted_conversations"],
+      [
+        ...(IS_MAC ? (["group_notifications_by_conversation"] as const) : []),
+        ...(IS_MAC || IS_WINDOWS
+          ? (["clear_notifications_on_view", "attention_on_message"] as const)
+          : []),
+      ],
+      ["unread_badge", "badge_mode"],
+      ["test_notification"],
     ],
   },
   {
     id: "account",
     label: t("settings.tab.account"),
     icon: ICONS.account,
-    cards: ["profile", "messenger_account"],
+    cards: [
+      "profile",
+      ["active_status", "read_receipts", "account_notice", "block_typing_indicator"],
+      ["hide_names", "hide_avatars"],
+      ["block_telemetry", "strip_link_tracking"],
+    ],
+  },
+  {
+    id: "window",
+    label: t("settings.tab.window"),
+    icon: ICONS.window,
+    cards: [
+      [
+        "always_on_top",
+        "global_hotkey",
+        "hide_on_close",
+        // Windows: the native menu bar never shows next to Chatpane's
+        // window buttons (src-tauri/src/title_bar.rs), so nothing to hide.
+        ...(IS_LINUX ? (["hide_menu_bar"] as const) : []),
+      ],
+      [
+        "show_tray",
+        ...(IS_MAC || IS_LINUX || IS_WINDOWS ? (["tray_icon_style"] as const) : []),
+        ...(IS_MAC ? (["menu_bar_only"] as const) : []),
+        ...(IS_WINDOWS ? (["hide_taskbar_icon"] as const) : []),
+        "start_to_tray",
+      ],
+      IS_WINDOWS ? ["hide_on_minimize", "hide_on_focus_loss"] : [],
+    ],
   },
   {
     id: "advanced",
     label: t("settings.tab.advanced"),
     icon: ICONS.advanced,
-    fields: [
-      "automatic_update_checks",
-      "update_check_hours",
-      "hold_failures",
-      "send_with_accelerator",
-      "multi_instance",
-      "custom_css",
-      "open_logs",
+    cards: [
+      ["automatic_update_checks", "update_check_hours"],
+      ["send_with_accelerator", "multi_instance"],
+      ["custom_css"],
+      ["open_logs", "hold_failures"],
     ],
   },
 ];
@@ -336,7 +321,10 @@ try {
     }
     localStorage.removeItem("carrier:settingsTab");
   }
-  const saved = localStorage.getItem("chatpane:settingsTab");
+  let saved = localStorage.getItem("chatpane:settingsTab");
+  // Privacy joined Account, and Tray & Startup became Window & Tray.
+  if (saved === "privacy") saved = "account";
+  else if (saved === "tray") saved = "window";
   if (saved && TABS.some((tab) => tab.id === saved)) activeTab = saved;
 } catch (_) {}
 
@@ -781,12 +769,6 @@ function themeSection() {
   return wrap;
 }
 
-function lookSection() {
-  const card = el("section", "card");
-  card.append(accentPicker(), fontPicker());
-  return card;
-}
-
 function accentPicker() {
   const box = el("div", "row");
   const row = el("div", "swatches");
@@ -1166,11 +1148,13 @@ function languageRow() {
 // Messenger's own language is the Facebook account's, changed only in
 // Facebook's settings. Rust opens them and reloads Messenger after.
 function messengerLanguageRow() {
-  return buttonRow(
-    t("settings.general.messenger_language.label"),
-    t("settings.general.messenger_language.hint"),
-    t("settings.general.messenger_language.change"),
-    () => invoke("open_facebook_language").catch((e) => setStatus(errorMessage(e))),
+  return markSynced(
+    buttonRow(
+      t("settings.general.messenger_language.label"),
+      t("settings.general.messenger_language.hint"),
+      t("settings.general.messenger_language.change"),
+      () => invoke("open_facebook_language").catch((e) => setStatus(errorMessage(e))),
+    ),
   );
 }
 
@@ -1449,12 +1433,33 @@ function profileSection() {
   return card;
 }
 
+// Whether the open tab shows Messenger's account settings, which every such
+// tab follows with account_notice.
+function showsAccount() {
+  const tab = TABS.find((entry) => entry.id === activeTab);
+  return !!tab?.cards.some((card) => Array.isArray(card) && card.includes("account_notice"));
+}
+
+// Reading shown settings again keeps them usable and redraws only on news,
+// like refresh(): focusing the window runs it between a click's mousedown
+// and mouseup. Changes made meanwhile wait here for it.
+let quietRead = false;
+const queuedAccountChanges: MessengerAccountChange[] = [];
+
+// Whether the account rows wait for Messenger.
+const accountBusy = () => messengerAccount.loading && !quietRead;
+
 async function loadMessengerAccount(change?: MessengerAccountChange) {
   if (!change) loadProfile();
-  if (messengerAccount.loading) return;
+  if (messengerAccount.loading) {
+    if (change) queuedAccountChanges.push(change);
+    return;
+  }
+  quietRead = !change && messengerAccount.state !== null;
+  const before = JSON.stringify(messengerAccount);
   messengerAccount.loading = true;
   messengerAccount.error = "";
-  if (activeTab === "account") renderBody();
+  if (!quietRead && showsAccount()) renderBody();
   try {
     messengerAccount.state = change
       ? await invoke("set_messenger_account", { change })
@@ -1463,25 +1468,77 @@ async function loadMessengerAccount(change?: MessengerAccountChange) {
     messengerAccount.error = errorMessage(e);
   } finally {
     messengerAccount.loading = false;
-    if (activeTab === "account") renderBody();
+    const next = queuedAccountChanges.shift();
+    if (next) loadMessengerAccount(next);
+    else if (showsAccount() && (!quietRead || JSON.stringify(messengerAccount) !== before))
+      renderBody();
   }
 }
 
-function accountToggleRow(
-  setting: "activeStatus" | "readReceipts",
-  label: string,
-  hint: string,
-  value: boolean | null,
-) {
-  const row = el("label", "row");
-  const cb = switchInput(value === true);
-  cb.disabled = value === null || messengerAccount.loading;
-  cb.onchange = () => loadMessengerAccount({ setting, value: cb.checked });
-  row.append(rowText(label, value === null ? t("settings.account.not_reported") : hint), cb);
+// Marks a setting stored in the Facebook account, which Messenger applies
+// on every device; the tooltip says so in full.
+function markSynced<Row extends HTMLElement>(row: Row) {
+  const chip = el("span", "sync-chip", t("settings.account.sync_chip"));
+  chip.title = t("settings.account.sync_tip");
+  chip.prepend(svgIcon(ICONS.cloud));
+  row.querySelector(".label")!.append(chip);
   return row;
 }
 
-function dndRow(until: number | null) {
+// The hint while Messenger hasn't answered yet: the first row drawn asks it.
+// A failed read keeps the usual hint, and account_notice shows the error.
+function accountWaitingHint(hint: string) {
+  const { loading, error } = messengerAccount;
+  if (!loading && !error) queueMicrotask(() => loadMessengerAccount());
+  return error ? hint : t("settings.account.loading");
+}
+
+function accountToggleRow(setting: "activeStatus" | "readReceipts", label: string, hint: string) {
+  const state = messengerAccount.state;
+  const value = state ? state[setting] : null;
+  const row = el("label", "row");
+  const cb = switchInput(value === true);
+  cb.disabled = value === null || accountBusy();
+  cb.onchange = () => loadMessengerAccount({ setting, value: cb.checked });
+  if (!state) hint = accountWaitingHint(hint);
+  else if (value === null) hint = t("settings.account.not_reported");
+  row.append(rowText(label, hint), cb);
+  return markSynced(row);
+}
+
+function activeStatusRow() {
+  return accountToggleRow(
+    "activeStatus",
+    t("settings.account.active_status.label"),
+    t("settings.account.active_status.hint"),
+  );
+}
+
+function readReceiptsRow() {
+  return accountToggleRow(
+    "readReceipts",
+    t("settings.account.read_receipts.label"),
+    t("settings.account.read_receipts.hint"),
+  );
+}
+
+// A failed read or change of Messenger's account settings, with Try Again.
+function accountNotice() {
+  const { error } = messengerAccount;
+  if (!error) return document.createDocumentFragment();
+  const notice = el("div", "notice error");
+  notice.setAttribute("role", "alert");
+  notice.append(el("span", "", error));
+  const retry = el("button", "link-button", t("settings.account.retry"));
+  retry.type = "button";
+  retry.onclick = () => loadMessengerAccount();
+  notice.append(retry);
+  return notice;
+}
+
+function dndRow() {
+  const state = messengerAccount.state;
+  const until = state ? state.dndUntil : null;
   const row = el("label", "row");
   const sel = document.createElement("select");
   const options: [string, string][] = [
@@ -1493,7 +1550,9 @@ function dndRow(until: number | null) {
   ];
   let current = until === -1 ? "-1" : "0";
   let hint = t("settings.account.dnd.hint");
-  if (until === null) {
+  if (!state) {
+    hint = accountWaitingHint(hint);
+  } else if (until === null) {
     hint = t("settings.account.dnd.not_reported");
   } else if (until === -1) {
     hint = t("settings.account.dnd.on_until_off_hint");
@@ -1509,72 +1568,24 @@ function dndRow(until: number | null) {
     option.hidden = value === "on";
     sel.append(option);
   }
-  sel.disabled = until === null || messengerAccount.loading;
+  sel.disabled = until === null || accountBusy();
   sel.onchange = () => {
     if (sel.value !== "on")
       loadMessengerAccount({ setting: "doNotDisturb", value: Number(sel.value) });
   };
   row.append(rowText(t("settings.account.dnd.label"), hint), sel);
-  return row;
-}
-
-function messengerAccountSection() {
-  const wrap = titledCard(t("settings.account.title"));
-  const intro = el("div", "section-hint", t("settings.account.intro"));
-  // The message sound is Chatpane's own, on the Notifications tab.
-  const soundLink = el("button", "link-button", t("settings.account.sound_link"));
-  soundLink.type = "button";
-  soundLink.style.marginTop = "4px";
-  soundLink.onclick = () => {
-    selectTab("notifications", false);
-    const sound = document.getElementById("message-sound");
-    sound?.scrollIntoView({ block: "center" });
-    sound?.focus();
-  };
-  intro.append(el("br"), soundLink);
-  wrap.append(intro);
-  const { state, error, loading } = messengerAccount;
-  if (error) {
-    const notice = el("div", "notice error");
-    notice.setAttribute("role", "alert");
-    notice.append(el("span", "", error));
-    const retry = el("button", "link-button", t("settings.account.retry"));
-    retry.type = "button";
-    retry.onclick = () => loadMessengerAccount();
-    notice.append(retry);
-    wrap.append(notice);
-  }
-  if (!state) {
-    if (loading) wrap.append(el("div", "section-hint", t("settings.account.loading")));
-    else if (!error) queueMicrotask(() => loadMessengerAccount());
-    return wrap;
-  }
-  wrap.append(
-    accountToggleRow(
-      "activeStatus",
-      t("settings.account.active_status.label"),
-      t("settings.account.active_status.hint"),
-      state.activeStatus,
-    ),
-    accountToggleRow(
-      "readReceipts",
-      t("settings.account.read_receipts.label"),
-      t("settings.account.read_receipts.hint"),
-      state.readReceipts,
-    ),
-    dndRow(state.dndUntil),
-  );
-  return wrap;
+  return markSynced(row);
 }
 
 // Fields with their own builder; every other field is a switch. The
-// sections (theme, look, app icon, profile, account) build a whole card.
+// sections (theme, app icon, profile) build a whole card.
 const CUSTOM_ROWS = {
   language: languageRow,
   messenger_language: messengerLanguageRow,
   theme_section: themeSection,
   app_icon: appIconSection,
-  look_section: lookSection,
+  accent: accentPicker,
+  font: fontPicker,
   zoom: zoomRow,
   badge_mode: badgeModeRow,
   muted_conversations: mutedConversationsRow,
@@ -1589,7 +1600,10 @@ const CUSTOM_ROWS = {
   test_notification: testNotificationRow,
   nickname_scope: nicknameRow,
   profile: profileSection,
-  messenger_account: messengerAccountSection,
+  active_status: activeStatusRow,
+  read_receipts: readReceiptsRow,
+  do_not_disturb: dndRow,
+  account_notice: accountNotice,
 };
 
 function isCustomRow(key: RowKey): key is CustomRowKey {
@@ -1601,11 +1615,12 @@ function renderBody() {
   const root = byId("rows");
   root.innerHTML = "";
   const tab = TABS.find((entry) => entry.id === activeTab) || TABS[0]!;
-  for (const entry of tab.cards || [tab.fields]) {
+  for (const entry of tab.cards) {
     if (typeof entry === "string") {
       root.appendChild(CUSTOM_ROWS[entry]());
       continue;
     }
+    if (entry.length === 0) continue;
     const card = document.createElement("section");
     card.className = "card";
     for (const key of entry) {
@@ -1652,7 +1667,7 @@ byId("reset").onclick = (event) => {
 window.addEventListener("focus", refresh);
 // And Messenger account changes made on another device.
 window.addEventListener("focus", () => {
-  if (activeTab === "account" && messengerAccount.state) loadMessengerAccount();
+  if (showsAccount() && messengerAccount.state) loadMessengerAccount();
 });
 // A newer discovery may have replaced or cleared the offered update.
 window.addEventListener("focus", () => {
