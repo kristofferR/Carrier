@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "自定义 CSS",
   "settings.advanced.custom_css.hint": "高级功能，尽力调整 Messenger 的样式。Facebook 的页面结构变化可能使其失效；缺失或无效的 CSS 会被安全地忽略。",
   "settings.advanced.custom_css.open": "打开 custom.css",
-  "settings.advanced.custom_css.opened": "每次保存 custom.css，更改都会立即生效。",
+  "settings.advanced.custom_css.opened": "保存 custom.css 时更改即会生效。30 分钟内未保存后，实时更新会停止。再次选择“打开 custom.css”即可恢复。",
   "settings.advanced.custom_css.open_failed": "无法打开 custom.css。",
   "settings.advanced.logs.label": "诊断日志",
   "settings.advanced.logs.hint": "警告和页面集成故障会记录在这里，提交问题报告时请附上该文件。",

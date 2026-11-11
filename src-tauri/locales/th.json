@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "CSS แบบกำหนดเอง",
   "settings.advanced.custom_css.hint": "การปรับแต่งสไตล์ของ Messenger ขั้นสูงที่ไม่รับประกันผล การเปลี่ยนโครงสร้างหน้าเว็บของ Facebook อาจทำให้ใช้ไม่ได้ CSS ที่ขาดหายหรือไม่ถูกต้องจะถูกข้ามไปอย่างปลอดภัย",
   "settings.advanced.custom_css.open": "เปิด custom.css",
-  "settings.advanced.custom_css.opened": "การเปลี่ยนแปลงใน custom.css จะมีผลทุกครั้งที่บันทึก",
+  "settings.advanced.custom_css.opened": "การเปลี่ยนแปลงใน custom.css จะมีผลเมื่อบันทึก การอัปเดตทันทีจะหยุดหลังจากไม่มีการบันทึกเป็นเวลา 30 นาที เลือก «เปิด custom.css» อีกครั้งเพื่อเริ่มต่อ",
   "settings.advanced.custom_css.open_failed": "เปิด custom.css ไม่ได้",
   "settings.advanced.logs.label": "บันทึกการวินิจฉัย",
   "settings.advanced.logs.hint": "คำเตือนและความล้มเหลวในการทำงานร่วมกับหน้าเว็บจะถูกบันทึกไว้ที่นี่ แนบไฟล์นี้ไปกับรายงานข้อบกพร่อง",

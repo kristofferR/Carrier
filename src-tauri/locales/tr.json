@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Özel CSS",
   "settings.advanced.custom_css.hint": "Messenger için gelişmiş, garantisiz stil ayarı. Facebook'taki kod değişiklikleri onu bozabilir; eksik veya geçersiz CSS güvenle yok sayılır.",
   "settings.advanced.custom_css.open": "custom.css dosyasını aç",
-  "settings.advanced.custom_css.opened": "custom.css dosyasındaki değişiklikler her kaydettiğinde uygulanır.",
+  "settings.advanced.custom_css.opened": "custom.css dosyasındaki değişiklikler kaydedildiğinde uygulanır. 30 dakika boyunca kaydetmezsen canlı güncellemeler durur. Devam etmek için “custom.css dosyasını aç” seçeneğini tekrar seç.",
   "settings.advanced.custom_css.open_failed": "custom.css açılamadı.",
   "settings.advanced.logs.label": "Tanılama günlüğü",
   "settings.advanced.logs.hint": "Uyarılar ve sayfa entegrasyonu hataları buraya kaydedilir — dosyayı hata raporlarına ekle.",

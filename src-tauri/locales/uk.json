@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Власний CSS",
   "settings.advanced.custom_css.hint": "Розширене стилізування Messenger без гарантій. Зміни в розмітці Facebook можуть його зламати; відсутній або недійсний CSS безпечно ігнорується.",
   "settings.advanced.custom_css.open": "Відкрити custom.css",
-  "settings.advanced.custom_css.opened": "Зміни в custom.css застосовуються щоразу, коли ви його зберігаєте.",
+  "settings.advanced.custom_css.opened": "Зміни в custom.css застосовуються під час збереження. Оновлення наживо зупиняються після 30 хвилин без збереження. Щоб відновити їх, знову вибери «Відкрити custom.css».",
   "settings.advanced.custom_css.open_failed": "Не вдалося відкрити custom.css.",
   "settings.advanced.logs.label": "Діагностичний журнал",
   "settings.advanced.logs.hint": "Тут записуються попередження й збої інтеграції зі сторінкою — додавайте цей файл до звітів про помилки.",

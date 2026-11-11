@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "کسٹم CSS",
   "settings.advanced.custom_css.hint": "Messenger کی ایڈوانسڈ اسٹائلنگ، بغیر کسی ضمانت کے۔ Facebook کے مارک اپ میں تبدیلیاں اسے خراب کر سکتی ہیں؛ غائب یا غلط CSS کو محفوظ طریقے سے نظر انداز کر دیا جاتا ہے۔",
   "settings.advanced.custom_css.open": "custom.css کھولیں",
-  "settings.advanced.custom_css.opened": "custom.css میں تبدیلیاں ہر بار محفوظ کرنے پر لاگو ہوتی ہیں۔",
+  "settings.advanced.custom_css.opened": "custom.css میں تبدیلیاں محفوظ کرنے پر لاگو ہوتی ہیں۔ 30 منٹ تک محفوظ نہ کرنے پر براہ راست اپ ڈیٹس رک جاتی ہیں۔ دوبارہ شروع کرنے کے لیے «custom.css کھولیں» پھر منتخب کریں۔",
   "settings.advanced.custom_css.open_failed": "custom.css نہیں کھل سکی۔",
   "settings.advanced.logs.label": "تشخیصی لاگ",
   "settings.advanced.logs.hint": "وارننگز اور پیج انٹیگریشن کی ناکامیاں یہاں لاگ ہوتی ہیں — بگ رپورٹس کے ساتھ یہ فائل منسلک کریں۔",

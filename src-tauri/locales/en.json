@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Custom CSS",
   "settings.advanced.custom_css.hint": "Advanced, best-effort Messenger styling. Facebook markup changes may break it; missing or invalid CSS is safely ignored.",
   "settings.advanced.custom_css.open": "Open custom.css",
-  "settings.advanced.custom_css.opened": "Changes to custom.css apply each time you save it.",
+  "settings.advanced.custom_css.opened": "Changes to custom.css apply on save. Live updates stop after 30 minutes without a save. Select “Open custom.css” again to resume them.",
   "settings.advanced.custom_css.open_failed": "Could not open custom.css.",
   "settings.advanced.logs.label": "Diagnostics log",
   "settings.advanced.logs.hint": "Warnings and page-integration failures are logged here — attach the file to bug reports.",

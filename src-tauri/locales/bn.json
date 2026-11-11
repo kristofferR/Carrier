@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "কাস্টম CSS",
   "settings.advanced.custom_css.hint": "অ্যাডভান্সড Messenger স্টাইলিং, কাজ করার নিশ্চয়তা নেই। Facebook-এর মার্কআপ বদলালে এটি ভেঙে যেতে পারে; না থাকা বা ভুল CSS নিরাপদে উপেক্ষা করা হয়।",
   "settings.advanced.custom_css.open": "custom.css খুলুন",
-  "settings.advanced.custom_css.opened": "custom.css প্রতিবার সেভ করলেই পরিবর্তনগুলো প্রয়োগ হয়।",
+  "settings.advanced.custom_css.opened": "custom.css সেভ করলে পরিবর্তনগুলো প্রয়োগ হয়। 30 মিনিট সেভ না করলে সরাসরি আপডেট বন্ধ হয়। আবার চালু করতে «custom.css খুলুন» নির্বাচন করুন।",
   "settings.advanced.custom_css.open_failed": "custom.css খোলা যায়নি।",
   "settings.advanced.logs.label": "ডায়াগনস্টিক লগ",
   "settings.advanced.logs.hint": "সতর্কবার্তা ও পেজ-ইন্টিগ্রেশনের ত্রুটি এখানে লগ হয়; বাগ রিপোর্টের সঙ্গে ফাইলটি যুক্ত করুন।",

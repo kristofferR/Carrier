@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "CSS personnalisé",
   "settings.advanced.custom_css.hint": "Personnalisation avancée de Messenger, sans garantie. Les changements du code de Facebook peuvent la casser ; un CSS absent ou invalide est simplement ignoré.",
   "settings.advanced.custom_css.open": "Ouvrir custom.css",
-  "settings.advanced.custom_css.opened": "Les modifications de custom.css s'appliquent à chaque enregistrement.",
+  "settings.advanced.custom_css.opened": "Les modifications de custom.css s’appliquent à l’enregistrement. Les mises à jour en direct s’arrêtent après 30 minutes sans enregistrement. Sélectionne à nouveau « Ouvrir custom.css » pour les reprendre.",
   "settings.advanced.custom_css.open_failed": "Impossible d'ouvrir custom.css.",
   "settings.advanced.logs.label": "Journal de diagnostic",
   "settings.advanced.logs.hint": "Les avertissements et les échecs d'intégration à la page sont consignés ici. Joins le fichier à tes signalements de bugs.",

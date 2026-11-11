@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "Egyéni CSS",
   "settings.advanced.custom_css.hint": "Haladó, garancia nélküli Messenger-stílusok. A Facebook kódjának változásai elronthatják; a hiányzó vagy érvénytelen CSS-t a program biztonságosan figyelmen kívül hagyja.",
   "settings.advanced.custom_css.open": "A custom.css megnyitása",
-  "settings.advanced.custom_css.opened": "A custom.css módosításai minden mentéskor érvénybe lépnek.",
+  "settings.advanced.custom_css.opened": "A custom.css módosításai mentéskor érvénybe lépnek. Az élő frissítések 30 perc mentés nélküli idő után leállnak. A folytatáshoz válaszd újra az „A custom.css megnyitása” lehetőséget.",
   "settings.advanced.custom_css.open_failed": "Nem sikerült megnyitni a custom.css fájlt.",
   "settings.advanced.logs.label": "Diagnosztikai napló",
   "settings.advanced.logs.hint": "A figyelmeztetések és az oldalintegrációs hibák ide kerülnek – csatold a fájlt a hibabejelentésekhez.",

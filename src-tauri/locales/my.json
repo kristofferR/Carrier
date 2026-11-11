@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "စိတ်ကြိုက် CSS",
   "settings.advanced.custom_css.hint": "အဆင့်မြင့်၊ အလုပ်လုပ်နိုင်သလောက် ကြိုးစားထားတဲ့ Messenger ပုံစံချခြင်း။ Facebook markup ပြောင်းလဲမှုတွေကြောင့် ပျက်နိုင်ပါတယ်၊ မရှိတဲ့ ဒါမှမဟုတ် မမှန်ကန်တဲ့ CSS ကို ဘေးကင်းစွာ လျစ်လျူရှုပါတယ်။",
   "settings.advanced.custom_css.open": "custom.css ကို ဖွင့်ရန်",
-  "settings.advanced.custom_css.opened": "custom.css ကို သိမ်းတိုင်း ပြောင်းလဲမှုတွေ အသက်ဝင်ပါတယ်။",
+  "settings.advanced.custom_css.opened": "custom.css ကို သိမ်းသောအခါ ပြောင်းလဲမှုများ အသက်ဝင်ပါသည်။ မသိမ်းဘဲ မိနစ် 30 ကြာလျှင် တိုက်ရိုက်အပ်ဒိတ်များ ရပ်ပါမည်။ ပြန်စရန် «custom.css ကို ဖွင့်ရန်» ကို ထပ်ရွေးပါ။",
   "settings.advanced.custom_css.open_failed": "custom.css ကို ဖွင့်၍ မရပါ။",
   "settings.advanced.logs.label": "ချို့ယွင်းချက် စစ်ဆေးမှု မှတ်တမ်း",
   "settings.advanced.logs.hint": "သတိပေးချက်များနဲ့ စာမျက်နှာ ပေါင်းစပ်မှု ချို့ယွင်းချက်တွေကို ဒီမှာ မှတ်တမ်းတင်ပါတယ် — bug report တွေမှာ ဖိုင်ကို ပူးတွဲပါ။",

@@ -574,7 +574,7 @@
   "settings.advanced.custom_css.label": "आफ्नै CSS",
   "settings.advanced.custom_css.hint": "उन्नत Messenger स्टाइलिङ, काम गर्ने ग्यारेन्टी छैन। Facebook को मार्कअप बदलिँदा यो बिग्रन सक्छ; नभएको वा अमान्य CSS सुरक्षित रूपमा बेवास्ता गरिन्छ।",
   "settings.advanced.custom_css.open": "custom.css खोल्नुहोस्",
-  "settings.advanced.custom_css.opened": "custom.css मा गरिएका परिवर्तनहरू हरेक पटक सुरक्षित गर्दा लागू हुन्छन्।",
+  "settings.advanced.custom_css.opened": "custom.css मा गरिएका परिवर्तनहरू सुरक्षित गर्दा लागू हुन्छन्। 30 मिनेटसम्म सुरक्षित नगरेमा प्रत्यक्ष अद्यावधिकहरू रोकिन्छन्। फेरि सुरु गर्न «custom.css खोल्नुहोस्» पुनः छान्नुहोस्।",
   "settings.advanced.custom_css.open_failed": "custom.css खोल्न सकिएन।",
   "settings.advanced.logs.label": "डायग्नोस्टिक्स लग",
   "settings.advanced.logs.hint": "चेतावनी र पेज-इन्टिग्रेसनका त्रुटिहरू यहाँ लग हुन्छन्; बग रिपोर्टमा यो फाइल संलग्न गर्नुहोस्।",

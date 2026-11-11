@@ -114,7 +114,7 @@ fn read_custom_css_from_path(path: &Path) -> Option<String> {
     }
     match std::fs::read_to_string(path) {
         Ok(css) if !css.trim().is_empty() => Some(upgrade_css_file(path, css)),
-        Ok(_) => None,
+        Ok(_) => Some(String::new()),
         Err(error) => {
             log::warn!("could not read custom CSS file {}: {error}", path.display());
             None
@@ -194,14 +194,14 @@ pub(crate) fn watch_while_editing(app: &tauri::AppHandle, path: PathBuf) {
                 std::thread::sleep(WATCH_POLL);
                 let now = file_stamp(&path);
                 let mut until = WATCH_UNTIL.lock().unwrap();
-                if now != stamp {
-                    stamp = now;
-                    *until = Some(Instant::now() + WATCH_IDLE);
-                    drop(until);
-                    reapply_everywhere(&app, &path);
-                } else if until.is_none_or(|end| Instant::now() >= end) {
+                if until.is_none_or(|end| Instant::now() >= end) {
                     *until = None;
                     return;
+                }
+                drop(until);
+                if now != stamp && reapply_everywhere(&app, &path) {
+                    stamp = now;
+                    *WATCH_UNTIL.lock().unwrap() = Some(Instant::now() + WATCH_IDLE);
                 }
             }
         });
@@ -211,9 +211,12 @@ pub(crate) fn watch_while_editing(app: &tauri::AppHandle, path: PathBuf) {
     }
 }
 
-fn reapply_everywhere(app: &tauri::AppHandle, path: &Path) {
-    // An emptied or unreadable file clears what the last save applied.
-    let script = custom_css_script(&read_custom_css_from_path(path).unwrap_or_default());
+fn reapply_everywhere(app: &tauri::AppHandle, path: &Path) -> bool {
+    // Only a successful read, including an empty file, replaces the applied CSS.
+    let Some(css) = read_custom_css_from_path(path) else {
+        return false;
+    };
+    let script = custom_css_script(&css);
     for (label, window) in app.webview_windows() {
         let on_messenger = window.url().is_ok_and(|url| is_messenger_web_url(&url));
         if crate::window::is_messenger_window_label(&label)
@@ -223,6 +226,7 @@ fn reapply_everywhere(app: &tauri::AppHandle, path: &Path) {
             log::warn!("could not reapply custom CSS: {error}");
         }
     }
+    true
 }
 
 #[cfg(test)]
@@ -263,14 +267,9 @@ mod tests {
     }
 
     #[test]
-    fn missing_empty_invalid_and_oversized_stylesheets_fail_soft() {
+    fn missing_invalid_and_oversized_stylesheets_fail_soft() {
         let missing = test_path("missing.css");
         assert_eq!(read_custom_css_from_path(&missing), None);
-
-        let empty = test_path("empty.css");
-        std::fs::write(&empty, " \n\t").unwrap();
-        assert_eq!(read_custom_css_from_path(&empty), None);
-        std::fs::remove_file(empty).unwrap();
 
         let invalid = test_path("invalid.css");
         std::fs::write(&invalid, [0xff, 0xfe]).unwrap();
@@ -282,6 +281,25 @@ mod tests {
         file.set_len(CUSTOM_CSS_MAX_BYTES + 1).unwrap();
         assert_eq!(read_custom_css_from_path(&oversized), None);
         std::fs::remove_file(oversized).unwrap();
+    }
+
+    #[test]
+    fn empty_stylesheet_is_distinct_from_failed_read() {
+        let path = test_path("retry.css");
+        std::fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert_eq!(read_custom_css_from_path(&path), None);
+
+        std::fs::write(&path, "body { color: red; }").unwrap();
+        assert_eq!(
+            read_custom_css_from_path(&path).as_deref(),
+            Some("body { color: red; }")
+        );
+
+        for css in ["", " \n\t"] {
+            std::fs::write(&path, css).unwrap();
+            assert_eq!(read_custom_css_from_path(&path).as_deref(), Some(""));
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
