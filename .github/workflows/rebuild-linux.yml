@@ -17,7 +17,7 @@ env:
 
 jobs:
   build:
-    if: ${{ !contains(github.event.head_commit.message, '[aur]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[aur]') && !contains(github.event.head_commit.message, '[smoke]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -207,3 +207,59 @@ jobs:
           commit_email: 481270+kristofferR@users.noreply.github.com
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: "Rebuild the 3.2.0 packages on Ubuntu 22.04 for older glibc"
+
+  # Diagnose what the catalog test sees: window tree and screen over time,
+  # offline (as the catalog runs it) and online, using the AppImage above.
+  smoke:
+    if: ${{ contains(github.event.head_commit.message, '[smoke]') }}
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DISPLAY: ":99"
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+    steps:
+      - name: Install the test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y firejail xvfb xdotool imagemagick x11-utils icewm
+      - name: Download the rebuilt AppImage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download 42935364979 -R "$GITHUB_REPOSITORY" -n linux-x64 -D art
+          chmod +x art/out/*.AppImage
+      - name: Run offline and online
+        run: |
+          set -u
+          mkdir -p report
+          Xvfb :99 -screen 0 800x600x24 >/dev/null 2>&1 &
+          sleep 2
+          icewm >/dev/null 2>&1 &
+          sleep 2
+          for mode in offline online; do
+            net=$([ "$mode" = offline ] && echo --net=none || true)
+            firejail --quiet --noprofile $net --appimage art/out/Chatpane_${VERSION}_lin_x64.AppImage \
+              > "report/$mode.log" 2>&1 &
+            pid=$!
+            for t in 5 10 15 25 40; do
+              sleep_for=$(( t - ${last:-0} )); last=$t
+              sleep "$sleep_for"
+              echo "== $mode t=${t}s running=$(kill -0 $pid 2>/dev/null && echo yes || echo no)" >> "report/windows.txt"
+              xwininfo -root -tree 2>/dev/null | grep '": (' >> "report/windows.txt"
+              echo "active: $(xdotool getactivewindow getwindowname 2>/dev/null)" >> "report/windows.txt"
+              import -window root "report/$mode-${t}s.png" 2>/dev/null
+            done
+            unset last
+            kill $pid 2>/dev/null; sleep 3; pkill -f Chatpane 2>/dev/null; pkill -f chatpane 2>/dev/null; sleep 2
+          done
+          cat report/windows.txt
+          for f in report/*.png; do echo "$f $(convert "$f" -format '%[fx:standard_deviation]' info:)"; done
+          tail -c 4000 report/offline.log; tail -c 4000 report/online.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: smoke-report
+          path: report/
