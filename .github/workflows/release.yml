@@ -341,9 +341,14 @@ jobs:
             target: aarch64-apple-darwin
           - os: macos-latest
             target: x86_64-apple-darwin
-          - os: ubuntu-24.04
+          # Linux bundles need the build host's glibc or newer (the AppImage
+          # also ships the host's WebKitGTK, GTK and GStreamer). Build on the
+          # oldest Ubuntu LTS in standard support, so the .AppImage, .deb and
+          # .rpm run on Debian 12, Ubuntu 22.04 and the distros based on it.
+          # The AppImage catalog tests on that same release.
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
