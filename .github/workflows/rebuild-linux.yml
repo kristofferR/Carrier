@@ -221,10 +221,20 @@ jobs:
       WEBKIT_DISABLE_DMABUF_RENDERER: "1"
       WEBKIT_DISABLE_COMPOSITING_MODE: "1"
     steps:
-      - name: Install the test tools
+      # The AppImage catalog test's own package list (code/test.yml).
+      - name: Install the catalog's test packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y firejail xvfb xdotool imagemagick x11-utils icewm
+          sudo apt-get install -y firejail imagemagick libasound2-dev pulseaudio-utils \
+            alsa-utils alsa-oss libjack0 desktop-file-utils xmlstarlet xsel xterm xvfb icewm \
+            x11-utils x11-apps netpbm xdotool libgl1-mesa-dri libgl1-mesa-dev mesa-utils \
+            libosmesa6 libsdl1.2-dev libsdl2-2.0-0 fonts-wqy-microhei libfile-mimeinfo-perl \
+            tesseract-ocr tesseract-ocr-eng libfuse2 stalonetray
+          dpkg-query -W libegl1 2>&1 || true
+          mkdir -p catalog
+          for f in take-screenshot.sh check-screenshot.sh; do
+            curl -fsSL "https://raw.githubusercontent.com/AppImage/appimage.github.io/master/code/$f" -o "catalog/$f"
+          done
       - name: Download the rebuilt AppImage
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -233,31 +243,40 @@ jobs:
           chmod +x art/out/*.AppImage
       - name: Run offline and online
         run: |
-          set -u
+          set +e
           mkdir -p report
           Xvfb :99 -screen 0 800x600x24 >/dev/null 2>&1 &
           sleep 2
-          icewm >/dev/null 2>&1 &
-          sleep 2
           for mode in offline online; do
-            net=$([ "$mode" = offline ] && echo --net=none || true)
-            firejail --quiet --noprofile $net --appimage art/out/Chatpane_${VERSION}_lin_x64.AppImage \
+            icewm >/dev/null 2>&1 &
+            wm=$!
+            net=$([ "$mode" = offline ] && echo --net=none)
+            firejail --quiet --noprofile $net --appimage "art/out/Chatpane_${VERSION}_lin_x64.AppImage" \
               > "report/$mode.log" 2>&1 &
             pid=$!
-            for t in 5 10 15 25 40; do
-              sleep_for=$(( t - ${last:-0} )); last=$t
-              sleep "$sleep_for"
-              echo "== $mode t=${t}s running=$(kill -0 $pid 2>/dev/null && echo yes || echo no)" >> "report/windows.txt"
-              xwininfo -root -tree 2>/dev/null | grep '": (' >> "report/windows.txt"
-              echo "active: $(xdotool getactivewindow getwindowname 2>/dev/null)" >> "report/windows.txt"
-              import -window root "report/$mode-${t}s.png" 2>/dev/null
+            sleep 10
+            for _ in $(seq 1 20); do
+              kill -0 "$pid" 2>/dev/null || break
+              timeout 5 xdotool search --onlyvisible --name '.' >/dev/null 2>&1 && break
+              sleep 1
             done
-            unset last
-            kill $pid 2>/dev/null; sleep 3; pkill -f Chatpane 2>/dev/null; pkill -f chatpane 2>/dev/null; sleep 2
+            sleep 2
+            {
+              echo "== $mode running=$(kill -0 "$pid" 2>/dev/null && echo yes || echo no)"
+              xwininfo -root -tree 2>/dev/null | grep '": (' | grep -v -i -E 'ice|taskbar|tray|workspace| [1-4] |toolbar|clock|NET-|CPU|MEM|XTerm|WWW|Desktop|WindowList|AddressBar|TaskPane'
+              echo "visible: $(xdotool search --onlyvisible --name '.' 2>/dev/null | while read -r w; do printf '%s ' "$(xdotool getwindowname "$w")"; done)"
+            } >> report/windows.txt
+            bash catalog/take-screenshot.sh "report/$mode.png" >> report/windows.txt 2>&1
+            bash catalog/check-screenshot.sh "report/$mode.png" >> report/windows.txt 2>&1
+            echo "check exit: $?" >> report/windows.txt
+            import -window root "report/$mode-root.png"
+            sleep 10
+            import -window root "report/$mode-root-later.png"
+            kill "$pid" 2>/dev/null; sleep 3
+            pkill -f -i 'chatpane' 2>/dev/null; kill "$wm" 2>/dev/null; sleep 2
           done
           cat report/windows.txt
-          for f in report/*.png; do echo "$f $(convert "$f" -format '%[fx:standard_deviation]' info:)"; done
-          tail -c 4000 report/offline.log; tail -c 4000 report/online.log
+          head -c 4000 report/offline.log; echo; head -c 4000 report/online.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
