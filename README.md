@@ -174,7 +174,8 @@ bokmål, Tiếng Việt, Bahasa Indonesia, Filipino, ไทย, ខ្មែរ,
 
 ### Account
 
-- Messenger's Active Status, message sounds and Do Not Disturb in **Settings → Account**
+- Messenger's Active Status and Read Receipts in **Settings → Account & Privacy**,
+  and its Do Not Disturb in **Settings → Notifications**
 - **Log Out…** in the app and tray menus logs out of Facebook and deletes what
   Chatpane stored for the account on this computer; your settings are kept
 
@@ -221,10 +222,10 @@ blur. Messenger itself still communicates with Meta, and update checks use
 GitHub Releases.
 
 - Known Facebook analytics and logging requests can be blocked without blocking
-  messaging (**Settings → Privacy → Block Facebook telemetry**, enabled by
-  default).
-- **Settings → Privacy** can also hide that you're typing, and hide names and
-  avatars.
+  messaging (**Settings → Account & Privacy → Block Facebook telemetry**, enabled
+  by default).
+- **Settings → Account & Privacy** can also hide that you're typing, and hide
+  names and avatars.
 - Off-site links open in your normal browser; Facebook tracking redirects are
   removed first.
 - Updates are cryptographically verified before installation.
