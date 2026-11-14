@@ -63,7 +63,7 @@ open = "5"
 # Tauri), so escapes and comments can't sneak a remote url() past the check.
 cssparser = "0.37"
 # Installed font families for Settings → Appearance → Message font.
-fontdb = "0.23"
+fontdb = "0.24"
 # Already in the tree via Tauri; the short delay when recreating a window on a
 # theme switch (the macOS title bar can only be re-themed at window creation).
 tokio = { version = "1", features = ["sync", "time"] }
