@@ -43,9 +43,15 @@ html[data-chatpane-title-bar="macos"]
 }
 
 /* Windows and Linux: Chatpane draws minimize, maximize and close at the top
-   right, over a strip above the chat; the chat list starts at the top. */
+   right, over a strip above the chat; the chat list starts at the top.
+   Messenger spaces the chat's cards 16px from the window: padding above them,
+   and room left over below. The strip takes the place of that top padding, so
+   the cards start right below it, and the padding here keeps the bottom gap
+   the shorter column would otherwise lose. */
 html:is([data-chatpane-title-bar="windows"], [data-chatpane-title-bar="linux"]) [role="main"] {
-  margin-top: var(--chatpane-title-bar-inset, 0px) !important;
+  margin-top: calc(var(--chatpane-title-bar-inset, 0px) - 16px) !important;
+  padding-bottom: 16px !important;
+  box-sizing: border-box !important;
 }
 #chatpane-title-strip {
   position: fixed;
