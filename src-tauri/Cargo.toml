@@ -61,7 +61,7 @@ time = { version = "0.3", default-features = false, features = ["std"] }
 open = "5"
 # Theme files are checked with a real CSS tokenizer (already in the tree via
 # Tauri), so escapes and comments can't sneak a remote url() past the check.
-cssparser = "0.37"
+cssparser = "0.38"
 # Installed font families for Settings → Appearance → Message font.
 fontdb = "0.23"
 # Already in the tree via Tauri; the short delay when recreating a window on a
