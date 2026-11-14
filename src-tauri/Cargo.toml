@@ -90,7 +90,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 # `org.freedesktop.appearance` settings portal (see linux.rs). `async-io`
 # supplies the `block_on` for the synchronous point-in-time read.
 [target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.13", default-features = false, features = ["async-io", "global_shortcuts", "settings"] }
+ashpd = { version = "0.14", default-features = false, features = ["async-io", "global_shortcuts", "settings"] }
 async-io = "2"
 futures-util = "0.3"
 # Apply the GlobalShortcuts portal activation token to GTK's native window
